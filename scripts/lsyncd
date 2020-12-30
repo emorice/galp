@@ -1,0 +1,28 @@
+#!/bin/bash
+# service script (like old schhol sysvinit) for lsync
+# docker compose would be an alternative, but singularity seems more adapted
+
+export SINGULARITYENV_CLONEID="$CLONEID"
+export SINGULARITYENV_SSH_AUTH_SOCK="${SSH_AUTH_SOCK}"
+
+case "$1" in
+	'start')
+		singularity instance start \
+			-C -e \
+			-B "${PWD}/config/local/lsyncd":/config:ro \
+			-B "${PWD}":/var/project:ro \
+			-B "${HOME}/.ssh":"${HOME}/.ssh":ro \
+			-B /tmp:/tmp \
+			docker://theorangeone/lsyncd:latest \
+			lsyncd_${CLONEID}
+
+		singularity exec instance://lsyncd_${CLONEID} \
+			lsyncd -insist /config/lsyncd.lua
+		;;
+	'status')
+		singularity instance list lsyncd_${CLONEID}
+		;;
+	'stop')
+		singularity instance stop lsyncd_${CLONEID}
+		;;
+esac

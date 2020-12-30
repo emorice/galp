@@ -1,0 +1,51 @@
+#!/bin/bash
+# Pipeline low-level management utility
+
+load_clone_id() {
+	if [ ! -d 'build' ]; then
+		mkdir 'build'
+	fi
+	if [ ! -f 'build/clone.id' ]; then
+		echo 'Fresh build, generating a unique clone id'
+		export CLONEID=$(echo "$HOST:$PWD" | sha1sum | head -c 16)
+		echo "$CLONEID" > 'build/clone.id'
+	else
+		export CLONEID=$(<'build/clone.id')
+		#echo "Reusing existing build with clone id $CLONEID"
+	fi
+}
+
+main() {
+	load_clone_id
+	SERVICES=""
+	while [ "$1" ]; do
+		case "$1" in
+		'start')
+			ACTION=start
+			shift
+			;;
+		'status')
+			ACTION=status
+			shift
+			;;
+		'stop')
+			ACTION=stop
+			shift
+			;;
+		*)
+			SERVICES="$SERVICES $1"
+			shift
+			;;
+		esac
+	done
+	for service in $SERVICES; do
+		if [ -f "scripts/$service" ]; then
+			"scripts/${service}" $ACTION
+		else
+			echo "Service not found: ${service}"
+		fi
+		
+	done
+}
+
+main "$@"

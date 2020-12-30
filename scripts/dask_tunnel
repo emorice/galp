@@ -1,0 +1,20 @@
+#!/bin/bash
+
+if [ -f 'scripts/local/jobqueue.sh' ]; then
+	.  'scripts/local/jobqueue.sh'
+else
+	echo 'Fatal: please provide a scripts/local/jobqueue.sh wrapper'
+	exit 1
+fi
+
+case "$1" in
+	'start')
+		jobqueue_tunnel 8786 8786 build/local/dask.tunnel.pid < build/local/dask.job
+		;;
+	'status')
+		cat /proc/$(<build/local/dask.tunnel.pid)/status | grep '^State'
+		;;
+	'stop')
+		kill $(<build/local/dask.tunnel.pid)
+		;;
+esac
