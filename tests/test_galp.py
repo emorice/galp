@@ -7,8 +7,10 @@ import subprocess
 import logging
 import zmq
 import pytest
+import json
 import galp
 import galp.graph
+import galp.steps
 
 @pytest.fixture
 def worker():
@@ -94,18 +96,27 @@ def asserted_zmq_recv_multipart(socket):
     assert zmq.select(*selectable, timeout=4) == selectable
     return socket.recv_multipart()
 
-def test_illegals(worker_socket):
+@pytest.mark.parametrize('msg', [
+    [b'RABBIT'],
+    [b'GET'],
+    [b'GET', b'one', b'two'],
+    ])
+def test_illegals(worker_socket, msg):
     """Tests a few messages that should fire back an illegal
 
     Note that we should pick some that will not be valid later"""
 
-    worker_socket.send(b'RABBIT')
+    worker_socket.send_multipart(msg)
 
     ans = asserted_zmq_recv_multipart(worker_socket)
     assert ans == [b'ILLEGAL']
 
 def test_task(worker_socket):
-    task_name = b'FOO'
+    task = galp.steps.galp_hello()
+    task_name = task.step.key
+
+    logging.warning('Calling task %s', task_name)
+
     handle = galp.graph.make_handle(task_name)
 
     worker_socket.send_multipart([b'SUBMIT', task_name])
@@ -115,7 +126,18 @@ def test_task(worker_socket):
 
     ans = asserted_zmq_recv_multipart(worker_socket)
     assert ans == [b'DONE', handle]
-    
 
+    worker_socket.send_multipart([b'GET', handle])
 
+    ans = asserted_zmq_recv_multipart(worker_socket)
+    assert ans[:2] == [b'PUT', handle]
+    assert json.loads(ans[2]) == 42
+
+def test_notfound(worker_socket):
+    """Tests the answer of server when asking to send unexisting resource"""
+    bad_handle = b'RABBIT'
+    worker_socket.send_multipart([b'GET', bad_handle])
+
+    ans = asserted_zmq_recv_multipart(worker_socket)
+    assert ans == [b'NOTFOUND', bad_handle]
 
