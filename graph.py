@@ -1,11 +1,10 @@
 """
 General routines to build and operate on graphs of tasks.
 """
+import logging
+import hashlib
 
 from galp.eventnamespace import EventNamespace
-
-def make_handle(task_name):
-    return b'H_' + task_name
 
 class Step():
     """Object wrapping a function that can be called as a pipeline step
@@ -27,6 +26,48 @@ class Task():
         self.step = step
         self.args = args
         self.kwargs = kwargs
+        self.name = self.gen_name(
+            step.key,
+            [ arg.name for arg in args ],
+            { k.encode('ascii') : v.name for k, v in kwargs }
+            )
+
+    @staticmethod
+    def gen_name(step_name, arg_names, kwarg_names):
+        """Create a resource name.
+
+        Args:
+            step_name: bytes
+            arg_names: list of bytes
+            kwarg_names: bytes-keyed dict of bytes.
+
+        Returns:
+            digest as bytes.
+
+        We simply mash together the step name, and the args name in order.
+        The only difficulty is the order of keyword arguments, so we sort kwargs
+        by keyword (in original byte representation).
+        All input is sanitized by hexing it, then building a representation from
+        it.
+
+        """
+        def _san(bts):
+            """This constrains the range of values of the resulting bytes"""
+            return bts.hex().encode('ascii')
+
+        sortedkw = sorted(list(kwarg_names.items()))
+
+        m = _san(step_name)
+        m += b'('
+        m += b','.join(
+            [ _san(n) for n in arg_names]
+            +
+            [ _san(kw) + b'=' + _san(n) for kw, n in sortedkw ]
+            )
+        m += b')'
+        logging.warning("Hashed value is %s:", m)
+
+        return hashlib.sha256(m).digest()
 
 class StepSet(EventNamespace):
     """A collection of steps"""
