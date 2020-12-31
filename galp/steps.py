@@ -13,3 +13,8 @@ export = StepSet()
 def galp_hello():
     logging.warn('Task "Hello" running')
     return 42
+
+@export.step
+def galp_double(x=1):
+    logging.warn('Task "Double" running')
+    return 2*x

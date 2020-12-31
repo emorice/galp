@@ -94,14 +94,14 @@ async def get(socket, msg):
 
     handle = msg[1]
 
-    logging.warning('Received GET for %s', handle)
+    logging.warning('Received GET for %s', handle.hex())
 
     try:
         payload = bytes(json.dumps(_g_mem_cache[handle]), 'ascii')
-        logging.warning('Cache Hit: %s', handle)
+        logging.warning('Cache Hit: %s', handle.hex())
         await socket.send_multipart([b'PUT', handle, payload])
     except KeyError:
-        logging.warning('Cache Miss: %s', handle)
+        logging.warning('Cache Miss: %s', handle.hex())
         await socket.send_multipart([b'NOTFOUND', handle])
     
 @event.on('SUBMIT')
@@ -112,18 +112,56 @@ async def process_task(socket, msg):
         socket: async zmq socket were to send DONE/DOING
         handle: the parsed, but for now it's just a handle to put in messages
     """
-    task_name = msg[1]
-    logging.warning('Received SUBMIT for task %s', task_name)
-    # Insert here more detailed parsing
-    handle = graph.make_handle(task_name)
+    step_name = msg[1]
+    logging.warning('Received SUBMIT for step %s', step_name)
+    
+    # Collect args
+    argstack = msg[2:]
+    argstack.reverse()
+    arg_names = []
+    kwarg_names = {}
+    while argstack != []:
+        try:
+            keyword, arg_handle = argstack.pop(), argstack.pop()
+        except IndexError:
+            raise IllegalRequestError
+        if keyword == b'':
+            arg_names.append(arg_handle)
+        else:
+            kwargs_names[keyword] = arg_handle
+
+    handle = graph.Task.gen_name(step_name, arg_names, kwarg_names)
+
     step_dir = galp.steps.export
-    step = step_dir.get(task_name)
+    step = step_dir.get(step_name)
 
     await socket.send_multipart([b'DOING', handle])
+
+    # Load args, from now just from cache
+    try:
+        args = [ 
+            _g_mem_cache[name] for name in arg_names
+            ]
+        kwargs = {
+            kw.decode('ascii'): _g_mem_cache[name]
+            for kw, name in kwarg_names
+            }
+    except KeyError:
+        # Could not find argument
+        raise IllegalRequestError
+    except UnicodeDecodeError:
+        # Either you tried to use python's non-ascii keywords feature,
+        # or more likely you messed up the encoding on the caller side.
+        raise IllegalRequestError
+        
     # This may block for a long time, by design
-    # todo: insert args
     # work work work work
-    result = step.function()
+    # the **kwargs syntax works even for invalid identifiers it seems ?
+    try:
+        result = step.function(*args, **kwargs)
+    except:
+        # TODO: define application errors
+        raise
 
     # Caching
     _g_mem_cache[handle] = result
