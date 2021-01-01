@@ -75,7 +75,11 @@ async def listen(endpoint):
         else:
             try:
                 await event.handler(str(msg[0], 'ascii'))(socket, msg)
-            except (NoHandlerError, IllegalRequestError):
+            except NoHandlerError:
+                logging.warning('No handler for event or step')
+                await send_illegal(socket)
+            except IllegalRequestError:
+                logging.warning('Bad request')
                 await send_illegal(socket)
     
 async def send_illegal(socket):
@@ -128,7 +132,7 @@ async def process_task(socket, msg):
         if keyword == b'':
             arg_names.append(arg_handle)
         else:
-            kwargs_names[keyword] = arg_handle
+            kwarg_names[keyword] = arg_handle
 
     handle = graph.Task.gen_name(step_name, arg_names, kwarg_names)
 
@@ -144,7 +148,7 @@ async def process_task(socket, msg):
             ]
         kwargs = {
             kw.decode('ascii'): _g_mem_cache[name]
-            for kw, name in kwarg_names
+            for kw, name in kwarg_names.items()
             }
     except KeyError:
         # Could not find argument
@@ -167,7 +171,6 @@ async def process_task(socket, msg):
     _g_mem_cache[handle] = result
 
     await socket.send_multipart([b'DONE', handle])
-
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""
