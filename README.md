@@ -9,12 +9,13 @@ projects as they grow.
 How does it looks like ?
 ------------------------
 
-This repo should host a bunch of python modules that are meant to be loaded from
-an Ipython (Jupyter) notebook, and control:
+This repo should host a bunch of scripts to control:
  * Starting, stopping and monitoring the servers needed for the analyses. Many
    such servers are actually needed in a distributed pipeline, such as a central
    scheduler, workers, database servers, in-memory and on-disk remote access to
-   resources, dashboards, etc.
+   resources, dashboards, etc. Many aspect of these scripts will be
+   site-dependent, but we try to separate the common logic (what to start) from
+   the local aspects (where and how to start it)
  * Loading individual pipeline graphs and interactively develop new tasks to
    include in them.
  * Trigger and monitor the execution of such pipelines.
@@ -37,7 +38,7 @@ Layers
 ------
 
 The first layer on the pipeline rely on existing communication services present
-in the infrastructure:
+in the infrastructure, such as:
  * ssh access from one machine to another
  * slurm scheduler
  * shared filesystems
@@ -47,16 +48,15 @@ provide scheduling and execution service to the client. Thus, the client never
 needs to issue ssh commands, transfer files or submit slurm scripts, this is
 all done at python level, which allows more flexible and interactive management
 of resources and tasks, and, most importantly, a unified interface to
-heterogeneous compute nodes (inside/outside of a cluster, etc)
+heterogeneous compute nodes (inside/outside of a cluster, etc).
 
 How is this repo organized ?
 ----------------------------
 
- * `requirements.txt`: python dependencies for the top client
- * `requirements/`: various subsets of dependencies that needs to be present
-   	on the workers, but can be different from the top client (e.g. workers
-   	never need a jupyter server, though this is not a good example since we
-	usually work in containers with jupyter preinstalled)
+ * `requirements/`: various subsets of dependencies that are required:
+	* `runtime.txt`: on all hosts/containers that are part of the
+	  distributed system,
+	* `dev.txt`: (includes runtime): on hosts that run test and debug code
  * `scripts/` contains various startup procedures. As a rule, they are meant to
    be run from the repo root.
  * `config`: what it says
@@ -65,9 +65,6 @@ How is this repo organized ?
 Components of the top-level client :
 ------------------------------------
 
- * a jupyter server
- * a dask client
- * a web server (flask/dash)
  * a lsyncd service
 
 Dependency tracking
