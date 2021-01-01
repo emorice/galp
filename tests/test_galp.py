@@ -5,12 +5,20 @@ Generic tests for galp
 import sys
 import subprocess
 import logging
-import zmq
-import pytest
 import json
-import galp
+import asyncio
+
+import zmq
+import zmq.asyncio
+import pytest
+
 import galp.graph
 import galp.steps
+import galp.client
+
+
+# Fixtures
+# ========
 
 @pytest.fixture
 def worker():
@@ -20,7 +28,7 @@ def worker():
         (endpoint, Popen) tuple
     """
     endpoint = 'tcp://127.0.0.1:48652'
-    
+
     phandle = subprocess.Popen([
         sys.executable,
         '-m', 'galp.worker',
@@ -35,12 +43,24 @@ def worker():
     # already is
     phandle.terminate()
     phandle.wait()
-    
 
 @pytest.fixture
 def ctx():
     """The ØMQ context"""
-    ctx =  zmq.Context.instance()
+    ctx =  zmq.Context()
+    yield ctx
+    # During testing we do a lot of fancy stuff such as trying to talk to the
+    # dead and aborting a lot, so don't panic if there's still stuff in the
+    # pipes -> linger.
+    logging.warning('Now destroying context...')
+    ctx.destroy(linger=1)
+    logging.warning('Done')
+
+@pytest.fixture
+def async_ctx():
+    """The ØMQ context, asyncio flavor"""
+    ctx =  zmq.asyncio.Context()
+    logging.warning('Fixture loop is: %s', id(asyncio.get_event_loop()))
     yield ctx
     # During testing we do a lot of fancy stuff such as trying to talk to the
     # dead and aborting a lot, so don't panic if there's still stuff in the
@@ -63,15 +83,45 @@ def worker_socket(ctx, worker):
     # pending messages for whatever reason.
     socket.close(linger=1)
 
-def test_nothing():
-    """Do not assert anything, just check modules are importable and the
-    functionning of the harness itself"""
-    pass
+@pytest.fixture
+def async_worker_socket(async_ctx, worker):
+    """Dealer socket connected to some worker, asyncio flavor"""
+    endpoint, _ = worker
+
+    socket = async_ctx.socket(zmq.DEALER)
+    socket.connect(endpoint)
+
+    yield socket
+
+    # Closing with linger since we do not know if the test has failed or left
+    # pending messages for whatever reason.
+    socket.close(linger=1)
 
 @pytest.fixture(params=[b'EXIT', b'ILLEGAL'])
 def fatal_order(request):
     """All messages that should make the worker quit"""
     return request.param
+
+@pytest.fixture
+def client(async_worker_socket):
+    """A client connected to a worker"""
+    return galp.client.Client(async_worker_socket)
+
+# Helpers
+# =======
+
+def asserted_zmq_recv_multipart(socket):
+    selectable = [socket], [], []
+    assert zmq.select(*selectable, timeout=4) == selectable
+    return socket.recv_multipart()
+
+# Tests
+# =====
+
+def test_nothing():
+    """Do not assert anything, just check modules are importable and the
+    functionning of the harness itself"""
+    pass
 
 def test_shutdown(ctx, worker, fatal_order):
     """Manually send a exit message to a local worker and wait a bit for it to
@@ -90,11 +140,6 @@ def test_shutdown(ctx, worker, fatal_order):
     # Note: we only close on normal termination, else we rely on the fixture
     # finalization to set the linger before closing.
     socket.close()
-
-def asserted_zmq_recv_multipart(socket):
-    selectable = [socket], [], []
-    assert zmq.select(*selectable, timeout=4) == selectable
-    return socket.recv_multipart()
 
 @pytest.mark.parametrize('msg', [
     [b'RABBIT'],
@@ -179,5 +224,38 @@ def test_reference(worker_socket):
     for _, name, res in [got_a, got_b]:
         assert json.loads(res) == expected[name]
 
+@pytest.mark.asyncio
+async def test_async_socket(async_worker_socket):
 
+    sock = async_worker_socket
+    await asyncio.wait_for(sock.send(b'RABBIT'), 3)
+    ans = await asyncio.wait_for(sock.recv_multipart(), 3)
+    assert ans == [b'ILLEGAL']
 
+@pytest.mark.asyncio
+async def test_client(client):
+    """Test simple functionnalities of client"""
+    task = galp.steps.galp_hello()
+
+    ans = await asyncio.wait_for(
+        client.collect(task),
+        3)
+
+    assert ans == [42,]
+
+@pytest.mark.asyncio
+async def test_task_kwargs(client):
+
+    two = galp.steps.galp_double()
+    four = galp.steps.galp_double(two)
+
+    ref = galp.steps.galp_sub(a=four, b=two)
+    same = galp.steps.galp_sub(b=two, a=four)
+
+    opposite = galp.steps.galp_sub(a=two, b=four)
+
+    ans = await asyncio.wait_for(
+        client.collect(ref, same, opposite),
+        3)
+
+    assert tuple(ans) == (2, 2, -2)

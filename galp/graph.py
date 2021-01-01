@@ -29,8 +29,15 @@ class Task():
         self.name = self.gen_name(
             step.key,
             [ arg.name for arg in args ],
-            { k.encode('ascii') : v.name for k, v in kwargs }
+            { k.encode('ascii') : v.name for k, v in kwargs.items() }
             )
+
+    @property
+    def dependencies(self):
+        """Shorthand for all the tasks this task directly depends on"""
+        deps = list(self.args)
+        deps.extend(self.kwargs.values())
+        return deps
 
     @staticmethod
     def gen_name(step_name, arg_names, kwarg_names):
