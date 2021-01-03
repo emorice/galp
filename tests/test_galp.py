@@ -84,18 +84,32 @@ def worker_socket(ctx, worker):
     socket.close(linger=1)
 
 @pytest.fixture
-def async_worker_socket(async_ctx, worker):
+def make_async_socket(async_ctx):
+    """Factory feature to create several sockets to a set of workers.
+
+    The return factory takes an endpoint as sole argument.
+
+    Note that your endpoint must be able to deal with several clients !"""
+
+    sockets = []
+    def _make(endpoint):
+        socket = async_ctx.socket(zmq.DEALER)
+        sockets.append(socket)
+        socket.connect(endpoint)
+        return socket
+
+    yield _make
+
+    while sockets:
+        # Closing with linger since we do not know if the test has failed or left
+        # pending messages for whatever reason.
+        sockets.pop().close(linger=1)
+
+@pytest.fixture
+def async_worker_socket(make_async_socket, worker):
     """Dealer socket connected to some worker, asyncio flavor"""
     endpoint, _ = worker
-
-    socket = async_ctx.socket(zmq.DEALER)
-    socket.connect(endpoint)
-
-    yield socket
-
-    # Closing with linger since we do not know if the test has failed or left
-    # pending messages for whatever reason.
-    socket.close(linger=1)
+    yield make_async_socket(endpoint)
 
 @pytest.fixture(params=[b'EXIT', b'ILLEGAL'])
 def fatal_order(request):
@@ -106,6 +120,20 @@ def fatal_order(request):
 def client(async_worker_socket):
     """A client connected to a worker"""
     return galp.client.Client(async_worker_socket)
+
+other_client = client
+
+@pytest.fixture
+def client_pair(async_worker_socket):
+    """A pair of clients connected to the same socket and worker.
+
+    Obviously unsafe for concurrent use. When we introduce routing, swap this
+    implementation to use two sockets.
+    """
+    s = async_worker_socket
+    c1 = galp.client.Client(s)
+    c2 = galp.client.Client(s)
+    return c1, c2
 
 # Helpers
 # =======
@@ -226,7 +254,6 @@ def test_reference(worker_socket):
 
 @pytest.mark.asyncio
 async def test_async_socket(async_worker_socket):
-
     sock = async_worker_socket
     await asyncio.wait_for(sock.send(b'RABBIT'), 3)
     ans = await asyncio.wait_for(sock.recv_multipart(), 3)
@@ -245,7 +272,6 @@ async def test_client(client):
 
 @pytest.mark.asyncio
 async def test_task_kwargs(client):
-
     two = galp.steps.galp_double()
     four = galp.steps.galp_double(two)
 
@@ -259,3 +285,24 @@ async def test_task_kwargs(client):
         3)
 
     assert tuple(ans) == (2, 2, -2)
+
+@pytest.mark.asyncio
+async def test_mem_cache(client_pair):
+    """
+    Test worker-side in cache memory
+    """
+    client1, client2 = client_pair
+
+    task = galp.steps.galp_hello()
+
+    ans1 = await asyncio.wait_for(client1.collect(task), 3)
+
+    ans2 = await asyncio.wait_for(client2.collect(task), 3)
+
+    assert ans1 == ans2 == [42]
+
+    assert client1.submitted_count[task.name] == 1
+    assert client2.submitted_count[task.name] == 1
+
+    assert client1.run_count[task.name] == 1
+    assert client2.run_count[task.name] == 0
