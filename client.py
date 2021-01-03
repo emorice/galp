@@ -27,6 +27,12 @@ class Client:
     def __init__(self, socket):
         self.socket = socket
 
+        # Public attributes: counters for the number of SUBMITs sent and DOING
+        # received for each task
+        # Used for reporting and testing cache behavior
+        self.submitted_count = defaultdict(int)
+        self.run_count = defaultdict(int)
+
         self._details = dict()
         self._dependents = defaultdict(set)
         self._dependencies = defaultdict(set)
@@ -130,6 +136,7 @@ class Client:
                 await self.on_done(msg)
             elif msg[0] == b'DOING':
                 logging.warning('Doing: %s', msg[1].hex())
+                self.run_count[msg[1]] += 1
             elif msg[0] == b'PUT':
                 await self.on_put(msg)
                 if all(task in self._resources for task in self._finals):
@@ -168,6 +175,8 @@ class Client:
         for kw, kwarg in details.kwargs.items():
             msg += [ kw.encode('ascii'), kwarg.name ]
         await self.socket.send_multipart(msg)
+
+        self.submitted_count[task] += 1
 
     async def get(self, task):
         """Send get for task with given name"""

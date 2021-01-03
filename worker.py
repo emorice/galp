@@ -118,7 +118,7 @@ async def process_task(socket, msg):
     """
     step_name = msg[1]
     logging.warning('Received SUBMIT for step %s', step_name)
-    
+
     # Collect args
     argstack = msg[2:]
     argstack.reverse()
@@ -136,6 +136,12 @@ async def process_task(socket, msg):
 
     handle = graph.Task.gen_name(step_name, arg_names, kwarg_names)
 
+    # Cache hook:
+    if handle in _g_mem_cache:
+        logging.warning('Cache hit on SUBMIT: %s', handle.hex())
+        await socket.send_multipart([b'DONE', handle])
+        return
+    
     step_dir = galp.steps.export
     step = step_dir.get(step_name)
 
