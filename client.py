@@ -44,8 +44,8 @@ class Client:
 
     def add(self, tasks):
         """
-        Browse the graph and add it to the tasks we're tracking. Reentrant. Also
-        tracks which one are final.
+        Browse the graph and add it to the tasks we're tracking, in an
+        idempotent way. Also tracks which one are final.
 
         The client can keep references to any task passed to it directly or as
         a dependency. Modifying tasks after there were added, directly or as
@@ -68,7 +68,7 @@ class Client:
         # arcs ?) so we call them "dependents" as opposed to "dependencies"
 
         # Todo: Optimisation: sets and defaultdicts make most operations safely
-        # reentrant, but we could skip tasks added in a previous call
+        # idempotent, but we could skip tasks added in a previous call
         oset, cset = set(tasks), set()
 
         new_top_level = set()
