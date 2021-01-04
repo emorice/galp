@@ -18,6 +18,7 @@ import time
 import json
 
 import galp.steps
+import galp.cache
 from galp import graph
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
@@ -40,10 +41,13 @@ async def main(args):
             returned by argparse.ArgumentParser.parse_args.
     """
     logging.warning("Worker starting on %s", args.endpoint)
+    logging.warning("Caching to %s", args.cachedir)
 
     t = asyncio.create_task(log_heartbeat())
 
-    await listen(args.endpoint)
+    cache = galp.cache.CacheStack(args.cachedir)
+
+    await listen(args.endpoint, cache)
 
     logging.warning("Worker terminating normally")
 
@@ -54,7 +58,7 @@ async def log_heartbeat():
         await asyncio.sleep(3)
         i += 1
 
-async def listen(endpoint):
+async def listen(endpoint, cache):
     ctx = zmq.asyncio.Context()
     socket = ctx.socket(zmq.DEALER)
     socket.bind(endpoint)
@@ -74,7 +78,7 @@ async def listen(endpoint):
         # Below this point at least two parts
         else:
             try:
-                await event.handler(str(msg[0], 'ascii'))(socket, msg)
+                await event.handler(str(msg[0], 'ascii'))(socket, cache, msg)
             except NoHandlerError:
                 logging.warning('No handler for event or step')
                 await send_illegal(socket)
@@ -93,7 +97,7 @@ def validate(condition):
         raise IllegalRequestError
 
 @event.on('GET')
-async def get(socket, msg):
+async def get(socket, cache, msg):
     validate(len(msg) == 2)
 
     handle = msg[1]
@@ -101,7 +105,7 @@ async def get(socket, msg):
     logging.warning('Received GET for %s', handle.hex())
 
     try:
-        payload = bytes(json.dumps(_g_mem_cache[handle]), 'ascii')
+        payload = json.dumps(await cache.get(handle)).encode('ascii')
         logging.warning('Cache Hit: %s', handle.hex())
         await socket.send_multipart([b'PUT', handle, payload])
     except KeyError:
@@ -109,7 +113,7 @@ async def get(socket, msg):
         await socket.send_multipart([b'NOTFOUND', handle])
     
 @event.on('SUBMIT')
-async def process_task(socket, msg):
+async def process_task(socket, cache, msg):
     """
 
     Args:
@@ -137,7 +141,7 @@ async def process_task(socket, msg):
     handle = graph.Task.gen_name(step_name, arg_names, kwarg_names)
 
     # Cache hook:
-    if handle in _g_mem_cache:
+    if await cache.contains(handle):
         logging.warning('Cache hit on SUBMIT: %s', handle.hex())
         await socket.send_multipart([b'DONE', handle])
         return
@@ -149,12 +153,15 @@ async def process_task(socket, msg):
 
     # Load args, from now just from cache
     try:
-        args = [ 
-            _g_mem_cache[name] for name in arg_names
-            ]
+        keywords = kwarg_names.keys()
+        kwnames = [ kwarg_names[kw] for kw in keywords ]
+        all_args = await asyncio.gather(*[
+            cache.get(name) for name in (arg_names + kwnames)
+            ])
+        args = all_args[:len(arg_names)]
         kwargs = {
-            kw.decode('ascii'): _g_mem_cache[name]
-            for kw, name in kwarg_names.items()
+            kw.decode('ascii'): v
+            for kw, v in zip(keywords, all_args[len(arg_names):])
             }
     except KeyError:
         # Could not find argument
@@ -174,13 +181,14 @@ async def process_task(socket, msg):
         raise
 
     # Caching
-    _g_mem_cache[handle] = result
+    await cache.put(handle, result)
 
     await socket.send_multipart([b'DONE', handle])
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""
     parser.add_argument('endpoint')
+    parser.add_argument('cachedir')
 
 if __name__ == '__main__':
     """Convenience hook to start a worker from CLI""" 

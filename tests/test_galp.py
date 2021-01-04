@@ -7,6 +7,7 @@ import subprocess
 import logging
 import json
 import asyncio
+import itertools
 
 import zmq
 import zmq.asyncio
@@ -21,28 +22,41 @@ import galp.client
 # ========
 
 @pytest.fixture
-def worker():
+def make_worker(tmp_path):
     """Worker fixture, starts a worker in background.
 
     Returns:
         (endpoint, Popen) tuple
     """
-    endpoint = 'tcp://127.0.0.1:48652'
+    # todo: safer port picking
+    port = itertools.count(48652)
+    phandles = []
 
-    phandle = subprocess.Popen([
-        sys.executable,
-        '-m', 'galp.worker',
-        endpoint
-        ])
+    def _make():
+        endpoint = f"tcp://127.0.0.1:{next(port)}"
 
-    yield endpoint, phandle
+        phandle = subprocess.Popen([
+            sys.executable,
+            '-m', 'galp.worker',
+            endpoint, str(tmp_path)
+            ])
+        phandles.append(phandle)
+
+        return endpoint, phandle
+
+    yield _make
 
     # If it's a kill test it's already done, later with remote worker we'll rely
     # on messages here
     # Note: terminate should be safe to call no matter how dead the child
     # already is
-    phandle.terminate()
-    phandle.wait()
+    for phandle in phandles:
+        phandle.terminate()
+        phandle.wait()
+
+@pytest.fixture
+def worker(make_worker):
+    return make_worker()
 
 @pytest.fixture
 def ctx():
@@ -60,7 +74,6 @@ def ctx():
 def async_ctx():
     """The ØMQ context, asyncio flavor"""
     ctx =  zmq.asyncio.Context()
-    logging.warning('Fixture loop is: %s', id(asyncio.get_event_loop()))
     yield ctx
     # During testing we do a lot of fancy stuff such as trying to talk to the
     # dead and aborting a lot, so don't panic if there's still stuff in the
@@ -117,11 +130,17 @@ def fatal_order(request):
     return request.param
 
 @pytest.fixture
-def client(async_worker_socket):
-    """A client connected to a worker"""
-    return galp.client.Client(async_worker_socket)
+def make_client(make_async_socket):
+    def _make(endpoint):
+        socket = make_async_socket(endpoint)
+        return galp.client.Client(socket)
+    return _make
 
-other_client = client
+@pytest.fixture
+def client(make_client, worker):
+    """A client connected to a worker"""
+    endpoint, _ = worker
+    return make_client(endpoint)
 
 @pytest.fixture
 def client_pair(async_worker_socket):
@@ -134,6 +153,13 @@ def client_pair(async_worker_socket):
     c1 = galp.client.Client(s)
     c2 = galp.client.Client(s)
     return c1, c2
+
+@pytest.fixture
+def disjoined_client_pair(make_worker, make_client):
+    """A pair of client connected to two different workers"""
+    e1, w1 = make_worker()
+    e2, w2 = make_worker()
+    return make_client(e1), make_client(e2)
 
 # Helpers
 # =======
@@ -286,13 +312,11 @@ async def test_task_kwargs(client):
 
     assert tuple(ans) == (2, 2, -2)
 
-@pytest.mark.asyncio
-async def test_mem_cache(client_pair):
+async def assert_cache(clients):
     """
-    Test worker-side in cache memory
+    Test worker-side cache.
     """
-    client1, client2 = client_pair
-
+    client1, client2 = clients
     task = galp.steps.galp_hello()
 
     ans1 = await asyncio.wait_for(client1.collect(task), 3)
@@ -306,3 +330,18 @@ async def test_mem_cache(client_pair):
 
     assert client1.run_count[task.name] == 1
     assert client2.run_count[task.name] == 0
+
+@pytest.mark.asyncio
+async def test_mem_cache(client_pair):
+    """
+    Test worker-side in-memory cache
+    """
+    await assert_cache(client_pair)
+
+
+@pytest.mark.asyncio
+async def test_fs_cache(disjoined_client_pair):
+    """
+    Test worker-side fs cache
+    """
+    await assert_cache(disjoined_client_pair)

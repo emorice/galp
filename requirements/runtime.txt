@@ -1,1 +1,2 @@
 pyzmq==20.0.0
+diskcache==5.1.0
