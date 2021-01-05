@@ -59,7 +59,15 @@ How is this repo organized ?
 	* `dev.txt`: (includes runtime): on hosts that run test and debug code
  * `scripts/` contains various startup procedures. As a rule, they are meant to
    be run from the repo root.
- * `config`: what it says
+ * `local`: site-specific stuff that si not commited to a public repository
+     (e.g. ansible inventories)
+ * Several directories for generated files:
+   * `share/`: generated files that should be shared during deployment (e.g.,
+  	generated unique identities, pre-built binaries, generated test data)
+   * `var/`: generated files that should be not be shared during deployment and
+  	persist even when no process is running (e.g, box-wise shared disc
+	cache, python environments)
+ * `galp`: our custom pipeline runner
 
 
 Components of the top-level client :

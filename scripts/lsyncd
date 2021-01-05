@@ -8,10 +8,11 @@ export SINGULARITYENV_SSH_AUTH_SOCK="${SSH_AUTH_SOCK}"
 case "$1" in
 	'start')
 		singularity instance start \
-			-C -e \
-			-B "${PWD}/config/local/lsyncd":/config:ro \
+			-C \
+			-B "${PWD}/local/config/lsyncd":/config:ro \
 			-B "${PWD}":/var/project:ro \
 			-B "${HOME}/.ssh":"${HOME}/.ssh":ro \
+			-B "${PWD}/var/log":/log:rw \
 			-B /tmp:/tmp \
 			docker://theorangeone/lsyncd:latest \
 			lsyncd_${CLONEID}
@@ -24,5 +25,8 @@ case "$1" in
 		;;
 	'stop')
 		singularity instance stop lsyncd_${CLONEID}
+		;;
+	*)
+		echo 'No such action:' "$1" >&2
 		;;
 esac

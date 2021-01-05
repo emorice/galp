@@ -1,22 +1,31 @@
 #!/bin/bash
 # Pipeline low-level management utility
 
+SHARED_DIR='share'
+VAR_DIR='var'
+CLONE_FILE="$SHARED_DIR/clone.id"
+
 load_clone_id() {
-	if [ ! -d 'build' ]; then
-		mkdir 'build'
+	if [ ! -d "$SHARED_DIR" ]; then
+		mkdir "$SHARED_DIR"
 	fi
-	if [ ! -f 'build/clone.id' ]; then
+	if [ ! -f "$CLONE_FILE" ]; then
 		echo 'Fresh build, generating a unique clone id'
 		export CLONEID=$(echo "$HOST:$PWD" | sha1sum | head -c 16)
-		echo "$CLONEID" > 'build/clone.id'
+		echo "$CLONEID" > "$CLONE_FILE"
 	else
-		export CLONEID=$(<'build/clone.id')
+		export CLONEID=$(<"$CLONE_FILE")
 		#echo "Reusing existing build with clone id $CLONEID"
 	fi
 }
 
+ensure_dirs() {
+	mkdir -p "$VAR_DIR/log"
+}
+
 main() {
 	load_clone_id
+	ensure_dirs
 	SERVICES=""
 	while [ "$1" ]; do
 		case "$1" in
@@ -32,6 +41,14 @@ main() {
 			ACTION=stop
 			shift
 			;;
+		'run')
+			ACTION=run
+			shift
+			;;
+		'restart')
+			ACTION=restart
+			shift
+			;;
 		*)
 			SERVICES="$SERVICES $1"
 			shift
@@ -40,7 +57,12 @@ main() {
 	done
 	for service in $SERVICES; do
 		if [ -f "scripts/$service" ]; then
-			"scripts/${service}" $ACTION
+			if [ "$ACTION" = 'restart' ]; then
+				"scripts/${service}" 'stop'
+				"scripts/${service}" 'start'
+			else
+				"scripts/${service}" $ACTION
+			fi
 		else
 			echo "Service not found: ${service}"
 		fi
