@@ -8,23 +8,40 @@ object that can be created and used as part of a larger program.
 import logging
 import json
 
+import zmq
+import zmq.asyncio
+
 from collections import defaultdict
 
 class Client:
     """
-    A client that communicate with a worker
+    A client that communicate with a worker.
+
+    Either socket or endpoint must be specified, never both. Socket is intended
+    for testing, and custom socket manipulation. Endpoint also uses pyzmq's global
+    context instance, creating it if needed -- and implicitely reusing it.
 
     Args:
-        socket: a ZeroMQ asyncio socket, already bound to the worker endpoint.
+        socket: a ZeroMQ asyncio socket, already connected to the worker endpoint.
             The client will not attempt to close it. No read operation must be
             attempted by external code while the client exists. New write,
             connect and binds should not be a problem.
+       endpoint: a ZeroMQ ednpoint string to the worker. The client will create
+            its own socket and destroy it in the end, using the global sync context.
     """
 
     # For our sanity, below this point, by 'task' here we need task _name_, except for the
     # 'tasks' public argument itself. The tasks themselves are called 'details'
 
-    def __init__(self, socket):
+    def __init__(self, socket=None, endpoint=None):
+        if (socket is None ) == (endpoint is None):
+            raise ValueError('Exactly one of endpoint or socket must be specified')
+
+        self.close_socket = False
+        if socket is None:
+            socket = zmq.asyncio.Context.instance().socket(zmq.DEALER)
+            socket.connect(endpoint)
+            self.close_socket = True
         self.socket = socket
 
         # Public attributes: counters for the number of SUBMITs sent and DOING
@@ -41,6 +58,10 @@ class Client:
         # Ordered !
         self._finals = list()
         self._resources = dict()
+
+    def __delete__(self):
+        if self.close_socket:
+            self.socket.close()
 
     def add(self, tasks):
         """

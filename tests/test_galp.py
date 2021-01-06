@@ -145,6 +145,22 @@ def client(make_client, worker):
     return make_client(endpoint)
 
 @pytest.fixture
+def make_standalone_client():
+    """Factory fixture for client managing its own sockets"""
+    def _make(endpoint):
+        return galp.client.Client(endpoint=endpoint)
+    return _make
+
+@pytest.fixture(params=['preconnected', 'standalone'])
+def any_client(request, make_client, make_standalone_client, worker):
+    """A client connected to a worker, with different creation methods"""
+    endpoint, _ = worker
+    if request.param == 'preconnected':
+        return make_client(endpoint)
+    else:
+        return make_standalone_client(endpoint)
+
+@pytest.fixture
 def client_pair(async_worker_socket):
     """A pair of clients connected to the same socket and worker.
 
@@ -306,12 +322,12 @@ async def test_async_socket(async_worker_socket):
     assert ans == [b'ILLEGAL']
 
 @pytest.mark.asyncio
-async def test_client(client):
+async def test_client(any_client):
     """Test simple functionnalities of client"""
     task = galp.steps.galp_hello()
 
     ans = await asyncio.wait_for(
-        client.collect(task),
+        any_client.collect(task),
         3)
 
     assert ans == [42,]
