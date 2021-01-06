@@ -219,6 +219,7 @@ def test_signals(worker, sig):
     [b'GET'],
     [b'GET', b'one', b'two'],
     [b'SUBMIT'],
+    [b'SUBMIT', b'RABBIT'],
     [b'SUBMIT', b'step', b'keyword_without_value'],
     ])
 def test_illegals(worker_socket, msg):
