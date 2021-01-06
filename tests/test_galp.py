@@ -8,6 +8,8 @@ import logging
 import json
 import asyncio
 import itertools
+import signal
+import time
 
 import zmq
 import zmq.asyncio
@@ -194,6 +196,23 @@ def test_shutdown(ctx, worker, fatal_order):
     # Note: we only close on normal termination, else we rely on the fixture
     # finalization to set the linger before closing.
     socket.close()
+
+@pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
+def test_signals(worker, sig):
+    """Test for clean termination on INT and TERM)"""
+
+    endpoint, worker_handle = worker
+
+    assert worker_handle.poll() is None
+
+    # Race condition, process exists before signal handlers do
+    # Not a problem in practice, before handlers are set there's no cleanup to
+    # do anyway
+    # We can plug a 'ready' event from worker later on
+    time.sleep(0.1)
+    worker_handle.send_signal(sig)
+
+    assert worker_handle.wait(timeout=4) == 0
 
 @pytest.mark.parametrize('msg', [
     [b'RABBIT'],

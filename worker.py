@@ -10,6 +10,7 @@ within the job and easy to patch if the code has to be run somewhere else.
 
 import sys
 import asyncio
+import signal
 import zmq
 import zmq.asyncio
 import logging
@@ -29,10 +30,6 @@ class IllegalRequestError(Exception):
     message back"""
     pass
 
-# Process-wide mem cache. Not thread-safe blah blah blah
-_g_mem_cache = {}
-    
-
 async def main(args):
     """Entry point for the worker program
 
@@ -40,25 +37,39 @@ async def main(args):
         args: an object whose attributes are the the parsed arguments, as
             returned by argparse.ArgumentParser.parse_args.
     """
+    # Signal handler
+    terminate = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGINT, terminate.set)
+    loop.add_signal_handler(signal.SIGTERM, terminate.set)
+
     logging.warning("Worker starting on %s", args.endpoint)
     logging.warning("Caching to %s", args.cachedir)
 
-    t = asyncio.create_task(log_heartbeat())
+    tasks = []
+    tasks.append(asyncio.create_task(log_heartbeat()))
 
     cache = galp.cache.CacheStack(args.cachedir)
 
-    await listen(args.endpoint, cache)
+    tasks.append(asyncio.create_task(listen(args.endpoint, cache, terminate)))
+
+    await terminate.wait()
+
+    for task in tasks:
+        task.cancel()
+
+    await asyncio.gather(*tasks, return_exceptions=True)
 
     logging.warning("Worker terminating normally")
 
 async def log_heartbeat():
     i = 0
     while True:
-        logging.warning("Worker step %d", i)
-        await asyncio.sleep(3)
+        logging.warning("Worker heartbeat %d", i)
+        await asyncio.sleep(10)
         i += 1
 
-async def listen(endpoint, cache):
+async def listen(endpoint, cache, terminate):
     ctx = zmq.asyncio.Context()
     socket = ctx.socket(zmq.DEALER)
     socket.bind(endpoint)
@@ -85,6 +96,8 @@ async def listen(endpoint, cache):
             except IllegalRequestError:
                 logging.warning('Bad request')
                 await send_illegal(socket)
+
+    terminate.set()
     
 async def send_illegal(socket):
     """Send a straightforward error message back so that hell is raised where
