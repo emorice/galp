@@ -18,6 +18,7 @@ import pytest
 import galp.graph
 import galp.steps
 import galp.client
+import galp.tests.steps
 
 
 # Fixtures
@@ -40,6 +41,7 @@ def make_worker(tmp_path):
         phandle = subprocess.Popen([
             sys.executable,
             '-m', 'galp.worker',
+            '-c', 'galp/tests/config.toml',
             endpoint, str(tmp_path)
             ])
         phandles.append(phandle)
@@ -374,10 +376,20 @@ async def test_mem_cache(client_pair):
     """
     await assert_cache(client_pair)
 
-
 @pytest.mark.asyncio
 async def test_fs_cache(disjoined_client_pair):
     """
     Test worker-side fs cache
     """
     await assert_cache(disjoined_client_pair)
+
+@pytest.mark.asyncio
+async def test_plugin(client):
+    """
+    Test running a task defined in a plug-in
+    """
+    task = galp.tests.steps.plugin_hello()
+
+    ans = await asyncio.wait_for(client.collect(task), 3)
+
+    assert ans == ['6*7']
