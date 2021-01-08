@@ -27,19 +27,20 @@ def med_client(med_endpoint):
 # Tests
 # =====
 
-@pytest.mark.xfail
 @pytest.mark.asyncio
 async def test_gtex_size(med_client):
     """Test that we can access the GTEx files"""
     
     task = file_sizes(gtex_gt_paths())
 
-    sizes = await asyncio.wait_for(med_client.collect(task), 3)
+    ans = await asyncio.wait_for(med_client.collect(task), 3)
+    sizes = ans[0]
 
     assert 'files' in sizes
-    assert len(sizes['files']) == 23
+    assert len(sizes['files']) == 1 # Gtex has one big genome file
     assert all(s['size'] == int(s['size']) and s['size'] > 0 for s in sizes['files'])
-    logging.warning('Total size %d', sum(s['sizes'] for s in sizes['files']))
+    total = sum(s['size'] for s in sizes['files'])
+    logging.warning('Total size %d GiB (%d)', total // (2**30), total)
 
 
 
