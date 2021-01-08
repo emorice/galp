@@ -185,16 +185,21 @@ class Worker:
     @event.on('SUBMIT')
     async def process_task(self, msg):
         """
-
-        Args:
-            socket: async zmq socket were to send DONE/DOING
-            handle: the parsed, but for now it's just a handle to put in messages
+        Actually run the task if not cached.
         """
+
+        validate(len(msg) >= 3) # SUBMIT step n_tags
+
         step_name = msg[1]
+        n_tags = int.from_bytes(msg[2], 'big')
         logging.warning('Received SUBMIT for step %s', step_name)
 
+        # Collect tags
+        argstack = msg[3:]
+        validate(len(argstack) >= n_tags) # Expected number of tags
+        vtags, argstack = argstack[:n_tags], argstack[n_tags:]
+
         # Collect args
-        argstack = msg[2:]
         argstack.reverse()
         arg_names = []
         kwarg_names = {}
@@ -208,7 +213,7 @@ class Worker:
             else:
                 kwarg_names[keyword] = arg_handle
 
-        handle = graph.Task.gen_name(step_name, arg_names, kwarg_names)
+        handle = graph.Task.gen_name(step_name, arg_names, kwarg_names, vtags)
 
         # Cache hook:
         if await self.cache.contains(handle):
