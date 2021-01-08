@@ -21,15 +21,27 @@ class Step():
 class Task():
     """
     Object wrapping a step invocation with its arguments
+
+    Args:
+        vtag: arbitrary object whose ascii() representation will be hashed and
+            used in name generation, thus invalidating any previous names each
+            time the vtag in the code is changed.
+        rerun: (bool) True if a unique seed should be added at each loading and
+          included as a vtag, causing unique names to be generated
+          and the step to be rerun for each python client session.
     """
-    def __init__(self, step, args, kwargs):
+    def __init__(self, step, args, kwargs, rerun=False, vtag=None):
         self.step = step
         self.args = args
         self.kwargs = kwargs
+        self.vtags = (
+            [ self.hash_one(ascii(vtag).encode('ascii')) ]
+            if vtag is not None else [])
         self.name = self.gen_name(
             step.key,
             [ arg.name for arg in args ],
-            { k.encode('ascii') : v.name for k, v in kwargs.items() }
+            { k.encode('ascii') : v.name for k, v in kwargs.items() },
+            [ tag for tag in self.vtags ]
             )
 
     @property
@@ -40,18 +52,23 @@ class Task():
         return deps
 
     @staticmethod
-    def gen_name(step_name, arg_names, kwarg_names):
+    def hash_one(payload):
+        return hashlib.sha256(payload).digest()
+
+    @staticmethod
+    def gen_name(step_name, arg_names, kwarg_names, vtags):
         """Create a resource name.
 
         Args:
             step_name: bytes
             arg_names: list of bytes
             kwarg_names: bytes-keyed dict of bytes.
+            vtags: list of bytes
 
         Returns:
             digest as bytes.
 
-        We simply mash together the step name, and the args name in order.
+        We simply mash together the step name, the tags and the args name in order.
         The only difficulty is the order of keyword arguments, so we sort kwargs
         by keyword (in original byte representation).
         All input is sanitized by hexing it, then building a representation from
@@ -64,7 +81,15 @@ class Task():
 
         sortedkw = sorted(list(kwarg_names.items()))
 
+        # Step name
         m = _san(step_name)
+        # Version tags
+        m += b'['
+        m += b','.join(
+            [ _san(n) for n in vtags]
+            )
+        m += b']'
+        # Inputs
         m += b'('
         m += b','.join(
             [ _san(n) for n in arg_names]
@@ -74,12 +99,12 @@ class Task():
         m += b')'
         logging.warning("Hashed value is %s:", m)
 
-        return hashlib.sha256(m).digest()
+        return Task.hash_one(m)
 
 class StepSet(EventNamespace):
     """A collection of steps"""
 
-    def step(self, function):
+    def step(self, *decorated, **options):
         """Decorator to make a function a step.
 
         This has two effects:
@@ -88,13 +113,37 @@ class StepSet(EventNamespace):
               execute it. This object is the Task.
             * it register the function and information about it in a event
               namespace, so that it can be called from a key.
-              """
-        step = Step(function)
-        self.on(step.key)(step)
-        def _task_maker(*args, **kwargs):
-           return Task(step, args, kwargs)
 
-        return _task_maker
+        For convenience, the decorator can be applied in two fashions:
+        ```
+        @step
+        def foo():
+            pass
+        ```
+        or
+        ```
+        @step(param=value, ...)
+        def foo():
+            pass
+        ```
+        This is allowed because the decorator checks whether it was applied
+        directly to the function, or called with named arguments. In the second
+        case, note that arguments must be given by name for the call to be
+        unambiguous.
+
+        See Task for the possible options.
+        """
+        def _step_maker(function):
+            step = Step(function)
+            self.on(step.key)(step)
+            def _task_maker(*args, **kwargs):
+               return Task(step, args, kwargs, **options)
+            return _task_maker
+
+        if decorated:
+            return _step_maker(*decorated)
+        else:
+            return _step_maker
 
     def get(self, key):
         """More memorable shortcut for handler"""

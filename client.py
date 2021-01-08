@@ -190,9 +190,16 @@ class Client:
     async def submit(self, task):
         """Submit task with given name"""
         details = self._details[task]
+        # Step
         msg = [b'SUBMIT', details.step.key]
+        # Vtags
+        msg += [ len(details.vtags).to_bytes(1, 'big') ]
+        for tag in details.vtags:
+            msg += [ tag ]
+        # Pos args
         for arg in details.args:
             msg += [ b'', arg.name ]
+        # Kw args
         for kw, kwarg in details.kwargs.items():
             msg += [ kw.encode('ascii'), kwarg.name ]
         await self.socket.send_multipart(msg)

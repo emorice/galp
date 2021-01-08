@@ -256,9 +256,9 @@ def test_task(worker_socket):
 
     logging.warning('Calling task %s', step_name)
 
-    handle = galp.graph.Task.gen_name(step_name, [], {})
+    handle = galp.graph.Task.gen_name(step_name, [], {}, [])
 
-    worker_socket.send_multipart([b'SUBMIT', step_name])
+    worker_socket.send_multipart([b'SUBMIT', step_name, b'\x00'])
 
     ans = asserted_zmq_recv_multipart(worker_socket)
     assert ans == [b'DOING', handle]
@@ -287,13 +287,13 @@ def test_reference(worker_socket):
 
     task2 = galp.steps.galp_double(task1)
 
-    worker_socket.send_multipart([b'SUBMIT', task1.step.key])
+    worker_socket.send_multipart([b'SUBMIT', task1.step.key, b'\x00'])
     # doing
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)
     assert doing, done == ([b'DOING', task1.name], [b'DONE', task1.name])
 
-    worker_socket.send_multipart([b'SUBMIT', task2.step.key, b'', task1.name])
+    worker_socket.send_multipart([b'SUBMIT', task2.step.key, b'\x00', b'', task1.name])
 
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)
@@ -350,6 +350,20 @@ async def test_task_kwargs(client):
 
     assert tuple(ans) == (2, 2, -2)
 
+@pytest.mark.asyncio
+async def test_task_posargs(client):
+    two = galp.steps.galp_double()
+    four = galp.steps.galp_double(two)
+
+    ref = galp.steps.galp_sub(four, two)
+    opposite = galp.steps.galp_sub(two, four)
+
+    ans = await asyncio.wait_for(
+        client.collect(ref, opposite),
+        3)
+
+    assert tuple(ans) == (2, -2)
+
 async def assert_cache(clients):
     """
     Test worker-side cache.
@@ -393,3 +407,35 @@ async def test_plugin(client):
     ans = await asyncio.wait_for(client.collect(task), 3)
 
     assert ans == ['6*7']
+
+@pytest.mark.asyncio
+async def test_alt_decorator_syntax(client):
+    """
+    Test declaring a task with decorator called instead of applied.
+    """
+    task = galp.tests.steps.alt_decorator_syntax()
+
+    ans = await asyncio.wait_for(client.collect(task), 3)
+
+    assert ans == ['alt']
+
+@pytest.mark.asyncio
+async def test_vtags(client):
+    """
+    Exercises version tags
+    """
+    # Only tagged1 is legit
+    tasks = [
+        galp.tests.steps.tagged1(),
+        galp.tests.steps.tagged2(),
+        galp.tests.steps.untagged(),
+    ]
+
+    assert len(set(task.name for task in tasks)) == 3
+
+    ans = await asyncio.wait_for(client.collect(tasks[0]), 3)
+
+    assert ans == ['tagged']
+
+
+
