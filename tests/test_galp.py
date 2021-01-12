@@ -227,7 +227,7 @@ def test_signals(worker, sig):
     # Not a problem in practice, before handlers are set there's no cleanup to
     # do anyway
     # We can plug a 'ready' event from worker later on
-    time.sleep(0.1)
+    time.sleep(0.3)
     worker_handle.send_signal(sig)
 
     assert worker_handle.wait(timeout=4) == 0
