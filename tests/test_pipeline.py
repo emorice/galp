@@ -33,7 +33,7 @@ def med_endpoint():
 @pytest.fixture
 def local_endpoint():
     # Where to contact a worker running on the local machine
-    return 'ipc://var/worker.med.sock'
+    return 'ipc://var/worker.local.sock'
 
 @pytest.fixture
 def local_client(local_endpoint, tmp_path):
