@@ -1,6 +1,7 @@
 """
 General routines to build and operate on graphs of tasks.
 """
+import json
 import logging
 import hashlib
 
@@ -32,17 +33,24 @@ class Task():
     """
     def __init__(self, step, args, kwargs, rerun=False, vtag=None):
         self.step = step
-        self.args = args
-        self.kwargs = kwargs
+        self.args = [self.ensure_task(arg) for arg in args]
+        self.kwargs = { kw: self.ensure_task(arg) for kw, arg in kwargs.items() }
         self.vtags = (
             [ self.hash_one(ascii(vtag).encode('ascii')) ]
             if vtag is not None else [])
         self.name = self.gen_name(
             step.key,
-            [ arg.name for arg in args ],
-            { k.encode('ascii') : v.name for k, v in kwargs.items() },
+            [ arg.name for arg in self.args ],
+            { k.encode('ascii') : v.name for k, v in self.kwargs.items() },
             [ tag for tag in self.vtags ]
             )
+
+    @staticmethod
+    def ensure_task(obj):
+        """Wrap obj in a hereis Task if it does not seem to be a Task"""
+        if hasattr(obj, 'name') and hasattr(obj, 'dependencies'):
+            return obj
+        return HereisTask(obj)
 
     @property
     def dependencies(self):
@@ -100,6 +108,27 @@ class Task():
         logging.warning("Hashed value is %s:", m)
 
         return Task.hash_one(m)
+
+class HereisTask(Task):
+    """
+    Task wrapper for data provided direclty as arguments in graph building.
+
+    Args:
+        obj: arbitrary object to wrap.
+    """
+
+    def __init__(self, obj):
+        self.hereis = obj
+
+        # Todo: more robust hashing, but this is enough for most case where
+        # hereis resources are a good fit (more complex objects would tend to be
+        # actual step outputs)
+        self.name = self.hash_one(json.dumps(obj).encode('ascii'))
+
+    @property
+    def dependencies(self):
+        return []
+
 
 class StepSet(EventNamespace):
     """A collection of steps"""

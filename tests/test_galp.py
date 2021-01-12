@@ -437,5 +437,17 @@ async def test_vtags(client):
 
     assert ans == ['tagged']
 
+@pytest.mark.asyncio
+async def test_inline(client):
+    """Test using non-task arguments"""
+
+    task = galp.steps.galp_sub(13, 2)
+    task2 = galp.steps.galp_sub(b=2, a=13)
+
+    ans = await asyncio.wait_for(
+        client.collect(task, task2),
+        3)
+
+    assert ans == [11, 11]
 
 
