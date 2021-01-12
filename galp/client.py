@@ -121,6 +121,8 @@ class Client:
         to be submitted, and if so do it.
 
         As it calls submit, it can block if submission can not be made.
+
+        TODO: this should actually be called on_done
         """
         done_task = task_name
 
@@ -180,6 +182,7 @@ class Client:
         if done_task in self._finals:
             await self.get(done_task)
 
+
     async def on_put(self, msg):
         """
         Cannot actually block but async anyway for consistency
@@ -188,8 +191,15 @@ class Client:
         self._resources[msg[1]] = json.loads(msg[2])
 
     async def submit(self, task):
-        """Submit task with given name"""
+        """Submit task with given name, or load a hereis-task"""
         details = self._details[task]
+
+        if hasattr(details, 'hereis'):
+            self._resources[task] = details.hereis
+            # todo: refactor, the line aboves does more than its name implies
+            await self.submit_ready_dependents(task)
+            return
+            
         # Step
         msg = [b'SUBMIT', details.step.key]
         # Vtags
