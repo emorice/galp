@@ -449,5 +449,3 @@ async def test_inline(client):
         3)
 
     assert ans == [11, 11]
-
-

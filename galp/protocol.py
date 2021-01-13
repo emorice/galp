@@ -21,13 +21,30 @@ class Protocol:
 
     # Callback methods
     # ================
+    # The methods below are just placeholders that double as documentation.
     async def on_get(self, name):
         """A `GET` request was received for resource `name`"""
-        self.on_unhandled(b'GET')
+        return self.on_unhandled(b'GET')
 
     async def on_put(self, name, obj):
         """A `PUT` message was received for resource `name` with object `obj`"""
-        self.on_unhandled(b'PUT')
+        return self.on_unhandled(b'PUT')
+
+    async def on_doing(self, name):
+        """A `DOING` request was received for resource `name`"""
+        return self.on_unhandled(b'DOING')
+
+    async def on_done(self, name):
+        """A `DONE` request was received for resource `name`"""
+        return self.on_unhandled(b'DONE')
+
+    async def on_exit(self):
+        """An `EXIT` message was received"""
+        return self.on_unhandled(b'EXIT')
+
+    async def on_illegal(self):
+        """An `ILLEGAL` message was received"""
+        return self.on_unhandled(b'ILLEGAL')
 
     def on_invalid(self, reason):
         """
@@ -40,6 +57,7 @@ class Protocol:
         A message without an overriden callback was received.
         """
         logging.warning("Unhandled GALP verb %s", verb.decode('ascii'))
+        return False # Not fatal by default
 
 
     # Send methods
@@ -56,15 +74,58 @@ class Protocol:
     async def not_found(self, name):
         await self.send_message([b'NOTFOUND', name])
 
+    async def submit(self, task):
+        """Send submit for given task object.
+
+        Hereis-tasks should not be passed at all and will trigger an error.
+        Handle them in a wrapper or override.
+        """
+
+        if hasattr(task, 'hereis'):
+            raise ValueError('Here-is tasks must never be passed to '
+                'Protocol layer')
+
+        # Step
+        msg = [b'SUBMIT', task.step.key]
+        # Vtags
+        msg += [ len(task.vtags).to_bytes(1, 'big') ]
+        for tag in task.vtags:
+            msg += [ tag ]
+        # Pos args
+        for arg in task.args:
+            msg += [ b'', arg.name ]
+        # Kw args
+        for kw, kwarg in task.kwargs.items():
+            msg += [ kw.encode('ascii'), kwarg.name ]
+        await self.send_message(msg)
+
+
     # Main logic methods
     # ==================
     async def on_message(self, msg):
-        """Parse given message, calling callbacks as needed."""
+        """Parse given message, calling callbacks as needed.
+
+        Returns:
+            Bool, whether message processing should stop. This is the preferred
+            way to pass back to the socket listener the information that no
+            further messages are expected. Since None evaluate to False in
+            boolean context, any handler without an explicit `return False` is
+            interpreted as a continuation signal.
+
+        Note: handler for invalid incoming messages does not follow this scheme,
+            as an invalid incoming message is never interpreted as a normal end of
+            communication. Raise exceptions from the handler if you want to
+            e.g. abort on invalid messages. On the other hand, returning a stop
+            condition on a 'ILLEGAL' message works, since it is a regular
+            message that signals a previous error.
+        """
+        self.validate(len(msg) > 0, 'Empty message')
         logging.warning('Protocol: verb %s', msg[0].decode('ascii'))
         try:
-            await self.handler(str(msg[0], 'ascii'))(msg)
+            return await self.handler(str(msg[0], 'ascii'))(msg)
         except NoHandlerError:
             self.validate(False, 'No such verb')
+        return False
 
     async def send_message(self, msg):
         """Callback method to send a message just built.
@@ -87,6 +148,16 @@ class Protocol:
         if not condition:
             self.on_invalid(reason)
 
+    @event.on('EXIT')
+    async def _on_exit(self, msg):
+        self.validate(len(msg) == 1, 'EXIT with args')
+        return await self.on_exit()
+
+    @event.on('ILLEGAL')
+    async def _on_illegal(self, msg):
+        self.validate(len(msg) == 1, 'ILLEGAL with args')
+        return await self.on_illegal()
+
     @event.on('GET')
     async def _on_get(self, msg):
         self.validate(len(msg) >= 2, 'GET without a name')
@@ -94,7 +165,25 @@ class Protocol:
 
         name = msg[1]
 
-        await self.on_get(name)
+        return await self.on_get(name)
+
+    @event.on('DOING')
+    async def _on_doing(self, msg):
+        self.validate(len(msg) >= 2, 'DOING without a name')
+        self.validate(len(msg) <= 2, 'DOING with too many names')
+
+        name = msg[1]
+
+        return await self.on_doing(name)
+
+    @event.on('DONE')
+    async def _on_done(self, msg):
+        self.validate(len(msg) >= 2, 'DONE without a name')
+        self.validate(len(msg) <= 2, 'DONE with too many names')
+
+        name = msg[1]
+
+        return await self.on_done(name)
 
     @event.on('PUT')
     async def _on_put(self, msg):
@@ -103,13 +192,11 @@ class Protocol:
         name = msg[1]
         obj = json.loads(msg[2])
 
-        await self.on_put(name, obj)
-
-
+        return await self.on_put(name, obj)
 
     @event.on('SUBMIT')
     async def _on_submit(self, msg):
-        self.validate(len(msg) >= 3, 'SUBMIT without step of tag count') # SUBMIT step n_tags
+        self.validate(len(msg) >= 3, 'SUBMIT without step or tag count') # SUBMIT step n_tags
 
         step_name = msg[1]
         n_tags = int.from_bytes(msg[2], 'big')
@@ -135,5 +222,4 @@ class Protocol:
 
         handle = galp.graph.Task.gen_name(step_name, arg_names, kwarg_names, vtags)
 
-        await self.on_submit(handle, step_name, arg_names, kwarg_names)
-
+        return await self.on_submit(handle, step_name, arg_names, kwarg_names)

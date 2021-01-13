@@ -32,11 +32,6 @@ class IllegalRequestError(Exception):
     message back"""
     pass
 
-def validate(condition):
-    """Shortcut to raise Illegals"""
-    if not condition:
-        raise IllegalRequestError
-
 class ConfigError(Exception):
     pass
 
@@ -125,10 +120,10 @@ class Worker(Protocol):
             await asyncio.sleep(10)
             i += 1
 
-    async def send_message(self, msg):
-        await self.socket.send_multipart(msg)
-
     async def listen(self, endpoint):
+        """Main message processing loop of the worker.
+
+        Only supports one socket at once for now."""
         assert self.socket is None
 
         ctx = zmq.asyncio.Context()
@@ -137,26 +132,15 @@ class Worker(Protocol):
 
         self.socket = socket
 
+        terminate = False
         try:
-            while True:
+            while not terminate:
                 msg = await socket.recv_multipart()
-                if not len(msg):
-                    logging.warning('Received illegal empty message')
+                try:
+                    terminate = await self.on_message(msg)
+                except IllegalRequestError:
+                    logging.warning('Bad request')
                     await self.send_illegal()
-                elif len(msg) == 1:
-                    if msg[0] in [b'EXIT', b'ILLEGAL']:
-                        logging.warning('Received %s, terminating', msg[0])
-                        break
-                    else:
-                        logging.warning('Received illegal %s', msg[0])
-                        await self.send_illegal()
-                # Below this point at least two parts
-                else:
-                    try:
-                        await self.on_message(msg)
-                    except IllegalRequestError:
-                        logging.warning('Bad request')
-                        await self.send_illegal()
         finally:
             socket.close(linger=1)
             ctx.destroy()
@@ -166,13 +150,28 @@ class Worker(Protocol):
 
     async def send_illegal(self):
         """Send a straightforward error message back so that hell is raised where
-        due"""
+        due.
+
+        Note: this is technically part of the Protocol and should probably be
+            moved there.
+        """
         await self.socket.send(b'ILLEGAL')
 
     # Protocol handlers
     # =================
+    async def send_message(self, msg):
+        await self.socket.send_multipart(msg)
+
     def on_invalid(self, msg):
         raise IllegalRequestError
+
+    async def on_illegal(self):
+        logging.error('Received ILLEGAL, terminating')
+        return True
+
+    async def on_exit(self):
+        logging.warning('Received EXIT, terminating')
+        return True
 
     async def on_get(self, handle):
         logging.warning('Received GET for %s', handle.hex())

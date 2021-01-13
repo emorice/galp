@@ -119,21 +119,6 @@ class Client(Protocol):
 
         return new_top_level
 
-    async def submit_ready_dependents(self, task_name):
-        """Given that task_name just finished, check if any dependent is ready
-        to be submitted, and if so do it.
-
-        As it calls submit, it can block if submission can not be made.
-
-        TODO: this should actually be called on_done
-        """
-        done_task = task_name
-
-        self._done[done_task] = True
-        for dept in self._dependents[done_task]:
-            if all(self._done[sister_dep] for sister_dep in self._dependencies[dept]):
-                await self.submit(dept)
-
     async def collect(self, *tasks):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
@@ -154,67 +139,28 @@ class Client(Protocol):
         # you start two you will miss the final events.
         # Todo: timeouts
         logging.warning('Now reacting to completion events')
-        while True:
+        terminate = False
+        while not terminate:
             msg = await self.socket.recv_multipart()
-            logging.warning('Received: %s', msg[0])
-            assert msg[0] != b'ILLEGAL'
-            # Custom handlers
-            if msg[0] == b'DONE':
-                await self.on_done(msg)
-            elif msg[0] == b'DOING':
-                logging.warning('Doing: %s', msg[1].hex())
-                self.run_count[msg[1]] += 1
-            else:
-                # Proper handlers
-                await self.on_message(msg)
-                # TODO: refactor, it's a bit awkard to insert the termination
-                # hook here
-                if msg[0] == b'PUT':
-                    if all(task in self._resources for task in self._finals):
-                        break
+            terminate = await self.on_message(msg)
 
         return [self._resources[task] for task in self._finals]
 
-    # Custom handlers, TODO: remove
-    # =============================
-    async def on_done(self, msg):
-        """
+    # Custom protocol sender
+    # ======================
 
-        Sends new requests, so can block
-        """
-        # todo: validate !
-        done_task = msg[1]
-
-        await self.submit_ready_dependents(done_task)
-
-        if done_task in self._finals:
-            await self.get(done_task)
-
-    async def submit(self, task):
-        """Submit task with given name, or load a hereis-task"""
-        details = self._details[task]
+    async def submit(self, task_name):
+        """Loads details, handles hereis, and manage stats"""
+        details = self._details[task_name]
 
         if hasattr(details, 'hereis'):
-            self._resources[task] = details.hereis
-            # todo: refactor, the line aboves does more than its name implies
-            await self.submit_ready_dependents(task)
+            self._resources[task_name] = details.hereis
+            await self.on_done(task_name)
             return
-            
-        # Step
-        msg = [b'SUBMIT', details.step.key]
-        # Vtags
-        msg += [ len(details.vtags).to_bytes(1, 'big') ]
-        for tag in details.vtags:
-            msg += [ tag ]
-        # Pos args
-        for arg in details.args:
-            msg += [ b'', arg.name ]
-        # Kw args
-        for kw, kwarg in details.kwargs.items():
-            msg += [ kw.encode('ascii'), kwarg.name ]
-        await self.socket.send_multipart(msg)
 
-        self.submitted_count[task] += 1
+        r = await super().submit(details)
+        self.submitted_count[task_name] += 1
+        return r
 
     # Protocol callbacks
     # ==================
@@ -231,6 +177,38 @@ class Client(Protocol):
 
     async def on_put(self, name, obj):
         """
-        Cannot actually block but async anyway for consistency
+        Cannot actually block but async anyway for consistency.
+
+        Includes a hook to return a stop condition if all final resources are
+        loaded.
         """
         self._resources[name] = obj
+
+        terminate = all(task in self._resources for task in self._finals)
+        return terminate
+
+    async def on_done(self, done_task):
+        """Given that done_task just finished, mark it as done, submit any
+        dependent ready to be submitted, and send GETs for final tasks.
+
+        """
+
+        self._done[done_task] = True
+
+        for dept in self._dependents[done_task]:
+            if all(self._done[sister_dep] for sister_dep in self._dependencies[dept]):
+                await self.submit(dept)
+
+        # FIXME: we should skip that for here-is tasks, but that's a convoluted,
+        # unsupported case for now
+        if done_task in self._finals:
+            await self.get(done_task)
+
+    async def on_doing(self, task):
+        """Just updates statistics"""
+        logging.warning('Doing: %s', task.hex())
+        self.run_count[task] += 1
+
+    async def on_illegal(self):
+        """Should never happen"""
+        assert False
