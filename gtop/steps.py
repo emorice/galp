@@ -52,13 +52,22 @@ def file_sizes(paths):
         }
 
 @export.step
-def vcf_to_hdf(paths, out_dir):
+def vcf_to_hdf(paths, out_dir, batch_size, max_batches=0):
     """Simple GT parser from vcf.gz that loads into an hdf file.
 
+    Args:
+        paths: list of paths to files to process, one output file will be
+            created for each.
+        out_dir: Path to directory where to place resulting files. Beware of
+            keeping the same level of storage security.
+        batch_size: how many lines to process at once.
+        max_batches: if non-zero, stop after processing at most this number of
+            batches, useful to test on a part of a large file
     TODO: not hardened against badly-constructed files
     """
     out_paths = { 'files': [] }
     for path in paths:
+        ts_start = time.time()
         with gzip.open(path) as in_fd:
             lines = iter(in_fd)
 
@@ -69,8 +78,7 @@ def vcf_to_hdf(paths, out_dir):
             n_samples = len(columns) - n_fixed_columns
 
             # Output file
-            ts = time.time()
-            hdf_path = os.path.join(out_dir, str(ts) + '.h5')
+            hdf_path = os.path.join(out_dir, str(ts_start) + '.h5')
             out_fd = tables.open_file(hdf_path, mode='w')
             out_array = out_fd.create_earray('/', 'gt',
                 shape=(0, n_samples),
@@ -83,11 +91,15 @@ def vcf_to_hdf(paths, out_dir):
             data_columns = (non_data_pattern.sub(b'', line) for line in lines)
 
             gt_pattern = re.compile(rb'([^:\t])(\||/)([^:\t]):?[^\t]*(\t|$)')
-            gt_tsv = (gt_pattern.sub(rb'\1\t\3\4', line) for line in data_columns)
+            gt_tsv_missing = (gt_pattern.sub(rb'\1\t\3\4', line) for line in data_columns)
+
+            missing_pattern = re.compile(rb'\.')
+            gt_tsv = (missing_pattern.sub(rb'nan', line) for line in gt_tsv_missing)
 
             # Actual batch processing
-            batch_size = config.vcf_batch_size
-            while True:
+            variants = 0
+            batches = 0
+            while True and (batches < max_batches or not max_batches):
                 tsv_batch = (line for _, line in zip(range(batch_size), gt_tsv))
                 # There is no easy way to check if a batch is empty without a
                 # copy, so just let numpy deal with it
@@ -100,9 +112,23 @@ def vcf_to_hdf(paths, out_dir):
                 dosage = batch[:,::2] + batch[:,1::2]
 
                 out_array.append(dosage)
+                variants += dosage.shape[0]
+                batches += 1
 
             out_fd.close()
 
-            out_paths['files'].append({'path': hdf_path})
+            details = {
+                'path': hdf_path,
+                'variants': variants,
+                'samples': n_samples,
+                'compressed_size': in_fd.fileobj.tell(),
+                'decompressed_size': in_fd.tell(),
+                'batches': batches,
+                'wall_time_s': time.time() - ts_start
+            }
+            details['compression_ratio'] = (details['decompressed_size'] / 
+                details['compressed_size'])
+
+            out_paths['files'].append(details)
     return out_paths
 

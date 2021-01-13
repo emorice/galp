@@ -7,6 +7,7 @@ import sys
 import asyncio
 import subprocess
 import logging
+import json
 
 import pytest
 
@@ -19,7 +20,7 @@ import tables
 import galp.client
 import gtop.steps
 # Often used steps
-from gtop.steps import file_sizes, gtex_gt_paths, extra_data_dir
+from gtop.steps import file_sizes, gtex_gt_paths, extra_data_dir, safe_data_dir
 import tests.steps
 
 # Fixtures
@@ -59,11 +60,15 @@ def med_client(med_endpoint):
     return galp.client.Client(endpoint=med_endpoint)
 
 @pytest.fixture
+def sample_vcf_path():
+    return 'tests/assets/sample.vcf.gz'
+
+@pytest.fixture
 def expected_gt():
     """A numpy array of the expected content of the assets/sample.vcf.gz file"""
     return np.array([[1., 1.],
        [1., 2.],
-       [1., 0.],
+       [np.nan, 0.],
        [1., 2.]])
 
 # Tests
@@ -86,23 +91,47 @@ async def test_gtex_size(med_client):
 
 
 @pytest.mark.asyncio
-async def test_vcf_to_hdf(local_client, expected_gt):
+async def test_vcf_to_hdf(local_client, sample_vcf_path, expected_gt):
     """Test streaming extraction of data from possibly large vcf file to hdf"""
 
-    task = gtop.steps.vcf_to_hdf(tests.steps.test_vcf_paths(),
-        extra_data_dir())
+    task = gtop.steps.vcf_to_hdf([sample_vcf_path],
+        extra_data_dir(), batch_size=2)
 
     ans = (await asyncio.wait_for(local_client.collect(task), 2))[0]
     assert 'files' in ans
     assert len(ans['files']) == 1
-    hdf_path = ans['files'][0]['path']
+
+    details = ans['files'][0]
+    hdf_path = details['path']
 
     assert os.path.isfile(hdf_path)
+    assert details['samples'] == 2
+    assert details['variants'] == 4
+    assert details['compressed_size'] == os.stat(sample_vcf_path).st_size
+    assert details['decompressed_size'] > details['compressed_size']
+    assert details['compression_ratio'] > 1.0
+    assert details['wall_time_s'] > 0
+    logging.warning('VCF details: %s', json.dumps(details, indent=1))
 
     fd = tables.open_file(hdf_path)
 
     data = fd.root.gt.read()
 
-    assert (data == expected_gt).all()
+    np.testing.assert_array_equal(data, expected_gt)
 
     fd.close()
+
+@pytest.mark.asyncio
+async def test_gtex_gt_hdf(med_client):
+    """
+    Tests converting the beginning og GTEx GT to hdf and informally benchmark
+    """
+
+    task = gtop.steps.vcf_to_hdf(gtex_gt_paths(), safe_data_dir(),
+        batch_size=1000, max_batches=10)
+
+    details = (await asyncio.wait_for(med_client.collect(task), 60))[0]['files'][0]
+
+    logging.warning('VCF details: %s', json.dumps(details, indent=1))
+
+    assert details['variants'] == 10000
