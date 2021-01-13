@@ -23,7 +23,8 @@ import toml
 
 import galp.steps
 import galp.cache
-from galp import graph
+from galp.store import Store
+from galp.protocol import Protocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
 class IllegalRequestError(Exception):
@@ -90,10 +91,10 @@ async def main(args):
 
     await terminate.wait()
 
-    for task in tasks:
+    for task in tasks + worker.tasks:
         task.cancel()
 
-    for task in tasks:
+    for task in tasks + worker.tasks:
         try:
             await task
         except asyncio.CancelledError:
@@ -102,12 +103,20 @@ async def main(args):
 
     logging.warning("Worker terminating normally")
 
-class Worker:
+class Worker(Protocol):
     def __init__(self, terminate):
         self.terminate = terminate
         self.socket = None
+        self.tasks = []
 
-    event = EventNamespace()
+    @property
+    def cache(self):
+        return self._cache
+
+    @cache.setter
+    def cache(self, cache):
+        self._cache = cache
+        self.store = Store(cache, self)
 
     async def log_heartbeat(self):
         i = 0
@@ -115,6 +124,9 @@ class Worker:
             logging.warning("Worker heartbeat %d", i)
             await asyncio.sleep(10)
             i += 1
+
+    async def send_message(self, msg):
+        await self.socket.send_multipart(msg)
 
     async def listen(self, endpoint):
         assert self.socket is None
@@ -141,10 +153,7 @@ class Worker:
                 # Below this point at least two parts
                 else:
                     try:
-                        await self.handler(str(msg[0], 'ascii'))(msg)
-                    except NoHandlerError:
-                        logging.warning('No handler for event or step')
-                        await self.send_illegal()
+                        await self.on_message(msg)
                     except IllegalRequestError:
                         logging.warning('Bad request')
                         await self.send_illegal()
@@ -155,82 +164,83 @@ class Worker:
 
         self.terminate.set()
 
-    def handler(self, event_name):
-        """Shortcut to call handler methods"""
-        def _handler(*args, **kwargs):
-            return self.event.handler(event_name)(self, *args, **kwargs)
-        return _handler
-    
     async def send_illegal(self):
         """Send a straightforward error message back so that hell is raised where
         due"""
         await self.socket.send(b'ILLEGAL')
 
-    @event.on('GET')
-    async def on_get(self, msg):
-        validate(len(msg) == 2)
+    # Protocol handlers
+    # =================
+    def on_invalid(self, msg):
+        raise IllegalRequestError
 
-        handle = msg[1]
-
+    async def on_get(self, handle):
         logging.warning('Received GET for %s', handle.hex())
-
         try:
-            payload = json.dumps(await self.cache.get(handle)).encode('ascii')
+            await self.put(handle, await self.cache.get(handle))
             logging.warning('Cache Hit: %s', handle.hex())
-            await self.socket.send_multipart([b'PUT', handle, payload])
         except KeyError:
             logging.warning('Cache Miss: %s', handle.hex())
-            await self.socket.send_multipart([b'NOTFOUND', handle])
-    
-    @event.on('SUBMIT')
-    async def process_task(self, msg):
+            await self.not_found(handle)
+
+    async def on_submit(self, handle, step_key, arg_names, kwarg_names):
+        """Start processing the submission asynchronously.
+
+        This means returning immediately to the event loop, which allows
+        processing further messages needed for the task execution (resource
+        exchange, sub-tasks, ...).
+
+        This the only asynchronous handler, all others are semantically blocking.
+        """
+
+        task = asyncio.create_task(
+            self.run_submission(handle, step_key, arg_names, kwarg_names)
+            )
+
+        self.tasks.append(task)
+
+    async def on_put(self, name, obj):
+        """
+        Put object in store, thus releasing tasks waiting for data.
+        """
+        await self.store.put(name, obj)
+
+    # Task execution logic
+    # ====================
+
+    async def load(self, name):
+        """Get native resource object from any available source
+
+        Synchronous, either returns the object or raises.
+        """
+
+    async def run_submission(self, handle, step_key, arg_names, kwarg_names):
         """
         Actually run the task if not cached.
         """
 
-        validate(len(msg) >= 3) # SUBMIT step n_tags
+        logging.warning('Received SUBMIT for step %s', step_key)
 
-        step_name = msg[1]
-        n_tags = int.from_bytes(msg[2], 'big')
-        logging.warning('Received SUBMIT for step %s', step_name)
+        # End parsing, logic begins here
 
-        # Collect tags
-        argstack = msg[3:]
-        validate(len(argstack) >= n_tags) # Expected number of tags
-        vtags, argstack = argstack[:n_tags], argstack[n_tags:]
-
-        # Collect args
-        argstack.reverse()
-        arg_names = []
-        kwarg_names = {}
-        while argstack != []:
-            try:
-                keyword, arg_handle = argstack.pop(), argstack.pop()
-            except IndexError:
-                raise IllegalRequestError
-            if keyword == b'':
-                arg_names.append(arg_handle)
-            else:
-                kwarg_names[keyword] = arg_handle
-
-        handle = graph.Task.gen_name(step_name, arg_names, kwarg_names, vtags)
-
-        # Cache hook:
+        # Cache hook. For now we just check the local cache, later we'll have a
+        # central locking mechanism (replacing cache with store is not enough
+        # for that)
         if await self.cache.contains(handle):
             logging.warning('Cache hit on SUBMIT: %s', handle.hex())
             await self.socket.send_multipart([b'DONE', handle])
             return
         
-        step = self.step_dir.get(step_name)
+        step = self.step_dir.get(step_key)
 
         await self.socket.send_multipart([b'DOING', handle])
 
-        # Load args, from now just from cache
+        # Load args from store, i.e. either memory, disk, or network
         try:
             keywords = kwarg_names.keys()
             kwnames = [ kwarg_names[kw] for kw in keywords ]
             all_args = await asyncio.gather(*[
-                self.cache.get(name) for name in (arg_names + kwnames)
+                self.store.get(name) for name in (arg_names + kwnames)
                 ])
             args = all_args[:len(arg_names)]
             kwargs = {

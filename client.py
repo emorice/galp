@@ -13,7 +13,10 @@ import zmq.asyncio
 
 from collections import defaultdict
 
-class Client:
+from galp.store import Store
+from galp.protocol import Protocol
+
+class Client(Protocol):
     """
     A client that communicate with a worker.
 
@@ -155,20 +158,25 @@ class Client:
             msg = await self.socket.recv_multipart()
             logging.warning('Received: %s', msg[0])
             assert msg[0] != b'ILLEGAL'
+            # Custom handlers
             if msg[0] == b'DONE':
                 await self.on_done(msg)
             elif msg[0] == b'DOING':
                 logging.warning('Doing: %s', msg[1].hex())
                 self.run_count[msg[1]] += 1
-            elif msg[0] == b'PUT':
-                await self.on_put(msg)
-                if all(task in self._resources for task in self._finals):
-                    break
             else:
-                logging.warn('Unexpected', msg[0].hex())
+                # Proper handlers
+                await self.on_message(msg)
+                # TODO: refactor, it's a bit awkard to insert the termination
+                # hook here
+                if msg[0] == b'PUT':
+                    if all(task in self._resources for task in self._finals):
+                        break
 
         return [self._resources[task] for task in self._finals]
 
+    # Custom handlers, TODO: remove
+    # =============================
     async def on_done(self, msg):
         """
 
@@ -181,14 +189,6 @@ class Client:
 
         if done_task in self._finals:
             await self.get(done_task)
-
-
-    async def on_put(self, msg):
-        """
-        Cannot actually block but async anyway for consistency
-        """
-        # todo: validate !
-        self._resources[msg[1]] = json.loads(msg[2])
 
     async def submit(self, task):
         """Submit task with given name, or load a hereis-task"""
@@ -216,8 +216,21 @@ class Client:
 
         self.submitted_count[task] += 1
 
-    async def get(self, task):
-        """Send get for task with given name"""
-        msg = [b'GET', task]
+    # Protocol callbacks
+    # ==================
+    async def send_message(self, msg):
         await self.socket.send_multipart(msg)
 
+    async def on_get(self, name):
+        try:
+            await self.put(name, self._resources[name])
+            logging.warning('Client GET on %s', name.hex())
+        except KeyError:
+            await self.not_found(name)
+            logging.warning('Client missed GET on %s', name.hex())
+
+    async def on_put(self, name, obj):
+        """
+        Cannot actually block but async anyway for consistency
+        """
+        self._resources[name] = obj
