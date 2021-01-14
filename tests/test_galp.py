@@ -2,6 +2,7 @@
 Generic tests for galp
 """
 
+import os
 import sys
 import subprocess
 import logging
@@ -10,6 +11,7 @@ import asyncio
 import itertools
 import signal
 import time
+import pstats
 
 import zmq
 import zmq.asyncio
@@ -449,3 +451,17 @@ async def test_inline(client):
         3)
 
     assert ans == [11, 11]
+
+@pytest.mark.asyncio
+async def test_profiling(client):
+    """Tests the integrated python profiler"""
+    task = galp.tests.steps.profile_me(27)
+    ans = await asyncio.wait_for(client.collect(task), 3)
+    assert ans == [196418]
+
+    path = '/tmp/galp_prof/' + task.name.hex() + '.profile'
+
+    assert os.path.isfile(path)
+
+    stats = pstats.Stats(path)
+    stats.print_stats()
