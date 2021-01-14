@@ -23,16 +23,15 @@ import toml
 
 import galp.steps
 import galp.cache
+from galp.config import ConfigError
 from galp.store import Store
 from galp.protocol import Protocol
+from galp.profiler import Profiler
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
 class IllegalRequestError(Exception):
     """Base class for all badly formed requests, triggers sending an ILLEGAL
     message back"""
-    pass
-
-class ConfigError(Exception):
     pass
 
 def load_steps(plugin_names):
@@ -81,6 +80,8 @@ async def main(args):
 
     worker.cache = galp.cache.CacheStack(args.cachedir)
     worker.step_dir = step_dir
+
+    worker.profiler = Profiler(config.get('profile'))
 
     tasks.append(asyncio.create_task(worker.listen(args.endpoint)))
 
@@ -255,10 +256,9 @@ class Worker(Protocol):
             raise IllegalRequestError
 
         # This may block for a long time, by design
-        # work work work work
         # the **kwargs syntax works even for invalid identifiers it seems ?
         try:
-            result = step.function(*args, **kwargs)
+            result = self.profiler.wrap(handle, step)(*args, **kwargs)
         except:
             # TODO: define application errors
             raise
