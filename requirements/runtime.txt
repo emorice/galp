@@ -2,3 +2,4 @@ pyzmq==20.0.0
 diskcache==5.1.0
 toml==0.10.2
 tables==3.6.1
+llvmlite==0.35.0

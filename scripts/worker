@@ -8,7 +8,7 @@ case "$1" in
 		fi
 		. var/venv/bin/activate
 		pip install -r requirements/runtime.txt
-		python3 -m galp.worker -c 'config/worker.toml' \
+		python3 -m galp.worker -c 'tests/config/worker.toml' \
             'ipc://var/worker.sock' 'var/cache'
 		;;
 esac

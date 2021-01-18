@@ -89,7 +89,6 @@ async def test_gtex_size(med_client):
     total = sum(s['size'] for s in sizes['files'])
     logging.warning('Total size %d GiB (%d)', total // (2**30), total)
 
-
 @pytest.mark.asyncio
 async def test_vcf_to_hdf(local_client, sample_vcf_path, expected_gt):
     """Test streaming extraction of data from possibly large vcf file to hdf"""

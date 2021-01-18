@@ -1,1 +1,5 @@
 steps = [ "gtop.steps", "tests.steps" ]
+
+#[profile]
+#dir = "var/profile"
+#steps = ["vcf_to_hdf$"]

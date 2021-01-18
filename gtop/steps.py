@@ -7,6 +7,8 @@ import time
 import gzip
 import re
 import warnings
+from ctypes import POINTER, c_double
+from llvmlite import ir
 
 import numpy as np
 import tables
@@ -15,6 +17,9 @@ import galp.graph
 
 # Todo: should be moved to an injectable at some point
 import local.config as config
+
+from gtop.parsing.vcf import vcf_calls_auto
+from gtop.parsing.autocompile import a_to_function
 
 export = galp.graph.StepSet()
 
@@ -51,7 +56,7 @@ def file_sizes(paths):
             } for path in paths ]
         }
 
-@export.step
+@export.step(vtag='blosc9')
 def vcf_to_hdf(paths, out_dir, batch_size, max_batches=0):
     """Simple GT parser from vcf.gz that loads into an hdf file.
 
@@ -83,31 +88,42 @@ def vcf_to_hdf(paths, out_dir, batch_size, max_batches=0):
             out_array = out_fd.create_earray('/', 'gt',
                 shape=(0, n_samples),
                 atom=tables.FloatAtom(), 
-                filters=tables.Filters(complevel=9)
+                filters=tables.Filters(complevel=9, complib='blosc')
                 )
 
             # Prepare stream conversion
-            non_data_pattern = re.compile(rb'^' + rb'[^\t]*\t' * n_fixed_columns) 
-            data_columns = (non_data_pattern.sub(b'', line) for line in lines)
-
-            gt_pattern = re.compile(rb'([^:\t])(\||/)([^:\t]):?[^\t]*(\t|$)')
-            gt_tsv_missing = (gt_pattern.sub(rb'\1\t\3\4', line) for line in data_columns)
-
-            missing_pattern = re.compile(rb'\.')
-            gt_tsv = (missing_pattern.sub(rb'nan', line) for line in gt_tsv_missing)
+            auto = vcf_calls_auto(n_fixed_columns)
+            filt = a_to_function(auto, endchar=b'\n',
+                out_t=ir.DoubleType(), out_ctype=POINTER(c_double))
 
             # Actual batch processing
             variants = 0
             batches = 0
             while True and (batches < max_batches or not max_batches):
-                tsv_batch = (line for _, line in zip(range(batch_size), gt_tsv))
-                # There is no easy way to check if a batch is empty without a
-                # copy, so just let numpy deal with it
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', r'loadtxt: Empty input file')
-                    batch = np.loadtxt(tsv_batch, delimiter='\t', ndmin=2)
-                if not batch.size:
+                batch = np.empty((batch_size, 2*n_samples), np.float64)
+                assert all((
+                    batch.flags.c_contiguous,
+                    batch.flags.owndata,
+                    batch.flags.writeable,
+                    batch.flags.aligned
+                    ))
+                read = 0
+                for _, line in zip(range(batch_size), lines):
+                    row = batch[read, :]
+                    assert all((
+                        row.flags.c_contiguous,
+                        not row.flags.owndata,
+                        row.flags.writeable,
+                        row.flags.aligned
+                        ))
+                    n_values = filt(line, row.ctypes.data_as(POINTER(c_double)))
+                    if not n_values in (0, 2 * n_samples):
+                        raise ValueError(n_values)
+                    if n_values:
+                        read += 1
+                if not read:
                     break
+                batch = batch[:read, :]
 
                 dosage = batch[:,::2] + batch[:,1::2]
 
