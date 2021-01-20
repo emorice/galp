@@ -27,6 +27,7 @@ from galp.config import ConfigError
 from galp.store import Store
 from galp.protocol import Protocol
 from galp.profiler import Profiler
+from galp.serializer import Serializer
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
 class IllegalRequestError(Exception):
@@ -78,7 +79,7 @@ async def main(args):
     worker = Worker(terminate)
     tasks.append(asyncio.create_task(worker.log_heartbeat()))
 
-    worker.cache = galp.cache.CacheStack(args.cachedir)
+    worker.cache = galp.cache.CacheStack(args.cachedir, Serializer())
     worker.step_dir = step_dir
 
     worker.profiler = Profiler(config.get('profile'))
@@ -174,16 +175,16 @@ class Worker(Protocol):
         logging.warning('Received EXIT, terminating')
         return True
 
-    async def on_get(self, handle):
-        logging.warning('Received GET for %s', handle.hex())
+    async def on_get(self, name):
+        logging.warning('Received GET for %s', name.hex())
         try:
-            await self.put(handle, await self.cache.get(handle))
-            logging.warning('Cache Hit: %s', handle.hex())
+            await self.put(name, await self.cache.get(name))
+            logging.warning('Cache Hit: %s', name.hex())
         except KeyError:
-            logging.warning('Cache Miss: %s', handle.hex())
-            await self.not_found(handle)
+            logging.warning('Cache Miss: %s', name.hex())
+            await self.not_found(name)
 
-    async def on_submit(self, handle, step_key, arg_names, kwarg_names):
+    async def on_submit(self, name, step_key, arg_names, kwarg_names):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -194,7 +195,7 @@ class Worker(Protocol):
         """
 
         task = asyncio.create_task(
-            self.run_submission(handle, step_key, arg_names, kwarg_names)
+            self.run_submission(name, step_key, arg_names, kwarg_names)
             )
 
         self.tasks.append(task)
@@ -214,38 +215,42 @@ class Worker(Protocol):
         Synchronous, either returns the object or raises.
         """
 
-    async def run_submission(self, handle, step_key, arg_names, kwarg_names):
+    async def resolve(self, step, name, arg_names, kwarg_names):
+        """
+        Recover handes from a step specification, the task and argument names.
+        """
+    async def run_submission(self, name, step_key, arg_names, kwarg_names):
         """
         Actually run the task if not cached.
         """
 
         logging.warning('Received SUBMIT for step %s', step_key)
 
-        # End parsing, logic begins here
-
         # Cache hook. For now we just check the local cache, later we'll have a
         # central locking mechanism (replacing cache with store is not enough
         # for that)
-        if await self.cache.contains(handle):
-            logging.warning('Cache hit on SUBMIT: %s', handle.hex())
-            await self.socket.send_multipart([b'DONE', handle])
+        if await self.cache.contains(name):
+            logging.warning('Cache hit on SUBMIT: %s', name.hex())
+            await self.done(handle)
             return
-        
-        step = self.step_dir.get(step_key)
 
-        await self.socket.send_multipart([b'DOING', handle])
+        # If not in cache, resolve metadata and run the task
+        await self.doing(name)
+        step = self.step_dir.get(step_key)
+        handle, arg_handles, kwarg_handles = step.make_handles(name, arg_names, kwarg_names)
+
 
         # Load args from store, i.e. either memory, disk, or network
         try:
-            keywords = kwarg_names.keys()
-            kwnames = [ kwarg_names[kw] for kw in keywords ]
+            keywords = kwarg_handles.keys()
+            kwhandles = [ kwarg_handles[kw] for kw in keywords ]
             all_args = await asyncio.gather(*[
-                self.store.get(name) for name in (arg_names + kwnames)
+                self.store.get(in_handle) for in_handle in (arg_handles + kwhandles)
                 ])
-            args = all_args[:len(arg_names)]
+            args = all_args[:len(arg_handles)]
             kwargs = {
-                kw.decode('ascii'): v
-                for kw, v in zip(keywords, all_args[len(arg_names):])
+                kw: v
+                for kw, v in zip(keywords, all_args[len(arg_handles):])
                 }
         except KeyError:
             # Could not find argument
@@ -266,7 +271,7 @@ class Worker(Protocol):
         # Caching
         await self.cache.put(handle, result)
 
-        await self.socket.send_multipart([b'DONE', handle])
+        await self.done(name)
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""

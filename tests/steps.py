@@ -2,7 +2,10 @@
 Steps only used for testing, and loaded through the plugin system.
 """
 
+import numpy as np
+
 from galp.graph import StepSet
+from galp.typing import ArrayLike
 
 export = StepSet()
 
@@ -36,3 +39,8 @@ def naive_fib(n):
 @export.step
 def profile_me(n):
     return naive_fib(n)
+
+@export.step
+def arange(n) -> ArrayLike:
+    """Numpy return type"""
+    return np.arange(n)

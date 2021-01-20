@@ -4,6 +4,10 @@ General routines to build and operate on graphs of tasks.
 import json
 import logging
 import hashlib
+import inspect
+
+from typing import get_type_hints, Any
+from dataclasses import dataclass
 
 from galp.eventnamespace import EventNamespace
 
@@ -18,6 +22,33 @@ class Step():
     def __init__(self, function):
         self.function = function
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
+
+    def make_handles(self, name, arg_names, kwarg_names):
+        """
+        Make initial handles containing any hints specified at step declaration
+        """
+        hints = get_type_hints(self.function)
+        sig = inspect.signature(self.function)
+
+        # Get the declared names of the positional parameters
+        arg_param_names = list(sig.parameters.keys())[:len(arg_names)]
+
+        # Put implicit Any's
+        for kw in arg_param_names + list(kwarg_names.keys()) + ['return']:
+            if not kw in hints:
+                hints[kw] = Any
+
+        handle = Handle(name, hints['return'])
+        arg_handles = [
+            Handle(arg_name, hints[arg_param_name])
+            for arg_name, arg_param_name in zip(arg_names, arg_param_names)
+            ]
+        kwarg_handles = {
+            kw: Handle(kwname, hints[kw])
+            for kw, kwname in kwarg_names.items()
+            }
+
+        return handle, arg_handles, kwarg_handles
 
 class Task():
     """
@@ -109,6 +140,14 @@ class Task():
 
         return Task.hash_one(m)
 
+@dataclass
+class Handle():
+    """Generic structure representing a resource, i.e. the result of the task,
+    primarily identified by its name but also containing metadata
+    """
+    name: bytes
+    type_hint: Any = Any
+
 class HereisTask(Task):
     """
     Task wrapper for data provided direclty as arguments in graph building.
@@ -128,7 +167,6 @@ class HereisTask(Task):
     @property
     def dependencies(self):
         return []
-
 
 class StepSet(EventNamespace):
     """A collection of steps"""
