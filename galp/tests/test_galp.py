@@ -465,3 +465,13 @@ async def test_profiling(client):
 
     stats = pstats.Stats(path)
     stats.print_stats()
+
+@pytest.mark.asyncio
+async def test_npserializer(client):
+    """Tests selecting a different serializer based on type hints"""
+    task = galp.tests.steps.arange(10)
+
+    ans = (await asyncio.wait_for(client.collect(task), 3))[0]
+
+    assert isinstance(ans, np.array)
+    np.testing.assert_array_equal(ans, np.arange(10))

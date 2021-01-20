@@ -99,6 +99,11 @@ class Protocol:
             msg += [ kw.encode('ascii'), kwarg.name ]
         await self.send_message(msg)
 
+    async def done(self, name):
+        await self.send_message([b'DONE', name])
+
+    async def doing(self, name):
+        await self.send_message([b'DOING', name])
 
     # Main logic methods
     # ==================
@@ -218,8 +223,8 @@ class Protocol:
             if keyword == b'':
                 arg_names.append(arg_handle)
             else:
-                kwarg_names[keyword] = arg_handle
+                kwarg_names[keyword.decode('ascii')] = arg_handle
 
-        handle = galp.graph.Task.gen_name(step_name, arg_names, kwarg_names, vtags)
+        name = galp.graph.Task.gen_name(step_name, arg_names, kwarg_names, vtags)
 
-        return await self.on_submit(handle, step_name, arg_names, kwarg_names)
+        return await self.on_submit(name, step_name, arg_names, kwarg_names)
