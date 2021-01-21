@@ -7,13 +7,15 @@ object that can be created and used as part of a larger program.
 
 import logging
 import json
+import asyncio
 
 import zmq
 import zmq.asyncio
 
 from collections import defaultdict
 
-from galp.store import Store
+from galp.cache import CacheStack
+from galp.serializer import Serializer
 from galp.protocol import Protocol
 
 class Client(Protocol):
@@ -60,7 +62,11 @@ class Client(Protocol):
 
         # Ordered !
         self._finals = list()
-        self._resources = dict()
+
+        # Memory only native+serial cache
+        self._resources = CacheStack(
+            dirpath=None,
+            serializer=Serializer())
 
     def __delete__(self):
         if self.close_socket:
@@ -144,7 +150,10 @@ class Client(Protocol):
             msg = await self.socket.recv_multipart()
             terminate = await self.on_message(msg)
 
-        return [self._resources[task] for task in self._finals]
+        # Note that we need to go the handle since this is where we deserialize.
+        return await asyncio.gather(*(
+            self._resources.get_native(self._details[task].handle) for task in self._finals
+            ))
 
     # Custom protocol sender
     # ======================
@@ -154,7 +163,7 @@ class Client(Protocol):
         details = self._details[task_name]
 
         if hasattr(details, 'hereis'):
-            self._resources[task_name] = details.hereis
+            await self._resources.put_native(details.handle, details.hereis)
             await self.on_done(task_name)
             return
 
@@ -169,7 +178,7 @@ class Client(Protocol):
 
     async def on_get(self, name):
         try:
-            await self.put(name, self._resources[name])
+            await self.put(name, await self._resources.get_serial(name))
             logging.warning('Client GET on %s', name.hex())
         except KeyError:
             await self.not_found(name)
@@ -182,9 +191,11 @@ class Client(Protocol):
         Includes a hook to return a stop condition if all final resources are
         loaded.
         """
-        self._resources[name] = obj
+        await self._resources.put_serial(name, obj)
 
-        terminate = all(task in self._resources for task in self._finals)
+        terminate = all(await asyncio.gather(*(
+            self._resources.contains(task) for task in
+        self._finals)))
         return terminate
 
     async def on_done(self, done_task):

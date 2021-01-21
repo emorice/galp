@@ -16,9 +16,8 @@ class Store:
         self._resources = local_storage
         self.proto = proto
         self._availability = defaultdict(asyncio.Event)
-        self._handles = dict()
 
-    async def get(self, handle):
+    async def get_native(self, handle):
         """Requests an object, possibly interrogating the network, and waits
         until its availability is known to return.
 
@@ -26,27 +25,19 @@ class Store:
         name.
         """
         if not await self._resources.contains(handle.name):
-            self._handles[handle.name] = handle
             await self.proto.get(handle.name)
             await self._availability[handle.name].wait()
-        return await self._resources.get(handle)
+        return await self._resources.get_native(handle)
 
-    async def put(self, name, obj):
-        """Put native object in the store, releasing all callers of
-        corresponding get calls.
+    async def put_serial(self, name, serial):
+        """Put serialized object in the store, releasing all callers of
+        corresponding get calls if any. 
 
-        This operation will only succeed if a previous `get` call for the
-        corresponding resource has been made, and metadata for the resource is
-        available.
-
-        To preload an object in the store, directly load it in the underlying
-        storage."""
-
-        try:
-            await self._resources.put(self._handles[name], obj)
-            self._availability[name].set()
-        except KeyError:
-            raise ValueError('Trying to put in store unrequested resource')
+        The underlying caching system will handle deserialization when the gets
+        are resolved.
+        """
+        await self._resources.put_serial(name, serial)
+        self._availability[name].set()
 
     async def not_found(self, name):
         """Signal a resource is not available, releasing all corresponding get

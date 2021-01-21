@@ -16,6 +16,7 @@ import pstats
 import zmq
 import zmq.asyncio
 import pytest
+import numpy as np
 
 import galp.graph
 import galp.steps
@@ -473,5 +474,5 @@ async def test_npserializer(client):
 
     ans = (await asyncio.wait_for(client.collect(task), 3))[0]
 
-    assert isinstance(ans, np.array)
+    assert isinstance(ans, np.ndarray)
     np.testing.assert_array_equal(ans, np.arange(10))

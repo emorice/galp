@@ -77,6 +77,8 @@ class HDFSerializer(Serializer):
             driver_core_image=image,
             driver_core_backing_store=0)
 
-        obj = mem_file.root.object
+        obj = mem_file.root.object.read()
 
         mem_file.close()
+
+        return obj

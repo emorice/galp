@@ -178,7 +178,7 @@ class Worker(Protocol):
     async def on_get(self, name):
         logging.warning('Received GET for %s', name.hex())
         try:
-            await self.put(name, await self.cache.get(name))
+            await self.put(name, await self.cache.get_serial(name))
             logging.warning('Cache Hit: %s', name.hex())
         except KeyError:
             logging.warning('Cache Miss: %s', name.hex())
@@ -204,7 +204,7 @@ class Worker(Protocol):
         """
         Put object in store, thus releasing tasks waiting for data.
         """
-        await self.store.put(name, obj)
+        await self.store.put_serial(name, obj)
 
     # Task execution logic
     # ====================
@@ -231,7 +231,7 @@ class Worker(Protocol):
         # for that)
         if await self.cache.contains(name):
             logging.warning('Cache hit on SUBMIT: %s', name.hex())
-            await self.done(handle)
+            await self.done(name)
             return
 
         # If not in cache, resolve metadata and run the task
@@ -245,11 +245,11 @@ class Worker(Protocol):
             keywords = kwarg_handles.keys()
             kwhandles = [ kwarg_handles[kw] for kw in keywords ]
             all_args = await asyncio.gather(*[
-                self.store.get(in_handle) for in_handle in (arg_handles + kwhandles)
+                self.store.get_native(in_handle) for in_handle in (arg_handles + kwhandles)
                 ])
             args = all_args[:len(arg_handles)]
             kwargs = {
-                kw: v
+                kw.decode('ascii'): v
                 for kw, v in zip(keywords, all_args[len(arg_handles):])
                 }
         except KeyError:
@@ -263,13 +263,13 @@ class Worker(Protocol):
         # This may block for a long time, by design
         # the **kwargs syntax works even for invalid identifiers it seems ?
         try:
-            result = self.profiler.wrap(handle, step)(*args, **kwargs)
+            result = self.profiler.wrap(name, step)(*args, **kwargs)
         except:
             # TODO: define application errors
             raise
 
         # Caching
-        await self.cache.put(handle, result)
+        await self.cache.put_native(handle, result)
 
         await self.done(name)
 
