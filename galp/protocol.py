@@ -2,7 +2,6 @@
 GALP protocol implementation
 """
 
-import json
 import logging
 
 import galp.graph
@@ -67,9 +66,8 @@ class Protocol:
         msg = [b'GET', task]
         await self.send_message(msg)
 
-    async def put(self, name, obj):
-        payload = json.dumps(obj).encode('ascii')
-        await self.send_message([b'PUT', name, payload])
+    async def put(self, name, serial):
+        await self.send_message([b'PUT', name, serial])
 
     async def not_found(self, name):
         await self.send_message([b'NOTFOUND', name])
@@ -96,7 +94,7 @@ class Protocol:
             msg += [ b'', arg.name ]
         # Kw args
         for kw, kwarg in task.kwargs.items():
-            msg += [ kw.encode('ascii'), kwarg.name ]
+            msg += [ kw , kwarg.name ]
         await self.send_message(msg)
 
     async def done(self, name):
@@ -195,9 +193,9 @@ class Protocol:
         self.validate(len(msg) == 3, 'PUT with wrong number of parts')
 
         name = msg[1]
-        obj = json.loads(msg[2])
+        serial = msg[2]
 
-        return await self.on_put(name, obj)
+        return await self.on_put(name, serial)
 
     @event.on('SUBMIT')
     async def _on_submit(self, msg):
@@ -217,13 +215,13 @@ class Protocol:
         kwarg_names = {}
         while argstack != []:
             try:
-                keyword, arg_handle = argstack.pop(), argstack.pop()
+                keyword, arg_name = argstack.pop(), argstack.pop()
             except IndexError:
                 raise IllegalRequestError
             if keyword == b'':
-                arg_names.append(arg_handle)
+                arg_names.append(arg_name)
             else:
-                kwarg_names[keyword.decode('ascii')] = arg_handle
+                kwarg_names[keyword] = arg_name
 
         name = galp.graph.Task.gen_name(step_name, arg_names, kwarg_names, vtags)
 

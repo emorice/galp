@@ -5,6 +5,7 @@ import json
 import logging
 import hashlib
 import inspect
+from itertools import chain
 
 from typing import get_type_hints, Any
 from dataclasses import dataclass
@@ -34,7 +35,10 @@ class Step():
         arg_param_names = list(sig.parameters.keys())[:len(arg_names)]
 
         # Put implicit Any's
-        for kw in arg_param_names + list(kwarg_names.keys()) + ['return']:
+        for kw in chain(
+            arg_param_names,
+            map(lambda bts: bts.decode('ascii'), kwarg_names.keys()),
+            ['return']):
             if not kw in hints:
                 hints[kw] = Any
 
@@ -44,7 +48,7 @@ class Step():
             for arg_name, arg_param_name in zip(arg_names, arg_param_names)
             ]
         kwarg_handles = {
-            kw: Handle(kwname, hints[kw])
+            kw: Handle(kwname, hints[kw.decode('ascii')])
             for kw, kwname in kwarg_names.items()
             }
 
@@ -65,16 +69,37 @@ class Task():
     def __init__(self, step, args, kwargs, rerun=False, vtag=None):
         self.step = step
         self.args = [self.ensure_task(arg) for arg in args]
-        self.kwargs = { kw: self.ensure_task(arg) for kw, arg in kwargs.items() }
+        self.kwargs = { kw.encode('ascii'): self.ensure_task(arg) for kw, arg in kwargs.items() }
         self.vtags = (
             [ self.hash_one(ascii(vtag).encode('ascii')) ]
             if vtag is not None else [])
         self.name = self.gen_name(
             step.key,
             [ arg.name for arg in self.args ],
-            { k.encode('ascii') : v.name for k, v in self.kwargs.items() },
+            { k : v.name for k, v in self.kwargs.items() },
             [ tag for tag in self.vtags ]
             )
+        self.handle, self.arg_handles, self.kwarg_handles = self.step.make_handles(
+            self.name,
+            [ arg.name for arg in self.args ],
+            { kw: arg.name for kw, arg in self.kwargs.items() }
+            # note: for python 3.7+ this has the same order than kwargs
+            )
+
+        # Set the hereis upstream handles manually
+        for task, handle in zip(
+            chain(self.args, self.kwargs.values()),
+            chain(self.arg_handles, self.kwarg_handles.values()),
+            ):
+            if hasattr(task, 'hereis'):
+                task.handle = handle
+            else:
+                # todo: we have, as expected, both a downstream and upstream handle for
+                # each task, they probably should be checked for compatibilty.
+                pass
+
+
+
 
     @staticmethod
     def ensure_task(obj):
@@ -154,6 +179,7 @@ class HereisTask(Task):
 
     Args:
         obj: arbitrary object to wrap.
+        type_hint: needed since there is no step to get the metadata from.
     """
 
     def __init__(self, obj):
