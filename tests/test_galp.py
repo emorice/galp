@@ -476,3 +476,20 @@ async def test_npserializer(client):
 
     assert isinstance(ans, np.ndarray)
     np.testing.assert_array_equal(ans, np.arange(10))
+
+@pytest.mark.asyncio
+async def test_npargserializer(disjoined_client_pair):
+    """Tests selecting a different serializer based on type hints, for an input
+    task.
+
+    We use a pair of workers to force serialization between tasks"""
+    client1, client2 = disjoined_client_pair
+
+    task_in = galp.tests.steps.arange(10)
+    task_out = galp.tests.steps.npsum(task_in)
+
+    ans1 = (await asyncio.wait_for(client1.collect(task_in), 3))
+
+    ans2 = (await asyncio.wait_for(client2.collect(task_out), 3))
+
+    assert ans2 == [45]

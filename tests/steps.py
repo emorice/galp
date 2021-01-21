@@ -44,3 +44,12 @@ def profile_me(n):
 def arange(n) -> ArrayLike:
     """Numpy return type"""
     return np.arange(n)
+
+@export.step
+def npsum(v: ArrayLike):
+    """
+    Numpy input but generic return type
+    """
+    # Wrong, returns a numpy type
+    # return v.sum()
+    return float(v.sum())
