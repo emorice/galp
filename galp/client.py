@@ -31,7 +31,7 @@ class Client(Protocol):
             The client will not attempt to close it. No read operation must be
             attempted by external code while the client exists. New write,
             connect and binds should not be a problem.
-       endpoint: a ZeroMQ ednpoint string to the worker. The client will create
+       endpoint: a ZeroMQ endpoint string to the worker. The client will create
             its own socket and destroy it in the end, using the global sync context.
     """
 
