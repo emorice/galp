@@ -6,15 +6,11 @@ from collections import defaultdict
 
 class Store:
     """
-    Helper class for the distributed object store role.
-
-    Keeps a store of resources, handles get and put requests, and manages events
-    to provide synchronous interfaces when needed.
+    Synchronization device on top of a cache system.
     """
 
-    def __init__(self, local_storage, proto):
+    def __init__(self, local_storage):
         self._resources = local_storage
-        self.proto = proto
         self._availability = defaultdict(asyncio.Event)
 
     async def get_native(self, handle):
@@ -25,7 +21,7 @@ class Store:
         name.
         """
         if not await self._resources.contains(handle.name):
-            await self.proto.get(handle.name)
+            await self.on_nonlocal(handle.name)
             await self._availability[handle.name].wait()
         return await self._resources.get_native(handle)
 
@@ -39,8 +35,38 @@ class Store:
         await self._resources.put_serial(name, serial)
         self._availability[name].set()
 
+    async def put_native(self, handle, native):
+        """Put native object in the store, releasing all callers of
+        corresponding get calls if any. 
+
+        Whether the object will be serialized in the process depends on the
+        underlying cache backend.
+        """
+        await self._resources.put_native(handle, native)
+        self._availability[handle.name].set()
+
     async def not_found(self, name):
         """Signal a resource is not available, releasing all corresponding get
         callers with an error"""
         self._availability[name].set()
 
+    async def on_nonlocal(self, name):
+        """
+        Hook called when a resource not present in local storage was called
+        """
+        pass
+
+class NetStore(Store):
+    """
+    Subclass of Store that include a hook to send GET messages on missing
+    resources.
+    """
+    def __init__(self, local_storage, proto):
+        super().__init__(local_storage)
+        self.proto = proto
+
+    async def on_nonlocal(self, name):
+        """
+        Send a `GET` over network.
+        """
+        await self.proto.get(name)

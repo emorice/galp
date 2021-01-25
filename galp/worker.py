@@ -24,7 +24,7 @@ import toml
 import galp.steps
 import galp.cache
 from galp.config import ConfigError
-from galp.store import Store
+from galp.store import NetStore
 from galp.protocol import Protocol
 from galp.profiler import Profiler
 from galp.serializer import Serializer
@@ -113,7 +113,7 @@ class Worker(Protocol):
     @cache.setter
     def cache(self, cache):
         self._cache = cache
-        self.store = Store(cache, self)
+        self.store = NetStore(cache, self)
 
     async def log_heartbeat(self):
         i = 0

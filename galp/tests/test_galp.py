@@ -338,6 +338,21 @@ async def test_client(any_client):
     assert ans == [42,]
 
 @pytest.mark.asyncio
+async def test_double_collect(client):
+    """Proper handling of collecting the same task twice"""
+    task = galp.steps.galp_hello()
+
+    ans1 = await asyncio.wait_for(
+        client.collect(task),
+        3)
+
+    ans2 = await asyncio.wait_for(
+        client.collect(task),
+        3)
+
+    assert ans1 == ans2
+
+@pytest.mark.asyncio
 async def test_task_kwargs(client):
     two = galp.steps.galp_double()
     four = galp.steps.galp_double(two)

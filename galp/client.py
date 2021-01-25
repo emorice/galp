@@ -17,6 +17,7 @@ from collections import defaultdict
 from galp.cache import CacheStack
 from galp.serializer import Serializer
 from galp.protocol import Protocol
+from galp.store import Store
 
 class Client(Protocol):
     """
@@ -60,13 +61,18 @@ class Client(Protocol):
         self._dependencies = defaultdict(set)
         self._done = defaultdict(bool) # def to False
 
-        # Ordered !
-        self._finals = list()
+        # Tasks whose result is to be fetched
+        self._finals = set()
 
         # Memory only native+serial cache
-        self._resources = CacheStack(
+        self._cache = CacheStack(
             dirpath=None,
             serializer=Serializer())
+        self._store = Store(self._cache)
+
+        # Start only one processing loop
+        self._processor = None
+        self._collections = 0
 
     def __delete__(self):
         if self.close_socket:
@@ -75,7 +81,7 @@ class Client(Protocol):
     def add(self, tasks):
         """
         Browse the graph and add it to the tasks we're tracking, in an
-        idempotent way. Also tracks which one are final.
+        idempotent way. Also tracks which ones are final.
 
         The client can keep references to any task passed to it directly or as
         a dependency. Modifying tasks after there were added, directly or as
@@ -89,9 +95,8 @@ class Client(Protocol):
         sync function.
         """
 
-        # ! Ordered !
         for task_details in tasks:
-            self._finals.append(task_details.name)
+            self._finals.add(task_details.name)
 
         # Build the inverse dependencies lookup table, i.e the 'children' task.
         # child/parent can be ambiguous here (what is the direction of the
@@ -125,6 +130,21 @@ class Client(Protocol):
 
         return new_top_level
 
+    async def process(self):
+        """
+        Reacts to messages.
+        """
+        # Todo: timeouts
+        logging.warning('Now reacting to completion events')
+        terminate = False
+        try:
+            while not terminate:
+                msg = await self.socket.recv_multipart()
+                terminate = await self.on_message(msg)
+        except asyncio.CancelledError:
+            pass
+        logging.warning('Message processing stopping')
+
     async def collect(self, *tasks):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
@@ -141,19 +161,27 @@ class Client(Protocol):
         for task in new_inputs:
             await self.submit(task)
 
-        # Todo: for now we don't care if an other collect is running, so if
-        # you start two you will miss the final events.
-        # Todo: timeouts
-        logging.warning('Now reacting to completion events')
-        terminate = False
-        while not terminate:
-            msg = await self.socket.recv_multipart()
-            terminate = await self.on_message(msg)
+        if self._processor is None:
+            self._processor = asyncio.create_task(self.process())
+        # Not thread-safe but ok in coop mt
+        self._collections += 1
 
         # Note that we need to go the handle since this is where we deserialize.
-        return await asyncio.gather(*(
-            self._resources.get_native(self._details[task].handle) for task in self._finals
+        results =  await asyncio.gather(*(
+            self._store.get_native(task.handle) for task in tasks
             ))
+
+        self._collections -= 1
+        if not self._collections:
+            proc = self._processor
+            # Note: here the processor could still be running and a new collect
+            # start, thus starting a new processor, hence the processor has to
+            # be reentrant
+            self._processor = None
+            proc.cancel()
+            await proc
+
+        return results
 
     # Custom protocol sender
     # ======================
@@ -162,8 +190,10 @@ class Client(Protocol):
         """Loads details, handles hereis, and manage stats"""
         details = self._details[task_name]
 
+        # Hereis could be put in cache or store, store handles the weird edge
+        # case where a hereis is collected
         if hasattr(details, 'hereis'):
-            await self._resources.put_native(details.handle, details.hereis)
+            await self._store.put_native(details.handle, details.hereis)
             await self.on_done(task_name)
             return
 
@@ -177,8 +207,10 @@ class Client(Protocol):
         await self.socket.send_multipart(msg)
 
     async def on_get(self, name):
+        # Note: we purposely do not use store here, since we could be receiving
+        # GETs for resources we do not have and store blocks in these cases.
         try:
-            await self.put(name, await self._resources.get_serial(name))
+            await self.put(name, await self._cache.get_serial(name))
             logging.warning('Client GET on %s', name.hex())
         except KeyError:
             await self.not_found(name)
@@ -188,15 +220,9 @@ class Client(Protocol):
         """
         Cannot actually block but async anyway for consistency.
 
-        Includes a hook to return a stop condition if all final resources are
-        loaded.
+        Not that store will release the corresponding collects if needed.
         """
-        await self._resources.put_serial(name, obj)
-
-        terminate = all(await asyncio.gather(*(
-            self._resources.contains(task) for task in
-        self._finals)))
-        return terminate
+        await self._store.put_serial(name, obj)
 
     async def on_done(self, done_task):
         """Given that done_task just finished, mark it as done, submit any
