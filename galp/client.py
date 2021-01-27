@@ -210,7 +210,7 @@ class Client(Protocol):
         # Note: we purposely do not use store here, since we could be receiving
         # GETs for resources we do not have and store blocks in these cases.
         try:
-            await self.put(name, await self._cache.get_serial(name))
+            await self.put(name, self._cache.get_serial(name))
             logging.warning('Client GET on %s', name.hex())
         except KeyError:
             await self.not_found(name)

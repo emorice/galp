@@ -20,10 +20,10 @@ class Store:
         Note that a handle is necessary to perform a get, not just a resource
         name.
         """
-        if not await self._resources.contains(handle.name):
+        if not self._resources.contains(handle.name):
             await self.on_nonlocal(handle.name)
             await self._availability[handle.name].wait()
-        return await self._resources.get_native(handle)
+        return self._resources.get_native(handle)
 
     async def put_serial(self, name, serial):
         """Put serialized object in the store, releasing all callers of
@@ -32,7 +32,7 @@ class Store:
         The underlying caching system will handle deserialization when the gets
         are resolved.
         """
-        await self._resources.put_serial(name, serial)
+        self._resources.put_serial(name, serial)
         self._availability[name].set()
 
     async def put_native(self, handle, native):
@@ -42,7 +42,7 @@ class Store:
         Whether the object will be serialized in the process depends on the
         underlying cache backend.
         """
-        await self._resources.put_native(handle, native)
+        self._resources.put_native(handle, native)
         self._availability[handle.name].set()
 
     async def not_found(self, name):

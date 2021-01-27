@@ -9,7 +9,7 @@ import diskcache
 from galp.graph import Handle
 
 class CacheStack():
-    """Asynchronous cache proxy
+    """Synchronous cache proxy
 
     if `dirpath` is none, serialized objects are only kept in memory and no
     persistence is done"""
@@ -27,11 +27,11 @@ class CacheStack():
         self.serializer = serializer
 
 
-    async def contains(self, name):
+    def contains(self, name):
         # Mind the short circuit
         return (name in self.nativecache) or (name in self.serialcache)
 
-    async def get_native(self, handle):
+    def get_native(self, handle):
         """
         Get a native object form the cache.
 
@@ -51,7 +51,7 @@ class CacheStack():
             self._handles[handle.name] = handle
             return native
 
-    async def get_serial(self, name):
+    def get_serial(self, name):
         """
         Get a serialized object form the cache.
 
@@ -67,7 +67,7 @@ class CacheStack():
             # Direct from persistent storage
             return self.serialcache[name]
 
-    async def put_native(self, handle, obj):
+    def put_native(self, handle, obj):
         """Puts a native object in the cache.
 
         For now this also eagerly serialize it and commit it to persistent cache.
@@ -77,7 +77,7 @@ class CacheStack():
 
         self.serialcache[handle.name] = self.serializer.dumps(handle, obj)
 
-    async def put_serial(self, name, serial):
+    def put_serial(self, name, serial):
         """
         Simply pass the underlying object to the underlying cold cache.
 

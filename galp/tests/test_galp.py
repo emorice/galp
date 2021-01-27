@@ -21,6 +21,7 @@ import numpy as np
 import galp.graph
 import galp.steps
 import galp.client
+import galp.synclient
 import galp.tests.steps
 
 
@@ -111,6 +112,9 @@ def make_async_socket(async_ctx):
 
     Note that your endpoint must be able to deal with several clients !"""
 
+    """
+    Helper to create both sync and async sockets
+    """
     sockets = []
     def _make(endpoint):
         socket = async_ctx.socket(zmq.DEALER)
@@ -183,6 +187,12 @@ def disjoined_client_pair(make_worker, make_client):
     e1, w1 = make_worker()
     e2, w2 = make_worker()
     return make_client(e1), make_client(e2)
+
+@pytest.fixture
+def async_sync_client_pair(make_worker):
+    e1, w1 = make_worker()
+    e2, w2 = make_worker()
+    yield galp.client.Client(endpoint=e1), galp.synclient.SynClient(endpoint=e2)
 
 # Helpers
 # =======
@@ -508,3 +518,17 @@ async def test_npargserializer(disjoined_client_pair):
     ans2 = (await asyncio.wait_for(client2.collect(task_out), 3))
 
     assert ans2 == [45]
+
+@pytest.mark.asyncio
+async def test_sync_client(async_sync_client_pair):
+    """
+    Tests the sync client's get functionnality
+    """
+    aclient, sclient = async_sync_client_pair
+    res = galp.steps.galp_hello()
+
+    async_ans = await asyncio.wait_for(aclient.collect(res), 3)
+
+    sync_ans = sclient.get_native(res.handle)
+
+    assert async_ans == [sync_ans] == [42]

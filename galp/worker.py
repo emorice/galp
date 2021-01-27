@@ -178,7 +178,7 @@ class Worker(Protocol):
     async def on_get(self, name):
         logging.warning('Received GET for %s', name.hex())
         try:
-            await self.put(name, await self.cache.get_serial(name))
+            await self.put(name, self.cache.get_serial(name))
             logging.warning('Cache Hit: %s', name.hex())
         except KeyError:
             logging.warning('Cache Miss: %s', name.hex())
@@ -229,7 +229,7 @@ class Worker(Protocol):
         # Cache hook. For now we just check the local cache, later we'll have a
         # central locking mechanism (replacing cache with store is not enough
         # for that)
-        if await self.cache.contains(name):
+        if self.cache.contains(name):
             logging.warning('Cache hit on SUBMIT: %s', name.hex())
             await self.done(name)
             return
@@ -269,7 +269,7 @@ class Worker(Protocol):
             raise
 
         # Caching
-        await self.cache.put_native(handle, result)
+        self.cache.put_native(handle, result)
 
         await self.done(name)
 
