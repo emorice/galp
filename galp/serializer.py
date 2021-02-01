@@ -6,7 +6,7 @@ import json
 import time
 
 import numpy as np
-import tables
+import pyarrow as pa
 
 from typing import Any
 from galp.typing import ArrayLike
@@ -18,7 +18,7 @@ class Serializer:
 
     def get_backend(self, handle):
         if handle.type_hint is ArrayLike:
-            return HDFSerializer
+            return ArrowSerializer
         return JsonSerializer
 
     def loads(self, handle, payload: bytes) -> Any:
@@ -45,40 +45,31 @@ class JsonSerializer(Serializer):
     def dumps(obj):
         return json.dumps(obj).encode('ascii')
 
-class HDFSerializer(Serializer):
-    """Uses HDF in-memory file images as a serialization method.
+class ArrowSerializer(Serializer):
+    """Uses Arrow ipc as a serialization method.
 
-    See https://www.pytables.org/cookbook/inmemory_hdf5_files.html for details"""
+    Note that arrow allows to do serialization-free sharing, which is planned to
+    be integrated in the future.
+    """
 
     @staticmethod
     def dumps(obj):
-        mem_file = tables.open_file(
-            str(id(obj)), "a",
-            driver="H5FD_CORE",
-            driver_core_backing_store=0)
+        bos = pa.BufferOutputStream()
 
-        mem_file.create_array('/', "object", obj)
+        tensor = pa.Tensor.from_numpy(obj)
 
-        image = mem_file.get_file_image()
+        pa.ipc.write_tensor(tensor, bos)
 
-        mem_file.close()
-
-        return image
+        return bos.getvalue().to_pybytes()
 
     @staticmethod
-    def loads(image):
+    def loads(buf):
         """
-        Todo: handle errors more nicely since image is user input and could
+        Todo: handle errors more nicely since buffer is user input and could
         contain anything
         """
-        ts = time.time()
-        mem_file = tables.open_file(str(ts),
-            driver="H5FD_CORE",
-            driver_core_image=image,
-            driver_core_backing_store=0)
 
-        obj = mem_file.root.object.read()
+        reader = pa.BufferReader(buf)
+        tensor = pa.ipc.read_tensor(reader)
+        return tensor.to_numpy()
 
-        mem_file.close()
-
-        return obj
