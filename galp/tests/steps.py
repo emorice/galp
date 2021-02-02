@@ -3,9 +3,10 @@ Steps only used for testing, and loaded through the plugin system.
 """
 
 import numpy as np
+import pyarrow as pa
 
 from galp.graph import StepSet
-from galp.typing import ArrayLike
+from galp.typing import ArrayLike, Table
 
 export = StepSet()
 
@@ -53,3 +54,10 @@ def npsum(v: ArrayLike):
     # Wrong, returns a numpy type
     # return v.sum()
     return float(v.sum())
+
+@export.step
+def some_table() -> Table:
+    return  pa.table({
+        'x': ['abc', 'def', 'gh'],
+        'y': [1.0, -0.0, 7]
+        })

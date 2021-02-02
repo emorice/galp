@@ -10,3 +10,4 @@ Type indicating numeric packed data that should for instance not be serialized t
 readable text for performance reasons.
 """
 ArrayLike = NewType('ArrayLike', Any)
+Table = NewType('Table', Any)

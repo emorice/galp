@@ -4,12 +4,13 @@ Serialization utils
 
 import json
 import time
+import logging
 
 import numpy as np
 import pyarrow as pa
 
 from typing import Any
-from galp.typing import ArrayLike
+from galp.typing import ArrayLike, Table
 
 class Serializer:
     """
@@ -17,8 +18,11 @@ class Serializer:
     """
 
     def get_backend(self, handle):
-        if handle.type_hint is ArrayLike:
-            return ArrowSerializer
+        logging.warning(handle)
+        if handle.type_hint == ArrayLike:
+            return ArrowTensorSerializer
+        if handle.type_hint == Table:
+            return ArrowTableSerializer
         return JsonSerializer
 
     def loads(self, handle, payload: bytes) -> Any:
@@ -45,8 +49,8 @@ class JsonSerializer(Serializer):
     def dumps(obj):
         return json.dumps(obj).encode('ascii')
 
-class ArrowSerializer(Serializer):
-    """Uses Arrow ipc as a serialization method.
+class ArrowTensorSerializer(Serializer):
+    """Uses Arrow ipc as a tensor serialization method.
 
     Note that arrow allows to do serialization-free sharing, which is planned to
     be integrated in the future.
@@ -57,7 +61,6 @@ class ArrowSerializer(Serializer):
         bos = pa.BufferOutputStream()
 
         tensor = pa.Tensor.from_numpy(obj)
-
         pa.ipc.write_tensor(tensor, bos)
 
         return bos.getvalue().to_pybytes()
@@ -73,3 +76,30 @@ class ArrowSerializer(Serializer):
         tensor = pa.ipc.read_tensor(reader)
         return tensor.to_numpy()
 
+class ArrowTableSerializer(Serializer):
+    """Uses Arrow ipc as a serialization method.
+
+    Note that arrow allows to do serialization-free sharing, which is planned to
+    be integrated in the future.
+    """
+
+    @staticmethod
+    def dumps(obj):
+        bos = pa.BufferOutputStream()
+
+        # Table-like
+        writer = pa.ipc.new_file(bos, obj.schema)
+        writer.write(obj)
+        writer.close()
+
+        return bos.getvalue().to_pybytes()
+
+    @staticmethod
+    def loads(buf):
+        """
+        Todo: handle errors more nicely since buffer is user input and could
+        contain anything
+        """
+
+        reader = pa.ipc.open_file(buf)
+        return reader.read_all()

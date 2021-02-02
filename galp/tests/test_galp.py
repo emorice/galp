@@ -17,12 +17,13 @@ import zmq
 import zmq.asyncio
 import pytest
 import numpy as np
+import pyarrow as pa
 
 import galp.graph
 import galp.steps
 import galp.client
 import galp.synclient
-import galp.tests.steps
+import galp.tests.steps as gts
 
 
 # Fixtures
@@ -430,7 +431,7 @@ async def test_plugin(client):
     """
     Test running a task defined in a plug-in
     """
-    task = galp.tests.steps.plugin_hello()
+    task = gts.plugin_hello()
 
     ans = await asyncio.wait_for(client.collect(task), 3)
 
@@ -441,7 +442,7 @@ async def test_alt_decorator_syntax(client):
     """
     Test declaring a task with decorator called instead of applied.
     """
-    task = galp.tests.steps.alt_decorator_syntax()
+    task = gts.alt_decorator_syntax()
 
     ans = await asyncio.wait_for(client.collect(task), 3)
 
@@ -454,9 +455,9 @@ async def test_vtags(client):
     """
     # Only tagged1 is legit
     tasks = [
-        galp.tests.steps.tagged1(),
-        galp.tests.steps.tagged2(),
-        galp.tests.steps.untagged(),
+        gts.tagged1(),
+        gts.tagged2(),
+        gts.untagged(),
     ]
 
     assert len(set(task.name for task in tasks)) == 3
@@ -481,7 +482,7 @@ async def test_inline(client):
 @pytest.mark.asyncio
 async def test_profiling(client):
     """Tests the integrated python profiler"""
-    task = galp.tests.steps.profile_me(27)
+    task = gts.profile_me(27)
     ans = await asyncio.wait_for(client.collect(task), 3)
     assert ans == [196418]
 
@@ -495,7 +496,7 @@ async def test_profiling(client):
 @pytest.mark.asyncio
 async def test_npserializer(client):
     """Tests selecting a different serializer based on type hints"""
-    task = galp.tests.steps.arange(10)
+    task = gts.arange(10)
 
     ans = (await asyncio.wait_for(client.collect(task), 3))[0]
 
@@ -510,8 +511,8 @@ async def test_npargserializer(disjoined_client_pair):
     We use a pair of workers to force serialization between tasks"""
     client1, client2 = disjoined_client_pair
 
-    task_in = galp.tests.steps.arange(10)
-    task_out = galp.tests.steps.npsum(task_in)
+    task_in = gts.arange(10)
+    task_out = gts.npsum(task_in)
 
     ans1 = (await asyncio.wait_for(client1.collect(task_in), 3))
 
@@ -532,3 +533,19 @@ async def test_sync_client(async_sync_client_pair):
     sync_ans = sclient.get_native(res.handle)
 
     assert async_ans == [sync_ans] == [42]
+
+@pytest.mark.asyncio
+async def test_serialize_df(client):
+    """
+    Tests basic transfer of dataframe or tables
+    """
+    task = gts.some_table()
+
+    the_table = task.step.function()
+
+    ans = await asyncio.wait_for(client.collect(task), 3)
+
+    assert ans[0].num_columns == 2
+    assert ans[0].num_rows == 3
+    assert ans[0] == the_table
+
