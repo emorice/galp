@@ -18,7 +18,6 @@ class Serializer:
     """
 
     def get_backend(self, handle):
-        logging.warning(handle)
         if handle.type_hint == ArrayLike:
             return ArrowTensorSerializer
         if handle.type_hint == Table:
