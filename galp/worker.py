@@ -266,6 +266,7 @@ class Worker(Protocol):
             result = self.profiler.wrap(name, step)(*args, **kwargs)
         except:
             # TODO: define application errors
+            logging.exception('Submitted task step failed: %s', step_key.decode('ascii'))
             raise
 
         # Caching
