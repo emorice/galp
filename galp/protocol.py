@@ -66,13 +66,14 @@ class Protocol:
     def get(self, task):
         """Send get for task with given name"""
         msg = [b'GET', task]
-        return self.send_message(msg)
+        return self._send_message(msg)
 
     def put(self, name, serial):
-        return self.send_message([b'PUT', name, serial])
+        logging.warning('-> putting %d bytes', len(serial))
+        return self._send_message([b'PUT', name, serial])
 
     def not_found(self, name):
-        return self.send_message([b'NOTFOUND', name])
+        return self._send_message([b'NOTFOUND', name])
 
     def submit(self, task):
         """Send submit for given task object.
@@ -97,13 +98,13 @@ class Protocol:
         # Kw args
         for kw, kwarg in task.kwargs.items():
             msg += [ kw , kwarg.name ]
-        return self.send_message(msg)
+        return self._send_message(msg)
 
     def done(self, name):
-        return self.send_message([b'DONE', name])
+        return self._send_message([b'DONE', name])
 
     def doing(self, name):
-        return self.send_message([b'DOING', name])
+        return self._send_message([b'DOING', name])
 
     # Main logic methods
     # ==================
@@ -126,7 +127,7 @@ class Protocol:
             message that signals a previous error.
         """
         self.validate(len(msg) > 0, 'Empty message')
-        logging.warning('Protocol: verb %s', msg[0].decode('ascii'))
+        logging.warning('<- %s', msg[0].decode('ascii'))
         try:
             return self.handler(str(msg[0], 'ascii'))(msg)
         except NoHandlerError:
@@ -140,6 +141,14 @@ class Protocol:
         """
         raise NotImplementedError("You must override the send_message method "
             "when subclassing a Protocol object.")
+
+    def _send_message(self, msg):
+        """Private callback method to send a message just built.
+
+        Just a wrapper arounf send_message.
+        """
+        logging.warning('-> %s', msg[0].decode('ascii'))
+        return self.send_message(msg)
 
     # Internal message handling methods
     event = EventNamespace()
