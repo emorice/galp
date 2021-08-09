@@ -6,7 +6,7 @@ import os
 import json
 import diskcache
 
-from galp.graph import Handle
+from galp.graph import Handle, NonIterableHandleError
 
 class CacheStack():
     """Synchronous cache proxy
@@ -71,11 +71,16 @@ class CacheStack():
         """Puts a native object in the cache.
 
         For now this also eagerly serialize it and commit it to persistent cache.
+        Recursive call if handle is iterable.
         """
-        self.nativecache[handle.name] = obj
-        self._handles[handle.name] = handle
+        try:
+            for sub_handle, sub_obj in zip(handle, obj):
+                self.put_native(sub_handle, sub_obj)
+        except NonIterableHandleError:
+            self.nativecache[handle.name] = obj
+            self._handles[handle.name] = handle
 
-        self.serialcache[handle.name] = self.serializer.dumps(handle, obj)
+            self.serialcache[handle.name] = self.serializer.dumps(handle, obj)
 
     def put_serial(self, name, serial):
         """

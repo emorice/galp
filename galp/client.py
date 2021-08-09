@@ -12,12 +12,24 @@ import asyncio
 import zmq
 import zmq.asyncio
 
+from enum import IntEnum, auto
+
 from collections import defaultdict
 
 from galp.cache import CacheStack
 from galp.serializer import Serializer
 from galp.protocol import Protocol
 from galp.store import Store
+
+
+class TaskStatus(IntEnum):
+    UNKNOWN = auto()
+    DEPEND = auto()
+    SUBMITTED = auto()
+    RUNNING = auto()
+    COMPLETED = auto()
+    TRANSFER = auto()
+    AVAILABLE = auto()
 
 class Client(Protocol):
     """
@@ -59,7 +71,10 @@ class Client(Protocol):
         self._details = dict()
         self._dependents = defaultdict(set)
         self._dependencies = defaultdict(set)
-        self._done = defaultdict(bool) # def to False
+
+        #self._done = defaultdict(bool) # def to False
+        ## Richer alternative
+        self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
 
         # Tasks whose result is to be fetched
         self._finals = set()
@@ -89,14 +104,11 @@ class Client(Protocol):
         tasks depending on already added ones, however, is safe. In other words,
         you can add new downstream steps, but not change the upstream part.
 
-        Return the names of all new tasks without dependencies. 
+        Return the names of all new tasks without uncompleted dependencies. 
 
         This justs updates the client's state, so it can never block and is a
         sync function.
         """
-
-        for task_details in tasks:
-            self._finals.add(task_details.name)
 
         # Build the inverse dependencies lookup table, i.e the 'children' task.
         # child/parent can be ambiguous here (what is the direction of the
@@ -122,13 +134,39 @@ class Client(Protocol):
                     oset.add(dep_details)
 
             # Check unseen input tasks
-            if not self._dependencies[task] and task not in self._details:
+            if (
+                # Note: True if no dependencies at all
+                all(
+                    self._status[dep] >= TaskStatus.COMPLETED
+                    for dep in self._dependencies[task]
+                    )
+                and task not in self._details
+                ):
                 new_top_level.add(task)
 
             # Save details, and mark as seen
             self._details[task] = task_details
 
         return new_top_level
+
+    async def add_finals(self, tasks):
+        """
+        Add tasks to the set of finals (= to be collected) tasks, and send a GET
+        for any new one that was already done.
+        """
+
+        for task_details in tasks:
+            logging.warning("Final: %s", task_details.name.hex())
+            logging.warning("%s", self._status[task_details.name])
+            if (
+                task_details not in self._finals
+                and
+                self._status[task_details.name] is TaskStatus.COMPLETED
+                ):
+                logging.warning("Sending extra GET for upgraded %s",
+                    task_details.name.hex())
+                await self.get(task_details.name)
+            self._finals.add(task_details.name)
 
     async def process(self):
         """
@@ -155,11 +193,19 @@ class Client(Protocol):
         charge of the event loop.
         """
 
-        # Update our state
+
+        # Update our state 
         new_inputs = self.add(tasks)
 
+        # Send SUBMITs for all possibly new and ready downstream tasks
         for task in new_inputs:
             await self.submit(task)
+
+        # Update the list of final tasks and send GETs for the already done 
+        # Note: comes after submit as derived task need to be submitted first to
+        # be marked as completed before.
+        await self.add_finals(tasks)
+
 
         if self._processor is None:
             self._processor = asyncio.create_task(self.process())
@@ -187,8 +233,13 @@ class Client(Protocol):
     # ======================
 
     async def submit(self, task_name):
-        """Loads details, handles hereis, and manage stats"""
+        """Loads details, handles hereis and subtasks, and manage stats"""
         details = self._details[task_name]
+
+        # Reentrance check
+        if self._status[task_name] >= TaskStatus.SUBMITTED:
+            return False
+        self._status[task_name] = TaskStatus.SUBMITTED
 
         # Hereis could be put in cache or store, store handles the weird edge
         # case where a hereis is collected
@@ -196,10 +247,22 @@ class Client(Protocol):
             await self._store.put_native(details.handle, details.hereis)
             await self.on_done(task_name)
             return
+        # Sub-tasks are automatically satisfied when their parent and unique
+        # dependency is
+        if hasattr(details, 'parent'):
+            await self.on_done(task_name)
+            return
 
         r = await super().submit(details)
         self.submitted_count[task_name] += 1
         return r
+
+    async def get(self, task_name):
+        # Reentrance check
+        if self._status[task_name] >= TaskStatus.TRANSFER:
+            return False
+        self._status[task_name] = TaskStatus.TRANSFER
+        return await super().get(task_name)
 
     # Protocol callbacks
     # ==================
@@ -223,6 +286,7 @@ class Client(Protocol):
         Not that store will release the corresponding collects if needed.
         """
         await self._store.put_serial(name, obj)
+        self._status[name] = TaskStatus.AVAILABLE
 
     async def on_done(self, done_task):
         """Given that done_task just finished, mark it as done, submit any
@@ -230,21 +294,24 @@ class Client(Protocol):
 
         """
 
-        self._done[done_task] = True
-
-        for dept in self._dependents[done_task]:
-            if all(self._done[sister_dep] for sister_dep in self._dependencies[dept]):
-                await self.submit(dept)
+        self._status[done_task] = TaskStatus.COMPLETED
+        logging.warning("Done: %s", done_task.hex())
 
         # FIXME: we should skip that for here-is tasks, but that's a convoluted,
         # unsupported case for now
         if done_task in self._finals:
             await self.get(done_task)
 
+        for dept in self._dependents[done_task]:
+            if all(self._status[sister_dep] >= TaskStatus.COMPLETED for sister_dep in self._dependencies[dept]):
+                await self.submit(dept)
+
+
     async def on_doing(self, task):
         """Just updates statistics"""
         logging.warning('Doing: %s', task.hex())
         self.run_count[task] += 1
+        self._status[task] = TaskStatus.RUNNING
 
     async def on_illegal(self):
         """Should never happen"""

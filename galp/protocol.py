@@ -85,6 +85,9 @@ class Protocol:
         if hasattr(task, 'hereis'):
             raise ValueError('Here-is tasks must never be passed to '
                 'Protocol layer')
+        if hasattr(task, 'parent'):
+            raise ValueError('Derived tasks must never be passed to '
+                'Protocol layer')
 
         # Step
         msg = [b'SUBMIT', task.step.key]

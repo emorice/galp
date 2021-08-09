@@ -7,7 +7,7 @@ import hashlib
 import inspect
 from itertools import chain
 
-from typing import get_type_hints, Any
+from typing import get_type_hints, get_args, get_origin, Tuple, Any
 from dataclasses import dataclass
 
 from galp.eventnamespace import EventNamespace
@@ -98,9 +98,6 @@ class Task():
                 # each task, they probably should be checked for compatibilty.
                 pass
 
-
-
-
     @staticmethod
     def ensure_task(obj):
         """Wrap obj in a hereis Task if it does not seem to be a Task"""
@@ -118,6 +115,11 @@ class Task():
     @staticmethod
     def hash_one(payload):
         return hashlib.sha256(payload).digest()
+
+    @staticmethod
+    def _san(bts):
+        """This constrains the range of values of the resulting bytes"""
+        return bts.hex().encode('ascii')
 
     @staticmethod
     def gen_name(step_name, arg_names, kwarg_names, vtags):
@@ -139,31 +141,68 @@ class Task():
         it.
 
         """
-        def _san(bts):
-            """This constrains the range of values of the resulting bytes"""
-            return bts.hex().encode('ascii')
-
         sortedkw = sorted(list(kwarg_names.items()))
 
         # Step name
-        m = _san(step_name)
+        m = Task._san(step_name)
         # Version tags
         m += b'['
         m += b','.join(
-            [ _san(n) for n in vtags]
+            [ Task._san(n) for n in vtags]
             )
         m += b']'
         # Inputs
         m += b'('
         m += b','.join(
-            [ _san(n) for n in arg_names]
+            [ Task._san(n) for n in arg_names]
             +
-            [ _san(kw) + b'=' + _san(n) for kw, n in sortedkw ]
+            [ Task._san(kw) + b'=' + Task._san(n) for kw, n in sortedkw ]
             )
         m += b')'
         logging.warning("Hashed value is %s:", m)
 
         return Task.hash_one(m)
+
+    def __iter__(self):
+        """
+        If the function underlying the task is type-hinted as returning a tuple,
+        returns a generator yielding sub-task objects allowing to refer to
+        individual members of the result independently.
+
+        """
+        return (SubTask(self, sub_handle) for sub_handle in self.handle)
+
+class SubTask(Task):
+    """
+    A Task refering to an item of a Task representing a collection.
+
+    Submission of a SubTask will cause the original Task to be submitted and
+    executed. However, using a subtask as an argument or a Client.collect target
+    will only cause one specific item to be serialized and sent over the
+    network to the next step.
+    """
+
+    def __init__(self, parent, handle):
+        self.parent = parent
+        self.handle = handle
+        self.name = handle.name
+
+    @staticmethod
+    def gen_name(parent_name, index_name):
+        """
+        Create a resource name.
+        """
+
+        m = Task._san(parent_name)
+        m += b'['
+        m += Task._san(index_name)
+        m += b']'
+
+        return Task.hash_one(m)
+
+    @property
+    def dependencies(self):
+        return [self.parent]
 
 @dataclass
 class Handle():
@@ -172,6 +211,18 @@ class Handle():
     """
     name: bytes
     type_hint: Any = Any
+
+    def __iter__(self):
+        if get_origin(self.type_hint) is not tuple:
+            raise NonIterableHandleError
+        else:
+            return (
+                Handle(
+                    SubTask.gen_name(self.name, str(i).encode('ascii')),
+                    hint
+                    )
+                for i, hint in enumerate(get_args(self.type_hint))
+                )
 
 class HereisTask(Task):
     """
@@ -241,3 +292,9 @@ class StepSet(EventNamespace):
     def get(self, key):
         """More memorable shortcut for handler"""
         return self.handler(key)
+
+class NonIterableHandleError(TypeError):
+    """
+    Specific sub-exception raised when trying to iterate an atomic handle.
+    """
+    pass

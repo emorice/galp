@@ -5,6 +5,8 @@ Steps only used for testing, and loaded through the plugin system.
 import numpy as np
 import pyarrow as pa
 
+from typing import Tuple
+
 from galp.graph import StepSet
 from galp.typing import ArrayLike, Table
 
@@ -61,3 +63,10 @@ def some_table() -> Table:
         'x': ['abc', 'def', 'gh'],
         'y': [1.0, -0.0, 7]
         })
+
+@export.step
+def some_tuple() -> Tuple[ArrayLike, int]:
+    return (
+        np.arange(10),
+        10
+    )

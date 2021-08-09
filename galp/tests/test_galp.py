@@ -393,6 +393,45 @@ async def test_task_posargs(client):
 
     assert tuple(ans) == (2, -2)
 
+@pytest.mark.asyncio
+async def test_recollect_intermediate(client):
+    """
+    Tests doing a collect on a task already run previously as an intermediate
+    result.
+    """
+    two = galp.steps.galp_double()
+    four = galp.steps.galp_double(two)
+
+    ans_four = await asyncio.wait_for(
+        client.collect(four),
+        3)
+
+    ans_two = await asyncio.wait_for(
+        client.collect(two),
+        3)
+
+    assert tuple(ans_four), tuple(ans_two) == ( (4,), (2,) )
+
+@pytest.mark.asyncio
+async def test_stepwise_collect(client):
+    """
+    Tests running tasks in several incremental collect calls
+
+    (Reverse of recollect_intermediate)
+    """
+    two = galp.steps.galp_double()
+    four = galp.steps.galp_double(two)
+
+    ans_two = await asyncio.wait_for(
+        client.collect(two),
+        3)
+
+    ans_four = await asyncio.wait_for(
+        client.collect(four),
+        3)
+
+    assert tuple(ans_four), tuple(ans_two) == ( (4,), (2,) )
+
 async def assert_cache(clients):
     """
     Test worker-side cache.
@@ -549,3 +588,24 @@ async def test_serialize_df(client):
     assert ans[0].num_rows == 3
     assert ans[0] == the_table
 
+@pytest.mark.asyncio
+async def test_tuple(client):
+    """
+    Test tasks yeilding a splittable handle.
+    """
+    task = gts.some_tuple()
+
+    task_a, task_b = task
+
+    task2 = gts.npsum(task_a)
+
+    ans2 = await asyncio.wait_for(client.collect(task2), 3)
+    ans_b = await asyncio.wait_for(client.collect(task_b), 3)
+    ans_a = await asyncio.wait_for(client.collect(task_a), 3)
+
+    gt_a, gt_b = task.step.function()
+
+    np.testing.assert_array_equal(ans_a[0], gt_a)
+    assert gt_b == ans_b[0]
+
+    assert ans2[0] == sum(ans_a[0])

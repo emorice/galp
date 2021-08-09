@@ -1,0 +1,6 @@
+pytest
+zmq
+numpy
+pyarrow
+diskcache
+pytest-asyncio
