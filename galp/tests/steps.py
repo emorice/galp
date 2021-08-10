@@ -74,3 +74,7 @@ def some_tuple() -> Tuple[ArrayLike, int]:
 @export.step
 def raises_error():
     return 1 / 0
+
+@export.step
+def some_numerical_list() -> ArrayLike:
+    return [1., 2.5, 3.]

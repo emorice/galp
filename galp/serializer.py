@@ -59,7 +59,9 @@ class ArrowTensorSerializer(Serializer):
     def dumps(obj):
         bos = pa.BufferOutputStream()
 
-        tensor = pa.Tensor.from_numpy(obj)
+        # np.asarray should handle array-like types and not create too many
+        # copies
+        tensor = pa.Tensor.from_numpy(np.asarray(obj))
         pa.ipc.write_tensor(tensor, bos)
 
         return bos.getvalue().to_pybytes()
