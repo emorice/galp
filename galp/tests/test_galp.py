@@ -591,7 +591,7 @@ async def test_serialize_df(client):
 @pytest.mark.asyncio
 async def test_tuple(client):
     """
-    Test tasks yeilding a splittable handle.
+    Test tasks yielding a splittable handle.
     """
     task = gts.some_tuple()
 

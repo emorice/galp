@@ -58,7 +58,7 @@ class Store:
 
 class NetStore(Store):
     """
-    Subclass of Store that include a hook to send GET messages on missing
+    Subclass of Store that includes a hook to send GET messages on missing
     resources.
     """
     def __init__(self, local_storage, proto):

@@ -276,7 +276,11 @@ class Worker(Protocol):
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""
-    parser.add_argument('endpoint')
+    parser.add_argument(
+        'endpoint',
+        help="Endpoint to bind to, in ZMQ format, e.g. tcp://127.0.0.2:12345 "
+            "or ipc://path/to/socket ; see also man zmq_bind."
+        )
     parser.add_argument('cachedir')
     parser.add_argument('-c', '--config',
         help='Path to optional TOML configuration file')
