@@ -1,5 +1,5 @@
 """
 Galp, a network-based incremental pipeline runner with tight python integration.
 """
-from .client import Client
+from .client import Client, TaskFailedError
 from .graph import StepSet

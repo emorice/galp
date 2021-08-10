@@ -609,3 +609,26 @@ async def test_tuple(client):
     assert gt_b == ans_b[0]
 
     assert ans2[0] == sum(ans_a[0])
+
+@pytest.mark.asyncio
+async def test_step_error(client):
+    """
+    Test running a task containing a bug
+    """
+    with pytest.raises(galp.TaskFailedError):
+       await asyncio.wait_for(client.collect(gts.raises_error()), 3) 
+
+@pytest.mark.asyncio
+async def test_missing_step_error(client):
+    """
+    Test running a unexisting step
+    """
+
+    # Define a step locally that is invisible to the worker
+    local_export = galp.StepSet()
+    @local_export.step
+    def missing():
+        pass
+
+    with pytest.raises(galp.TaskFailedError):
+       await asyncio.wait_for(client.collect(missing()), 3) 

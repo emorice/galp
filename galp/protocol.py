@@ -39,6 +39,11 @@ class Protocol:
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
+    def on_failed(self, name):
+        """A `FAILED` message was received"""
+        return self.on_unhandled(b'FAILED')
+
+
     def on_exit(self):
         """An `EXIT` message was received"""
         return self.on_unhandled(b'EXIT')
@@ -108,6 +113,9 @@ class Protocol:
 
     def doing(self, name):
         return self._send_message([b'DOING', name])
+
+    def failed(self, name):
+        return self._send_message([b'FAILED', name])
 
     # Main logic methods
     # ==================
@@ -202,6 +210,15 @@ class Protocol:
         name = msg[1]
 
         return self.on_done(name)
+
+    @event.on('FAILED')
+    def _on_done(self, msg):
+        self.validate(len(msg) >= 2, 'FAILED without a name')
+        self.validate(len(msg) <= 2, 'FAILED with too many names')
+
+        name = msg[1]
+
+        return self.on_failed(name)
 
     @event.on('PUT')
     def _on_put(self, msg):

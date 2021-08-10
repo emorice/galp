@@ -24,12 +24,20 @@ from galp.store import Store
 
 class TaskStatus(IntEnum):
     UNKNOWN = auto()
+    FAILED = auto()
     DEPEND = auto()
+
     SUBMITTED = auto()
     RUNNING = auto()
+
+    # Note: everything that compares greater or equal to completed implies
+    # completed
     COMPLETED = auto()
     TRANSFER = auto()
     AVAILABLE = auto()
+
+class TaskFailedError(RuntimeError):
+    pass
 
 class Client(Protocol):
     """
@@ -212,20 +220,26 @@ class Client(Protocol):
         # Not thread-safe but ok in coop mt
         self._collections += 1
 
-        # Note that we need to go the handle since this is where we deserialize.
-        results =  await asyncio.gather(*(
-            self._store.get_native(task.handle) for task in tasks
-            ))
+        try:
+            # Note that we need to go the handle since this is where we deserialize.
+            results =  await asyncio.gather(*(
+                self._store.get_native(task.handle) for task in tasks
+                ))
+        except KeyError:
+            # The store returned without the object available, meaning something
+            # failed
+            raise TaskFailedError
 
-        self._collections -= 1
-        if not self._collections:
-            proc = self._processor
-            # Note: here the processor could still be running and a new collect
-            # start, thus starting a new processor, hence the processor has to
-            # be reentrant
-            self._processor = None
-            proc.cancel()
-            await proc
+        finally:
+            self._collections -= 1
+            if not self._collections:
+                proc = self._processor
+                # Note: here the processor could still be running and a new collect
+                # start, thus starting a new processor, hence the processor has to
+                # be reentrant
+                self._processor = None
+                proc.cancel()
+                await proc
 
         return results
 
@@ -312,6 +326,33 @@ class Client(Protocol):
         logging.warning('Doing: %s', task.hex())
         self.run_count[task] += 1
         self._status[task] = TaskStatus.RUNNING
+
+    async def on_failed(self, task):
+        """
+        Mark a task and all its dependents as failed, and unblock any watcher.  
+        """
+
+        tasks = set([task])
+
+        while tasks:
+            task = tasks.pop()
+            details = self._details[task]
+
+            # Mark as failed
+            self._status[task] = TaskStatus.FAILED
+            # Unblocks watchers
+            await self._store.not_found(task)
+
+            # Fails the dependents
+            # Note: this can visit a task several time, not a problem
+            for subtask in self._dependents[task]:
+                tasks.add(task)
+
+        # This is not a fatal error to the client, by default processing of
+        # messages for other ongoing tasks is still permitted.
+        return
+
+          
 
     async def on_illegal(self):
         """Should never happen"""

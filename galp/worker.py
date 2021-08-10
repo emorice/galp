@@ -35,6 +35,13 @@ class IllegalRequestError(Exception):
     message back"""
     pass
 
+class NonFatalTaskError(RuntimeError):
+    """
+    An error has occured when running a step, but the worker should keep
+    running.
+    """
+    pass
+
 def load_steps(plugin_names):
     step_dir = galp.steps.export
     for name in plugin_names:
@@ -223,56 +230,75 @@ class Worker(Protocol):
         """
         Actually run the task if not cached.
         """
+        try:
 
-        logging.warning('Received SUBMIT for step %s', step_key)
+            logging.warning('Received SUBMIT for step %s', step_key)
 
-        # Cache hook. For now we just check the local cache, later we'll have a
-        # central locking mechanism (replacing cache with store is not enough
-        # for that)
-        if self.cache.contains(name):
-            logging.warning('Cache hit on SUBMIT: %s', name.hex())
+            # Cache hook. For now we just check the local cache, later we'll have a
+            # central locking mechanism (replacing cache with store is not enough
+            # for that)
+            # FIXME: that's probably not correct for multi-output tasks !
+            if self.cache.contains(name):
+                logging.warning('Cache hit on SUBMIT: %s', name.hex())
+                await self.done(name)
+                return
+
+            # If not in cache, resolve metadata and run the task
+            await self.doing(name)
+            try:
+                step = self.step_dir.get(step_key)
+            except NoHandlerError:
+                logging.exception('No such step known to worker: %s', step_key.decode('ascii'))
+                raise NonFatalTaskError
+
+            handle, arg_handles, kwarg_handles = step.make_handles(name, arg_names, kwarg_names)
+
+
+            # Load args from store, i.e. either memory, disk, or network
+            try:
+                keywords = kwarg_handles.keys()
+                kwhandles = [ kwarg_handles[kw] for kw in keywords ]
+                all_args = await asyncio.gather(*[
+                    self.store.get_native(in_handle) for in_handle in (arg_handles + kwhandles)
+                    ])
+                args = all_args[:len(arg_handles)]
+                kwargs = {
+                    kw.decode('ascii'): v
+                    for kw, v in zip(keywords, all_args[len(arg_handles):])
+                    }
+            except KeyError:
+                # Could not find argument
+                raise IllegalRequestError
+            except UnicodeDecodeError:
+                # Either you tried to use python's non-ascii keywords feature,
+                # or more likely you messed up the encoding on the caller side.
+                raise IllegalRequestError
+
+            # This may block for a long time, by design
+            # the **kwargs syntax works even for invalid identifiers it seems ?
+            try:
+                result = self.profiler.wrap(name, step)(*args, **kwargs)
+            except Exception as e:
+                logging.exception('Submitted task step failed: %s', step_key.decode('ascii'))
+                raise NonFatalTaskError
+
+            # Caching
+            self.cache.put_native(handle, result)
+
             await self.done(name)
-            return
-
-        # If not in cache, resolve metadata and run the task
-        await self.doing(name)
-        step = self.step_dir.get(step_key)
-        handle, arg_handles, kwarg_handles = step.make_handles(name, arg_names, kwarg_names)
-
-
-        # Load args from store, i.e. either memory, disk, or network
-        try:
-            keywords = kwarg_handles.keys()
-            kwhandles = [ kwarg_handles[kw] for kw in keywords ]
-            all_args = await asyncio.gather(*[
-                self.store.get_native(in_handle) for in_handle in (arg_handles + kwhandles)
-                ])
-            args = all_args[:len(arg_handles)]
-            kwargs = {
-                kw.decode('ascii'): v
-                for kw, v in zip(keywords, all_args[len(arg_handles):])
-                }
-        except KeyError:
-            # Could not find argument
-            raise IllegalRequestError
-        except UnicodeDecodeError:
-            # Either you tried to use python's non-ascii keywords feature,
-            # or more likely you messed up the encoding on the caller side.
-            raise IllegalRequestError
-
-        # This may block for a long time, by design
-        # the **kwargs syntax works even for invalid identifiers it seems ?
-        try:
-            result = self.profiler.wrap(name, step)(*args, **kwargs)
-        except:
-            # TODO: define application errors
-            logging.exception('Submitted task step failed: %s', step_key.decode('ascii'))
+        except NonFatalTaskError:
+            await self.failed(name)
             raise
-
-        # Caching
-        self.cache.put_native(handle, result)
-
-        await self.done(name)
+        except Exception as e:
+            await self.failed(name)
+            # Log immediately the exception
+            logging.exception('An unhandled error has occured within a step-'
+                'running asynchronous task. This signals a bug in GALP itself.')
+            # Signal the main thread to cancel all running tasks and exit
+            self.terminate.set()
+            # Raise the original exception for it be caught again in the main
+            # thread
+            raise
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""

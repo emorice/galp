@@ -70,3 +70,7 @@ def some_tuple() -> Tuple[ArrayLike, int]:
         np.arange(10),
         10
     )
+
+@export.step
+def raises_error():
+    return 1 / 0
