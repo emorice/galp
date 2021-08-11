@@ -6,6 +6,7 @@ import json
 import time
 import logging
 
+import dill
 import numpy as np
 import pyarrow as pa
 
@@ -22,7 +23,7 @@ class Serializer:
             return ArrowTensorSerializer
         if handle.type_hint == Table:
             return ArrowTableSerializer
-        return JsonSerializer
+        return DillSerializer
 
     def loads(self, handle, payload: bytes) -> Any:
         """
@@ -47,6 +48,16 @@ class JsonSerializer(Serializer):
     @staticmethod
     def dumps(obj):
         return json.dumps(obj).encode('ascii')
+
+class DillSerializer(Serializer):
+    """Trivial wrapper around dill"""
+    @staticmethod
+    def loads(payload):
+        return dill.loads(payload)
+
+    @staticmethod
+    def dumps(obj):
+        return dill.dumps(obj, byref=True)
 
 class ArrowTensorSerializer(Serializer):
     """Uses Arrow ipc as a tensor serialization method.

@@ -6,13 +6,13 @@ import os
 import sys
 import subprocess
 import logging
-import json
 import asyncio
 import itertools
 import signal
 import time
 import pstats
 
+import dill
 import zmq
 import zmq.asyncio
 import pytest
@@ -284,7 +284,7 @@ def test_task(worker_socket):
 
     ans = asserted_zmq_recv_multipart(worker_socket)
     assert ans[:2] == [b'PUT', handle]
-    assert json.loads(ans[2]) == 42
+    assert dill.loads(ans[2]) == 42
 
 def test_notfound(worker_socket):
     """Tests the answer of server when asking to send unexisting resource"""
@@ -328,7 +328,7 @@ def test_reference(worker_socket):
         task2.name: 4
         }
     for _, name, res in [got_a, got_b]:
-        assert json.loads(res) == expected[name]
+        assert dill.loads(res) == expected[name]
 
 @pytest.mark.asyncio
 async def test_async_socket(async_worker_socket):

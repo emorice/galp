@@ -4,3 +4,4 @@ numpy
 pyarrow
 diskcache
 pytest-asyncio
+dill
