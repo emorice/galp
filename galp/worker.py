@@ -185,7 +185,8 @@ class Worker(Protocol):
     async def on_get(self, name):
         logging.warning('Received GET for %s', name.hex())
         try:
-            await self.put(name, self.cache.get_serial(name))
+            proto, data, children = self.cache.get_serial(name)
+            await self.put(name, proto, data, children)
             logging.warning('Cache Hit: %s', name.hex())
         except KeyError:
             logging.warning('Cache Miss: %s', name.hex())
@@ -207,11 +208,11 @@ class Worker(Protocol):
 
         self.tasks.append(task)
 
-    async def on_put(self, name, obj):
+    async def on_put(self, name, proto, data, children):
         """
         Put object in store, thus releasing tasks waiting for data.
         """
-        await self.store.put_serial(name, obj)
+        await self.store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
 
     # Task execution logic
     # ====================

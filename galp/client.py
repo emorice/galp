@@ -164,8 +164,6 @@ class Client(Protocol):
         """
 
         for task_details in tasks:
-            logging.warning("Final: %s", task_details.name.hex())
-            logging.warning("%s", self._status[task_details.name])
             if (
                 task_details not in self._finals
                 and
@@ -287,19 +285,19 @@ class Client(Protocol):
         # Note: we purposely do not use store here, since we could be receiving
         # GETs for resources we do not have and store blocks in these cases.
         try:
-            await self.put(name, self._cache.get_serial(name))
+            await self.put(name, *self._cache.get_serial(name))
             logging.warning('Client GET on %s', name.hex())
         except KeyError:
             await self.not_found(name)
             logging.warning('Client missed GET on %s', name.hex())
 
-    async def on_put(self, name, obj):
+    async def on_put(self, name, proto: bytes, data: bytes, children: int):
         """
         Cannot actually block but async anyway for consistency.
 
         Not that store will release the corresponding collects if needed.
         """
-        await self._store.put_serial(name, obj)
+        await self._store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
         self._status[name] = TaskStatus.AVAILABLE
 
     async def on_done(self, done_task):
@@ -309,7 +307,6 @@ class Client(Protocol):
         """
 
         self._status[done_task] = TaskStatus.COMPLETED
-        logging.warning("Done: %s", done_task.hex())
 
         # FIXME: we should skip that for here-is tasks, but that's a convoluted,
         # unsupported case for now
@@ -323,7 +320,6 @@ class Client(Protocol):
 
     async def on_doing(self, task):
         """Just updates statistics"""
-        logging.warning('Doing: %s', task.hex())
         self.run_count[task] += 1
         self._status[task] = TaskStatus.RUNNING
 
@@ -336,7 +332,6 @@ class Client(Protocol):
 
         while tasks:
             task = tasks.pop()
-            details = self._details[task]
 
             # Mark as failed
             self._status[task] = TaskStatus.FAILED
@@ -352,7 +347,21 @@ class Client(Protocol):
         # messages for other ongoing tasks is still permitted.
         return
 
-          
+    async def on_not_found(self, task):
+        """
+        Unblocks watchers on NOTFOUND
+
+        The difference with FAIL is that we do not presume that dependents will
+        fail. It could happen that a task has been completed normally but the
+        result cannot be transfered to the client. In this case, further taks
+        may still run succesfully. Also, FAIL replaces a DONE message, while
+        NOTFOUND follows a DONE message, so NOTFOUND does not interfere with
+        task scheduling as FAIL does.
+        """
+        await self._store.not_found(task)
+
+        # Non fatal error, message processing must go on
+        return
 
     async def on_illegal(self):
         """Should never happen"""

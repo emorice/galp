@@ -39,10 +39,15 @@ class SynClient(Protocol):
             logging.warning('Unexpected message')
             return None
 
-        return self.serializer.loads(handle, ans)
+        proto, serial, children = ans
 
-    def on_put(self, name, serial):
-       return serial
+        if children:
+            raise NotImplementedError
+
+        return self.serializer.loads(handle, proto, serial, [])
+
+    def on_put(self, name, proto, serial, children):
+       return proto, serial, children
 
     def send_message(self, msg):
         self.socket.send_multipart(msg)

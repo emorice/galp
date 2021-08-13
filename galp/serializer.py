@@ -10,7 +10,7 @@ import dill
 import numpy as np
 import pyarrow as pa
 
-from typing import Any
+from typing import Any, Tuple, List
 from galp.typing import ArrayLike, Table
 
 class Serializer:
@@ -18,31 +18,42 @@ class Serializer:
     Abstraction for a serialization strategy
     """
 
-    def get_backend(self, handle):
+    def get_backend(self, handle, proto=None):
+        if proto == b'tuple':
+            return MakeTupleSerializer
         if handle.type_hint == ArrayLike:
             return ArrowTensorSerializer
         if handle.type_hint == Table:
             return ArrowTableSerializer
         return DillSerializer
 
-    def loads(self, handle, payload: bytes) -> Any:
+    def loads(self, handle, proto: bytes, data: bytes, native_children: List[Any]) -> Any:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.
         """
-        return self.get_backend(handle).loads(payload)
+        return self.get_backend(handle, proto).loads(data, native_children)
 
-    def dumps(self, handle, obj: Any) -> bytes:
+    def dumps(self, handle, obj: Any) -> Tuple[bytes, bytes]:
         """
-        Unserialize the data in the payload, possibly using metadata from the
-        handle.
+        Serialize the data.
         """
-        return self.get_backend(handle).dumps(obj)
+        backend = self.get_backend(handle)
+        return backend.proto_id, backend.dumps(obj)
+
+class TupleSerializer(Serializer):
+    proto_id = b'tuple'
+
+    @staticmethod
+    def loads(self, payload, native_children):
+        return tuple(native_children)
 
 class JsonSerializer(Serializer):
     """Trivial wrapper around json to always return bytes"""
+    proto_id = b'json'
+
     @staticmethod
-    def loads(payload):
+    def loads(payload, _):
         return json.loads(payload)
 
     @staticmethod
@@ -51,8 +62,10 @@ class JsonSerializer(Serializer):
 
 class DillSerializer(Serializer):
     """Trivial wrapper around dill"""
+    proto_id = b'dill'
+
     @staticmethod
-    def loads(payload):
+    def loads(payload, _):
         return dill.loads(payload)
 
     @staticmethod
@@ -65,6 +78,7 @@ class ArrowTensorSerializer(Serializer):
     Note that arrow allows to do serialization-free sharing, which is planned to
     be integrated in the future.
     """
+    proto_id = b'arrow.tensor'
 
     @staticmethod
     def dumps(obj):
@@ -78,7 +92,7 @@ class ArrowTensorSerializer(Serializer):
         return bos.getvalue().to_pybytes()
 
     @staticmethod
-    def loads(buf):
+    def loads(buf, _):
         """
         Todo: handle errors more nicely since buffer is user input and could
         contain anything
@@ -94,6 +108,7 @@ class ArrowTableSerializer(Serializer):
     Note that arrow allows to do serialization-free sharing, which is planned to
     be integrated in the future.
     """
+    proto_id = b'arrow.table'
 
     @staticmethod
     def dumps(obj):
@@ -107,7 +122,7 @@ class ArrowTableSerializer(Serializer):
         return bos.getvalue().to_pybytes()
 
     @staticmethod
-    def loads(buf):
+    def loads(buf, _):
         """
         Todo: handle errors more nicely since buffer is user input and could
         contain anything

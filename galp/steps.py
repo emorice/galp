@@ -13,7 +13,7 @@ export = StepSet()
 
 @export.step
 def galp_hello():
-    logging.warn('Task "Hello" running')
+    logging.warning('Task "Hello" running')
     return 42
 
 @export.step

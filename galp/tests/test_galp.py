@@ -283,8 +283,8 @@ def test_task(worker_socket):
     worker_socket.send_multipart([b'GET', handle])
 
     ans = asserted_zmq_recv_multipart(worker_socket)
-    assert ans[:2] == [b'PUT', handle]
-    assert dill.loads(ans[2]) == 42
+    assert ans[:3] == [b'PUT', handle, b'dill']
+    assert dill.loads(ans[3]) == 42
 
 def test_notfound(worker_socket):
     """Tests the answer of server when asking to send unexisting resource"""
@@ -327,7 +327,8 @@ def test_reference(worker_socket):
         task1.name: 2,
         task2.name: 4
         }
-    for _, name, res in [got_a, got_b]:
+    assert got_a[2] == got_b[2] == b'dill'
+    for _, name, proto, res, *children in [got_a, got_b]:
         assert dill.loads(res) == expected[name]
 
 @pytest.mark.asyncio
@@ -432,18 +433,17 @@ async def test_stepwise_collect(client):
 
     assert tuple(ans_four), tuple(ans_two) == ( (4,), (2,) )
 
-async def assert_cache(clients):
+async def assert_cache(clients, task=galp.steps.galp_hello()):
     """
     Test worker-side cache.
     """
     client1, client2 = clients
-    task = galp.steps.galp_hello()
 
     ans1 = await asyncio.wait_for(client1.collect(task), 3)
 
     ans2 = await asyncio.wait_for(client2.collect(task), 3)
 
-    assert ans1 == ans2 == [42]
+    assert ans1 == ans2 == [task.step.function()]
 
     assert client1.submitted_count[task.name] == 1
     assert client2.submitted_count[task.name] == 1
@@ -609,6 +609,24 @@ async def test_tuple(client):
     assert gt_b == ans_b[0]
 
     assert ans2[0] == sum(ans_a[0])
+
+@pytest.mark.asyncio
+async def test_collect_tuple(client):
+    """
+    Test collecting a composite resource
+    """
+    task = gts.some_tuple()
+
+    ans = await asyncio.wait_for(client.collect(task), 3)
+
+    assert ans[0] == task.step.function()
+
+@pytest.mark.asyncio
+async def test_cache_tuple(client_pair):
+    """
+    Test caching behavior for composite resources.
+    """
+    await assert_cache(client_pair, gts.some_tuple())
 
 @pytest.mark.asyncio
 async def test_step_error(client):

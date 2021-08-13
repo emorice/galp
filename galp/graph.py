@@ -172,6 +172,10 @@ class Task():
         """
         return (SubTask(self, sub_handle) for sub_handle in self.handle)
 
+    def __getitem__(self, index):
+        return SubTask(self, self.handle[index])
+   
+
 class SubTask(Task):
     """
     A Task refering to an item of a Task representing a collection.
@@ -212,8 +216,18 @@ class Handle():
     name: bytes
     type_hint: Any = Any
 
+    @property
+    def has_items(self):
+        # FIXME: phase out using type hints for that
+        return get_origin(self.type_hint) is tuple
+
+    @property
+    def n_items(self):
+        # FIXME: phase out using type hints for that
+        return len(get_args(self.type_hint))
+
     def __iter__(self):
-        if get_origin(self.type_hint) is not tuple:
+        if not self.has_items:
             raise NonIterableHandleError
         else:
             return (
@@ -222,6 +236,14 @@ class Handle():
                     hint
                     )
                 for i, hint in enumerate(get_args(self.type_hint))
+                )
+
+    def __getitem__(self, index):
+        if not self.has_items:
+            raise NonIterableHandleError
+        return Handle(
+                SubTask.gen_name(self.name, str(index).encode('ascii')),
+                get_args(self.type_hint)[index]
                 )
 
 class HereisTask(Task):

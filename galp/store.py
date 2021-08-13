@@ -25,14 +25,14 @@ class Store:
             await self._availability[handle.name].wait()
         return self._resources.get_native(handle)
 
-    async def put_serial(self, name, serial):
+    async def put_serial(self, name, proto, data, children):
         """Put serialized object in the store, releasing all callers of
         corresponding get calls if any. 
 
         The underlying caching system will handle deserialization when the gets
         are resolved.
         """
-        self._resources.put_serial(name, serial)
+        self._resources.put_serial(name, proto, data, children)
         self._availability[name].set()
 
     async def put_native(self, handle, native):

@@ -26,9 +26,9 @@ class Protocol:
         """A `GET` request was received for resource `name`"""
         return self.on_unhandled(b'GET')
 
-    def on_put(self, name, serial):
-        """A `PUT` message was received for resource `name` with serialized
-        object `serial`"""
+    def on_put(self, name, proto: bytes, data: bytes, children: int):
+        """A `PUT` message was received for resource `name` 
+        """
         return self.on_unhandled(b'PUT')
 
     def on_doing(self, name):
@@ -43,6 +43,9 @@ class Protocol:
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
 
+    def on_not_found(self, name):
+        """A `NOTFOUND` message was received"""
+        return self.on_unhandled(b'NOTFOUND')
 
     def on_exit(self):
         """An `EXIT` message was received"""
@@ -73,9 +76,12 @@ class Protocol:
         msg = [b'GET', task]
         return self._send_message(msg)
 
-    def put(self, name, serial):
-        logging.warning('-> putting %d bytes', len(serial))
-        return self._send_message([b'PUT', name, serial])
+    def put(self, name, proto, data, children):
+        if data is None:
+            data = b''
+        logging.warning('-> putting %d bytes', len(data))
+        m = [b'PUT', name, proto, data, children]
+        return self._send_message(m)
 
     def not_found(self, name):
         return self._send_message([b'NOTFOUND', name])
@@ -220,14 +226,25 @@ class Protocol:
 
         return self.on_failed(name)
 
-    @event.on('PUT')
-    def _on_put(self, msg):
-        self.validate(len(msg) == 3, 'PUT with wrong number of parts')
+    @event.on('NOTFOUND')
+    def _on_not_found(self, msg):
+        self.validate(len(msg) >= 2, 'NOTFOUND without a name')
+        self.validate(len(msg) <= 2, 'NOTFOUND with too many names')
 
         name = msg[1]
-        serial = msg[2]
 
-        return self.on_put(name, serial)
+        return self.on_not_found(name)
+
+    @event.on('PUT')
+    def _on_put(self, msg):
+        self.validate(4 <= len(msg) <= 5, 'PUT with wrong number of parts')
+
+        name = msg[1]
+        proto = msg[2]
+        data = msg[3]
+        children = int.from_bytes(msg[4], 'big') if len(msg) >= 5 else 0
+
+        return self.on_put(name, proto, data, children)
 
     @event.on('SUBMIT')
     def _on_submit(self, msg):
