@@ -20,7 +20,7 @@ class Serializer:
 
     def get_backend(self, handle, proto=None):
         if proto == b'tuple':
-            return MakeTupleSerializer
+            return TupleSerializer
         if handle.type_hint == ArrayLike:
             return ArrowTensorSerializer
         if handle.type_hint == Table:
@@ -45,7 +45,7 @@ class TupleSerializer(Serializer):
     proto_id = b'tuple'
 
     @staticmethod
-    def loads(self, payload, native_children):
+    def loads(payload, native_children):
         return tuple(native_children)
 
 class JsonSerializer(Serializer):

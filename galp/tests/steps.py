@@ -72,6 +72,13 @@ def some_tuple() -> Tuple[ArrayLike, int]:
     )
 
 @export.step
+def native_tuple() -> Tuple[str, int]:
+    return (
+        'fluff',
+        14
+    )
+
+@export.step
 def raises_error():
     return 1 / 0
 

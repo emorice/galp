@@ -20,6 +20,7 @@ from galp.cache import CacheStack
 from galp.serializer import Serializer
 from galp.protocol import Protocol
 from galp.store import Store
+from galp.graph import Handle
 
 
 class TaskStatus(IntEnum):
@@ -184,7 +185,8 @@ class Client(Protocol):
         try:
             while not terminate:
                 msg = await self.socket.recv_multipart()
-                terminate = await self.on_message(msg)
+                #terminate = await self.on_message(msg)
+                asyncio.create_task(self.on_message(msg))
         except asyncio.CancelledError:
             pass
         logging.warning('Message processing stopping')
@@ -269,12 +271,15 @@ class Client(Protocol):
         self.submitted_count[task_name] += 1
         return r
 
-    async def get(self, task_name):
+    async def get_once(self, task_name):
         # Reentrance check
         if self._status[task_name] >= TaskStatus.TRANSFER:
             return False
         self._status[task_name] = TaskStatus.TRANSFER
         return await super().get(task_name)
+
+    def get(self, task_name):
+        return self.get_once(task_name)
 
     # Protocol callbacks
     # ==================
@@ -297,6 +302,22 @@ class Client(Protocol):
 
         Not that store will release the corresponding collects if needed.
         """
+
+        handle = (
+            self._details[name].handle
+            if name in self._details
+            else Handle(name)
+            )
+
+        # Send sub-gets if necessary
+        for i in range(children):
+            await self.get_once(handle[i].name)
+
+        # Wait for all subs to be resolved
+        for i in range(children):
+            await self._store.available(handle[i].name)
+
+        # Put the last part, thus releasing waiters.
         await self._store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
         self._status[name] = TaskStatus.AVAILABLE
 

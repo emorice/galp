@@ -50,6 +50,11 @@ class Store:
         callers with an error"""
         self._availability[name].set()
 
+    def available(self, name):
+        """Expose the internat Event for caller that just want to wait without
+        actually getting the object"""
+        return self._availability[name].wait()
+
     async def on_nonlocal(self, name):
         """
         Hook called when a resource not present in local storage was called

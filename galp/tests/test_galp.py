@@ -615,7 +615,7 @@ async def test_collect_tuple(client):
     """
     Test collecting a composite resource
     """
-    task = gts.some_tuple()
+    task = gts.native_tuple()
 
     ans = await asyncio.wait_for(client.collect(task), 3)
 
@@ -626,7 +626,7 @@ async def test_cache_tuple(client_pair):
     """
     Test caching behavior for composite resources.
     """
-    await assert_cache(client_pair, gts.some_tuple())
+    await assert_cache(client_pair, gts.native_tuple())
 
 @pytest.mark.asyncio
 async def test_step_error(client):
