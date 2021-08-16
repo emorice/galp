@@ -23,7 +23,7 @@ class CacheStack():
         if dirpath is None:
             self.serialcache = dict()
         else:
-            self.serialcache = diskcache.Cache(dirpath)
+            self.serialcache = diskcache.Cache(dirpath, cull_limit=0)
 
         self.serializer = serializer
 
