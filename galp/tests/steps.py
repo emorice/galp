@@ -85,3 +85,7 @@ def raises_error():
 @export.step
 def some_numerical_list() -> ArrayLike:
     return [1., 2.5, 3.]
+
+@export(items=3)
+def light_syntax():
+    return 5, ["a", "b"], {'x': 7.}

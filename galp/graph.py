@@ -7,7 +7,7 @@ import hashlib
 import inspect
 from itertools import chain
 
-from typing import get_type_hints, get_args, get_origin, Tuple, Any
+from typing import get_type_hints, get_args
 from dataclasses import dataclass
 
 from galp.eventnamespace import EventNamespace
@@ -19,36 +19,49 @@ class Step():
     arguments: 'add' is a step, 'add(3, 4)' a task. You can run a step twice,
     with different arguments, but that would be two different tasks, and a task
     is only ever run once.
+
+    Args:
+        items: int, signal this task eventually returns a collection of items
+            objects, and allows to index or iterate over the task to generate
+            handle pointing to the individual items.
     """
-    def __init__(self, function):
+    def __init__(self, function, items=None):
         self.function = function
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
+        self.items = items
+
+        # Compat with hint-style
+        if items is None:
+            hints = get_type_hints(self.function)
+            if 'return' in hints:
+                n_rets = len(get_args(hints['return']))
+                if n_rets:
+                    print(function, items, hints['return'], n_rets)
+                    logging.warning(
+                        "DEPRECATED: setting items from type hint (%s)",
+                        function.__name__)
+                    self.items = n_rets
+
 
     def make_handles(self, name, arg_names, kwarg_names):
         """
-        Make initial handles containing any hints specified at step declaration
+        Make initial handles.
         """
-        hints = get_type_hints(self.function)
         sig = inspect.signature(self.function)
 
         # Get the declared names of the positional parameters
         arg_param_names = list(sig.parameters.keys())[:len(arg_names)]
 
-        # Put implicit Any's
-        for kw in chain(
-            arg_param_names,
-            map(lambda bts: bts.decode('ascii'), kwarg_names.keys()),
-            ['return']):
-            if not kw in hints:
-                hints[kw] = Any
+        handle = Handle(name, self.items)
 
-        handle = Handle(name, hints['return'])
+        # arg handles are never iterable
         arg_handles = [
-            Handle(arg_name, hints[arg_param_name])
+            Handle(arg_name, 0)
             for arg_name, arg_param_name in zip(arg_names, arg_param_names)
             ]
+
         kwarg_handles = {
-            kw: Handle(kwname, hints[kw.decode('ascii')])
+            kw: Handle(kwname, 0)
             for kw, kwname in kwarg_names.items()
             }
 
@@ -66,7 +79,7 @@ class Task():
           included as a vtag, causing unique names to be generated
           and the step to be rerun for each python client session.
     """
-    def __init__(self, step, args, kwargs, rerun=False, vtag=None):
+    def __init__(self, step, args, kwargs, rerun=False, vtag=None, items=None):
         self.step = step
         self.args = [self.ensure_task(arg) for arg in args]
         self.kwargs = { kw.encode('ascii'): self.ensure_task(arg) for kw, arg in kwargs.items() }
@@ -174,7 +187,6 @@ class Task():
 
     def __getitem__(self, index):
         return SubTask(self, self.handle[index])
-   
 
 class SubTask(Task):
     """
@@ -214,17 +226,17 @@ class Handle():
     primarily identified by its name but also containing metadata
     """
     name: bytes
-    type_hint: Any = Any
+    items: int = 0
 
     @property
     def has_items(self):
-        # FIXME: phase out using type hints for that
-        return get_origin(self.type_hint) is tuple
+        return bool(self.items)
 
     @property
     def n_items(self):
-        # FIXME: phase out using type hints for that
-        return len(get_args(self.type_hint))
+        if self.items:
+            return self.items
+        return 0
 
     def __iter__(self):
         if not self.has_items:
@@ -233,9 +245,9 @@ class Handle():
             return (
                 Handle(
                     SubTask.gen_name(self.name, str(i).encode('ascii')),
-                    hint
+                    0
                     )
-                for i, hint in enumerate(get_args(self.type_hint))
+                for i in range(self.items)
                 )
 
     def __getitem__(self, index):
@@ -243,8 +255,7 @@ class Handle():
             raise NonIterableHandleError
         return Handle(
                 SubTask.gen_name(self.name, str(index).encode('ascii')),
-                get_args(self.type_hint)[index]
-                )
+                0)
 
 class HereisTask(Task):
     """
@@ -300,7 +311,10 @@ class StepSet(EventNamespace):
         See Task for the possible options.
         """
         def _step_maker(function):
-            step = Step(function)
+            step = Step(
+                function,
+                items=options['items'] if 'items' in options else None
+                )
             self.on(step.key)(step)
             def _task_maker(*args, **kwargs):
                return Task(step, args, kwargs, **options)
@@ -310,6 +324,12 @@ class StepSet(EventNamespace):
             return _step_maker(*decorated)
         else:
             return _step_maker
+
+    def __call__(self, *decorated, **options):
+        """
+        Shortcut for StepSet.step
+        """
+        return self.step(*decorated, **options)
 
     def get(self, key):
         """More memorable shortcut for handler"""

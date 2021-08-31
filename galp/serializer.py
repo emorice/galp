@@ -21,10 +21,7 @@ class Serializer:
     def get_backend(self, handle, proto=None):
         if proto == b'tuple':
             return TupleSerializer
-        if handle.type_hint == ArrayLike:
-            return ArrowTensorSerializer
-        if handle.type_hint == Table:
-            return ArrowTableSerializer
+
         return DillSerializer
 
     def loads(self, handle, proto: bytes, data: bytes, native_children: List[Any]) -> Any:

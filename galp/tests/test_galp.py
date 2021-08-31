@@ -660,3 +660,11 @@ async def test_array_like(client):
         ans[0],
         np.array(gts.some_numerical_list().step.function())
         )
+
+@pytest.mark.asyncio
+async def test_light_syntax(client):
+    task = gts.light_syntax()
+
+    ans = await asyncio.wait_for(client.collect(*task), 3)
+
+    assert tuple(ans) == task.step.function()
