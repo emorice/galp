@@ -36,7 +36,6 @@ class Step():
             if 'return' in hints:
                 n_rets = len(get_args(hints['return']))
                 if n_rets:
-                    print(function, items, hints['return'], n_rets)
                     logging.warning(
                         "DEPRECATED: setting items from type hint (%s)",
                         function.__name__)
