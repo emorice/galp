@@ -71,6 +71,9 @@ class Client(Protocol):
             self.close_socket = True
         self.socket = socket
 
+        # With a DEALER socket, we send all messages with no routing information
+        self.route = []
+
         # Public attributes: counters for the number of SUBMITs sent and DOING
         # received for each task
         # Used for reporting and testing cache behavior
@@ -245,6 +248,7 @@ class Client(Protocol):
 
     # Custom protocol sender
     # ======================
+    # For simplicity these set the route inside them
 
     async def submit(self, task_name):
         """Loads details, handles hereis and subtasks, and manage stats"""
@@ -267,7 +271,7 @@ class Client(Protocol):
             await self.on_done(task_name)
             return
 
-        r = await super().submit(details)
+        r = await super().submit(self.route, details)
         self.submitted_count[task_name] += 1
         return r
 
@@ -276,7 +280,7 @@ class Client(Protocol):
         if self._status[task_name] >= TaskStatus.TRANSFER:
             return False
         self._status[task_name] = TaskStatus.TRANSFER
-        return await super().get(task_name)
+        return await super().get(self.route, task_name)
 
     def get(self, task_name):
         return self.get_once(task_name)
@@ -286,17 +290,17 @@ class Client(Protocol):
     async def send_message(self, msg):
         await self.socket.send_multipart(msg)
 
-    async def on_get(self, name):
+    async def on_get(self, route, name):
         # Note: we purposely do not use store here, since we could be receiving
         # GETs for resources we do not have and store blocks in these cases.
         try:
-            await self.put(name, *self._cache.get_serial(name))
+            await self.put(route, name, *self._cache.get_serial(name))
             logging.warning('Client GET on %s', name.hex())
         except KeyError:
-            await self.not_found(name)
+            await self.not_found(route, name)
             logging.warning('Client missed GET on %s', name.hex())
 
-    async def on_put(self, name, proto: bytes, data: bytes, children: int):
+    async def on_put(self, route, name, proto: bytes, data: bytes, children: int):
         """
         Cannot actually block but async anyway for consistency.
 

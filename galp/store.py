@@ -66,12 +66,14 @@ class NetStore(Store):
     Subclass of Store that includes a hook to send GET messages on missing
     resources.
     """
-    def __init__(self, local_storage, proto):
+    def __init__(self, local_storage, proto, resolver):
         super().__init__(local_storage)
         self.proto = proto
+        self.resolver = resolver
 
     async def on_nonlocal(self, name):
         """
         Send a `GET` over network.
         """
-        await self.proto.get(name)
+        route = self.resolver.get_route(name)
+        await self.proto.get(route, name)

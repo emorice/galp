@@ -221,7 +221,8 @@ def test_shutdown(ctx, worker, fatal_order):
 
     socket = ctx.socket(zmq.DEALER)
     socket.connect(endpoint)
-    socket.send(fatal_order)
+    # Mind the empty frame
+    socket.send_multipart([b'', fatal_order])
 
     assert worker_handle.wait(timeout=4) == 0
 
@@ -259,10 +260,11 @@ def test_illegals(worker_socket, msg):
 
     Note that we should pick some that will not be valid later"""
 
-    worker_socket.send_multipart(msg)
+    # Mind the empty frame on both send and receive sides
+    worker_socket.send_multipart([b''] + msg)
 
     ans = asserted_zmq_recv_multipart(worker_socket)
-    assert ans == [b'ILLEGAL']
+    assert ans == [b'', b'ILLEGAL']
 
 def test_task(worker_socket):
     task = galp.steps.galp_hello()
@@ -272,27 +274,27 @@ def test_task(worker_socket):
 
     handle = galp.graph.Task.gen_name(step_name, [], {}, [])
 
-    worker_socket.send_multipart([b'SUBMIT', step_name, b'\x00'])
+    worker_socket.send_multipart([b'', b'SUBMIT', step_name, b'\x00'])
 
     ans = asserted_zmq_recv_multipart(worker_socket)
-    assert ans == [b'DOING', handle]
+    assert ans == [b'', b'DOING', handle]
 
     ans = asserted_zmq_recv_multipart(worker_socket)
-    assert ans == [b'DONE', handle]
+    assert ans == [b'', b'DONE', handle]
 
-    worker_socket.send_multipart([b'GET', handle])
+    worker_socket.send_multipart([b'', b'GET', handle])
 
     ans = asserted_zmq_recv_multipart(worker_socket)
-    assert ans[:3] == [b'PUT', handle, b'dill']
-    assert dill.loads(ans[3]) == 42
+    assert ans[:4] == [b'', b'PUT', handle, b'dill']
+    assert dill.loads(ans[4]) == 42
 
 def test_notfound(worker_socket):
     """Tests the answer of server when asking to send unexisting resource"""
     bad_handle = b'RABBIT'
-    worker_socket.send_multipart([b'GET', bad_handle])
+    worker_socket.send_multipart([b'', b'GET', bad_handle])
 
     ans = asserted_zmq_recv_multipart(worker_socket)
-    assert ans == [b'NOTFOUND', bad_handle]
+    assert ans == [b'', b'NOTFOUND', bad_handle]
 
 def test_reference(worker_socket):
     """Tests passing the result of a task to an other through handle"""
@@ -301,42 +303,43 @@ def test_reference(worker_socket):
 
     task2 = galp.steps.galp_double(task1)
 
-    worker_socket.send_multipart([b'SUBMIT', task1.step.key, b'\x00'])
+    worker_socket.send_multipart([b'', b'SUBMIT', task1.step.key, b'\x00'])
     # doing
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)
-    assert doing, done == ([b'DOING', task1.name], [b'DONE', task1.name])
+    assert doing, done == ([b'', b'DOING', task1.name], [b'', b'DONE', task1.name])
 
-    worker_socket.send_multipart([b'SUBMIT', task2.step.key, b'\x00', b'', task1.name])
+    worker_socket.send_multipart([b'', b'SUBMIT', task2.step.key, b'\x00', b'', task1.name])
 
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)
-    assert doing, done == ([b'DOING', task2.name], [b'DONE', task2.name])
+    assert doing, done == ([b'', b'DOING', task2.name], [b'', b'DONE', task2.name])
 
     # Let's try async get for a twist !
-    worker_socket.send_multipart([b'GET', task2.name])
-    worker_socket.send_multipart([b'GET', task1.name])
+    worker_socket.send_multipart([b'', b'GET', task2.name])
+    worker_socket.send_multipart([b'', b'GET', task1.name])
 
     # Order of the answers is unspecified
     got_a = asserted_zmq_recv_multipart(worker_socket)
     got_b = asserted_zmq_recv_multipart(worker_socket)
 
-    assert got_a[0] == got_b[0] == b'PUT'
-    assert set((got_a[1], got_b[1])) == set((task1.name, task2.name))
+    assert got_a[0] == got_b[0] == b''
+    assert got_a[1] == got_b[1] == b'PUT'
+    assert set((got_a[2], got_b[2])) == set((task1.name, task2.name))
     expected = {
         task1.name: 2,
         task2.name: 4
         }
-    assert got_a[2] == got_b[2] == b'dill'
-    for _, name, proto, res, *children in [got_a, got_b]:
+    assert got_a[3] == got_b[3] == b'dill'
+    for _, _, name, proto, res, *children in [got_a, got_b]:
         assert dill.loads(res) == expected[name]
 
 @pytest.mark.asyncio
 async def test_async_socket(async_worker_socket):
     sock = async_worker_socket
-    await asyncio.wait_for(sock.send(b'RABBIT'), 3)
+    await asyncio.wait_for(sock.send_multipart([b'', b'RABBIT']), 3)
     ans = await asyncio.wait_for(sock.recv_multipart(), 3)
-    assert ans == [b'ILLEGAL']
+    assert ans == [b'', b'ILLEGAL']
 
 @pytest.mark.asyncio
 async def test_client(any_client):

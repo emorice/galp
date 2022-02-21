@@ -22,40 +22,40 @@ class Protocol:
     # Callback methods
     # ================
     # The methods below are just placeholders that double as documentation.
-    def on_get(self, name):
+    def on_get(self, route, name):
         """A `GET` request was received for resource `name`"""
         return self.on_unhandled(b'GET')
 
-    def on_put(self, name, proto: bytes, data: bytes, children: int):
+    def on_put(self, route, name, proto: bytes, data: bytes, children: int):
         """A `PUT` message was received for resource `name` 
         """
         return self.on_unhandled(b'PUT')
 
-    def on_doing(self, name):
+    def on_doing(self, route, name):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
 
-    def on_done(self, name):
+    def on_done(self, route, name):
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
-    def on_failed(self, name):
+    def on_failed(self, route, name):
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
 
-    def on_not_found(self, name):
+    def on_not_found(self, route, name):
         """A `NOTFOUND` message was received"""
         return self.on_unhandled(b'NOTFOUND')
 
-    def on_exit(self):
+    def on_exit(self, route):
         """An `EXIT` message was received"""
         return self.on_unhandled(b'EXIT')
 
-    def on_illegal(self):
+    def on_illegal(self, route):
         """An `ILLEGAL` message was received"""
         return self.on_unhandled(b'ILLEGAL')
 
-    def on_invalid(self, reason):
+    def on_invalid(self, route, reason):
         """
         An invalid message was received.
         """
@@ -71,22 +71,22 @@ class Protocol:
 
     # Send methods
     # ============
-    def get(self, task):
+    def get(self, route, task):
         """Send get for task with given name"""
         msg = [b'GET', task]
-        return self._send_message(msg)
+        return self._send_message(route, msg)
 
-    def put(self, name, proto, data, children):
+    def put(self, route, name, proto, data, children):
         if data is None:
             data = b''
         logging.warning('-> putting %d bytes', len(data))
         m = [b'PUT', name, proto, data, children]
-        return self._send_message(m)
+        return self._send_message(route, m)
 
-    def not_found(self, name):
-        return self._send_message([b'NOTFOUND', name])
+    def not_found(self, route, name):
+        return self._send_message(route, [b'NOTFOUND', name])
 
-    def submit(self, task):
+    def submit(self, route, task):
         """Send submit for given task object.
 
         Hereis-tasks should not be passed at all and will trigger an error.
@@ -112,16 +112,19 @@ class Protocol:
         # Kw args
         for kw, kwarg in task.kwargs.items():
             msg += [ kw , kwarg.name ]
-        return self._send_message(msg)
+        return self._send_message(route, msg)
 
-    def done(self, name):
-        return self._send_message([b'DONE', name])
+    def done(self, route, name):
+        return self._send_message(route, [b'DONE', name])
 
-    def doing(self, name):
-        return self._send_message([b'DOING', name])
+    def doing(self, route, name):
+        return self._send_message(route, [b'DOING', name])
 
-    def failed(self, name):
-        return self._send_message([b'FAILED', name])
+    def failed(self, route, name):
+        return self._send_message(route, [b'FAILED', name])
+
+    def illegal(self, route):
+        return self._send_message(route, [b'ILLEGAL'])
 
     # Main logic methods
     # ==================
@@ -144,12 +147,30 @@ class Protocol:
             message that signals a previous error.
         """
         self.validate(len(msg) > 0, 'Empty message')
+        msg, route = self.get_routing_parts(msg)
         logging.warning('<- %s', msg[0].decode('ascii'))
         try:
-            return self.handler(str(msg[0], 'ascii'))(msg)
+            return self.handler(str(msg[0], 'ascii'))(route, msg)
         except NoHandlerError:
-            self.validate(False, 'No such verb')
+            self.validate(False, route, 'No such verb')
         return False
+
+    def get_routing_parts(self, msg):
+        """
+        Parses and returns the routing part of `msg`, and the rest.
+
+        Can be overloaded to handle different routing strategies.
+        """
+        route = []
+        while msg and msg[0]:
+            route.append(msg[0])
+            msg = msg[1:]
+        # Discard empty frame
+        msg = msg[1:]
+        self.validate(len(msg) > 0, route, 'Empty message with only routing information')
+        logging.warning("%d routing part(s)", len(route))
+        return msg, route
+
 
     def send_message(self, msg):
         """Callback method to send a message just built.
@@ -159,13 +180,13 @@ class Protocol:
         raise NotImplementedError("You must override the send_message method "
             "when subclassing a Protocol object.")
 
-    def _send_message(self, msg):
+    def _send_message(self, route, msg):
         """Private callback method to send a message just built.
 
-        Just a wrapper arounf send_message.
+        Wrapper around send_message that concats route and message.
         """
         logging.warning('-> %s', msg[0].decode('ascii'))
-        return self.send_message(msg)
+        return self.send_message(route + [b''] + msg)
 
     # Internal message handling methods
     event = EventNamespace()
@@ -176,86 +197,86 @@ class Protocol:
             return self.event.handler(event_name)(self, *args, **kwargs)
         return _handler
 
-    def validate(self, condition, reason='Unknown error'):
+    def validate(self, condition, route, reason='Unknown error'):
         if not condition:
-            self.on_invalid(reason)
+            self.on_invalid(route, reason)
 
     @event.on('EXIT')
-    def _on_exit(self, msg):
-        self.validate(len(msg) == 1, 'EXIT with args')
+    def _on_exit(self, route, msg):
+        self.validate(len(msg) == 1, route, 'EXIT with args')
         return self.on_exit()
 
     @event.on('ILLEGAL')
-    def _on_illegal(self, msg):
-        self.validate(len(msg) == 1, 'ILLEGAL with args')
+    def _on_illegal(self, route, msg):
+        self.validate(len(msg) == 1, route, 'ILLEGAL with args')
         return self.on_illegal()
 
     @event.on('GET')
-    def _on_get(self, msg):
-        self.validate(len(msg) >= 2, 'GET without a name')
-        self.validate(len(msg) <= 2, 'GET with too many names')
+    def _on_get(self, route, msg):
+        self.validate(len(msg) >= 2, route, 'GET without a name')
+        self.validate(len(msg) <= 2, route, 'GET with too many names')
 
         name = msg[1]
 
-        return self.on_get(name)
+        return self.on_get(route, name)
 
     @event.on('DOING')
-    def _on_doing(self, msg):
-        self.validate(len(msg) >= 2, 'DOING without a name')
-        self.validate(len(msg) <= 2, 'DOING with too many names')
+    def _on_doing(self, route, msg):
+        self.validate(len(msg) >= 2, route, 'DOING without a name')
+        self.validate(len(msg) <= 2, route, 'DOING with too many names')
 
         name = msg[1]
 
         return self.on_doing(name)
 
     @event.on('DONE')
-    def _on_done(self, msg):
-        self.validate(len(msg) >= 2, 'DONE without a name')
-        self.validate(len(msg) <= 2, 'DONE with too many names')
+    def _on_done(self, route, msg):
+        self.validate(len(msg) >= 2, route, 'DONE without a name')
+        self.validate(len(msg) <= 2, route, 'DONE with too many names')
 
         name = msg[1]
 
         return self.on_done(name)
 
     @event.on('FAILED')
-    def _on_done(self, msg):
-        self.validate(len(msg) >= 2, 'FAILED without a name')
-        self.validate(len(msg) <= 2, 'FAILED with too many names')
+    def _on_done(self, route, msg):
+        self.validate(len(msg) >= 2, route, 'FAILED without a name')
+        self.validate(len(msg) <= 2, route, 'FAILED with too many names')
 
         name = msg[1]
 
         return self.on_failed(name)
 
     @event.on('NOTFOUND')
-    def _on_not_found(self, msg):
-        self.validate(len(msg) >= 2, 'NOTFOUND without a name')
-        self.validate(len(msg) <= 2, 'NOTFOUND with too many names')
+    def _on_not_found(self, route, msg):
+        self.validate(len(msg) >= 2, route, 'NOTFOUND without a name')
+        self.validate(len(msg) <= 2, route, 'NOTFOUND with too many names')
 
         name = msg[1]
 
         return self.on_not_found(name)
 
     @event.on('PUT')
-    def _on_put(self, msg):
-        self.validate(4 <= len(msg) <= 5, 'PUT with wrong number of parts')
+    def _on_put(self, route, msg):
+        self.validate(4 <= len(msg) <= 5, route, 'PUT with wrong number of parts')
 
         name = msg[1]
         proto = msg[2]
         data = msg[3]
         children = int.from_bytes(msg[4], 'big') if len(msg) >= 5 else 0
 
-        return self.on_put(name, proto, data, children)
+        return self.on_put(route, name, proto, data, children)
 
     @event.on('SUBMIT')
-    def _on_submit(self, msg):
-        self.validate(len(msg) >= 3, 'SUBMIT without step or tag count') # SUBMIT step n_tags
+    def _on_submit(self, route, msg):
+        self.validate(len(msg) >= 3, route, 'SUBMIT without step or tag count') # SUBMIT step n_tags
 
         step_name = msg[1]
         n_tags = int.from_bytes(msg[2], 'big')
 
         # Collect tags
         argstack = msg[3:]
-        self.validate(len(argstack) >= n_tags, 'Not as many tags as stated') # Expected number of tags
+        self.validate(len(argstack) >= n_tags, route, 'Not as many tags as stated') # Expected number of tags
         vtags, argstack = argstack[:n_tags], argstack[n_tags:]
 
         # Collect args
@@ -274,4 +295,4 @@ class Protocol:
 
         name = galp.graph.Task.gen_name(step_name, arg_names, kwarg_names, vtags)
 
-        return self.on_submit(name, step_name, arg_names, kwarg_names)
+        return self.on_submit(route, name, step_name, arg_names, kwarg_names)

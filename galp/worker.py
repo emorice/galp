@@ -25,6 +25,7 @@ import galp.steps
 import galp.cache
 from galp.config import ConfigError
 from galp.store import NetStore
+from galp.resolver import Resolver
 from galp.protocol import Protocol
 from galp.profiler import Profiler
 from galp.serializer import Serializer
@@ -33,7 +34,9 @@ from galp.eventnamespace import EventNamespace, NoHandlerError
 class IllegalRequestError(Exception):
     """Base class for all badly formed requests, triggers sending an ILLEGAL
     message back"""
-    pass
+    def __init__(self, route, reason):
+        self.route = route
+        self.reason = reason
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -120,7 +123,8 @@ class Worker(Protocol):
     @cache.setter
     def cache(self, cache):
         self._cache = cache
-        self.store = NetStore(cache, self)
+        self.resolver = Resolver()
+        self.store = NetStore(cache, self, self.resolver)
 
     async def log_heartbeat(self):
         i = 0
@@ -136,7 +140,7 @@ class Worker(Protocol):
         assert self.socket is None
 
         ctx = zmq.asyncio.Context()
-        socket = ctx.socket(zmq.DEALER)
+        socket = ctx.socket(zmq.ROUTER)
         socket.bind(endpoint)
 
         self.socket = socket
@@ -147,9 +151,9 @@ class Worker(Protocol):
                 msg = await socket.recv_multipart()
                 try:
                     terminate = await self.on_message(msg)
-                except IllegalRequestError:
-                    logging.warning('Bad request')
-                    await self.send_illegal()
+                except IllegalRequestError as err:
+                    logging.warning('Bad request: %s', err.reason)
+                    await self.send_illegal(err.route)
         finally:
             socket.close(linger=1)
             ctx.destroy()
@@ -157,22 +161,22 @@ class Worker(Protocol):
 
         self.terminate.set()
 
-    async def send_illegal(self):
+    async def send_illegal(self, route):
         """Send a straightforward error message back so that hell is raised where
         due.
 
         Note: this is technically part of the Protocol and should probably be
             moved there.
         """
-        await self.socket.send(b'ILLEGAL')
+        await self.illegal(route)
 
     # Protocol handlers
     # =================
     async def send_message(self, msg):
         await self.socket.send_multipart(msg)
 
-    def on_invalid(self, msg):
-        raise IllegalRequestError
+    def on_invalid(self, route, reason):
+        raise IllegalRequestError(route, reason)
 
     async def on_illegal(self):
         logging.error('Received ILLEGAL, terminating')
@@ -182,17 +186,17 @@ class Worker(Protocol):
         logging.warning('Received EXIT, terminating')
         return True
 
-    async def on_get(self, name):
+    async def on_get(self, route, name):
         logging.warning('Received GET for %s', name.hex())
         try:
             proto, data, children = self.cache.get_serial(name)
-            await self.put(name, proto, data, children)
+            await self.put(route, name, proto, data, children)
             logging.warning('Cache Hit: %s', name.hex())
         except KeyError:
             logging.warning('Cache Miss: %s', name.hex())
-            await self.not_found(name)
+            await self.not_found(route, name)
 
-    async def on_submit(self, name, step_key, arg_names, kwarg_names):
+    async def on_submit(self, route, name, step_key, arg_names, kwarg_names):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -203,12 +207,12 @@ class Worker(Protocol):
         """
 
         task = asyncio.create_task(
-            self.run_submission(name, step_key, arg_names, kwarg_names)
+            self.run_submission(route, name, step_key, arg_names, kwarg_names)
             )
 
         self.tasks.append(task)
 
-    async def on_put(self, name, proto, data, children):
+    async def on_put(self, route, name, proto, data, children):
         """
         Put object in store, thus releasing tasks waiting for data.
         """
@@ -227,7 +231,7 @@ class Worker(Protocol):
         """
         Recover handes from a step specification, the task and argument names.
         """
-    async def run_submission(self, name, step_key, arg_names, kwarg_names):
+    async def run_submission(self, route, name, step_key, arg_names, kwarg_names):
         """
         Actually run the task if not cached.
         """
@@ -241,11 +245,11 @@ class Worker(Protocol):
             # FIXME: that's probably not correct for multi-output tasks !
             if self.cache.contains(name):
                 logging.warning('Cache hit on SUBMIT: %s', name.hex())
-                await self.done(name)
+                await self.done(route, name)
                 return
 
             # If not in cache, resolve metadata and run the task
-            await self.doing(name)
+            await self.doing(route, name)
             try:
                 step = self.step_dir.get(step_key)
             except NoHandlerError:
@@ -254,11 +258,17 @@ class Worker(Protocol):
 
             handle, arg_handles, kwarg_handles = step.make_handles(name, arg_names, kwarg_names)
 
-
             # Load args from store, i.e. either memory, disk, or network
             try:
                 keywords = kwarg_handles.keys()
                 kwhandles = [ kwarg_handles[kw] for kw in keywords ]
+
+                # Register all resources named as routable to the sender. This means
+                # that resources not available to the worker will be assumed to be
+                # available on the original client.
+                for in_handle in (arg_handles + kwhandles):
+                    self.resolver.set_route(in_handle.name, route)
+
                 all_args = await asyncio.gather(*[
                     self.store.get_native(in_handle) for in_handle in (arg_handles + kwhandles)
                     ])
@@ -286,12 +296,12 @@ class Worker(Protocol):
             # Caching
             self.cache.put_native(handle, result)
 
-            await self.done(name)
+            await self.done(route, name)
         except NonFatalTaskError:
-            await self.failed(name)
+            await self.failed(route, name)
             raise
         except Exception as e:
-            await self.failed(name)
+            await self.failed(route, name)
             # Log immediately the exception
             logging.exception('An unhandled error has occured within a step-'
                 'running asynchronous task. This signals a bug in GALP itself.')

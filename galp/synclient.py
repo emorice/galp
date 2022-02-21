@@ -17,13 +17,14 @@ class SynClient(Protocol):
        self.socket = zmq.Context.instance().socket(zmq.DEALER)
        self.socket.connect(endpoint)
        self.serializer = Serializer()
+       self.route = []
 
 
     def __delete__(self):
         self.socket.close(linger=1)
 
     def get_native(self, handle, timeout=3):
-        self.get(handle.name)
+        self.get(self.route, handle.name)
 
         # We expect a single message in return
         # TODO: we could receive extra messages, as the socket is meant to be
@@ -46,8 +47,8 @@ class SynClient(Protocol):
 
         return self.serializer.loads(handle, proto, serial, [])
 
-    def on_put(self, name, proto, serial, children):
+    def on_put(self, route, name, proto, serial, children):
        return proto, serial, children
 
-    def send_message(self, msg):
-        self.socket.send_multipart(msg)
+    def send_message(self, routed_msg):
+        self.socket.send_multipart(routed_msg)
