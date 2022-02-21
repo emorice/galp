@@ -79,7 +79,7 @@ class Protocol:
     def put(self, route, name, proto, data, children):
         if data is None:
             data = b''
-        logging.warning('-> putting %d bytes', len(data))
+        logging.debug('-> putting %d bytes', len(data))
         m = [b'PUT', name, proto, data, children]
         return self._send_message(route, m)
 
@@ -148,7 +148,7 @@ class Protocol:
         """
         self.validate(len(msg) > 0, 'Empty message')
         msg, route = self.get_routing_parts(msg)
-        logging.warning('<- %s', msg[0].decode('ascii'))
+        logging.info('<- [%s] %s', route[0].hex() if route else "", msg[0].decode('ascii'))
         try:
             return self.handler(str(msg[0], 'ascii'))(route, msg)
         except NoHandlerError:
@@ -168,7 +168,7 @@ class Protocol:
         # Discard empty frame
         msg = msg[1:]
         self.validate(len(msg) > 0, route, 'Empty message with only routing information')
-        logging.warning("%d routing part(s)", len(route))
+        logging.debug("%d routing part(s)", len(route))
         return msg, route
 
 
@@ -185,7 +185,7 @@ class Protocol:
 
         Wrapper around send_message that concats route and message.
         """
-        logging.warning('-> %s', msg[0].decode('ascii'))
+        logging.info('-> [%s] %s', route[0].hex() if route else "", msg[0].decode('ascii'))
         return self.send_message(route + [b''] + msg)
 
     # Internal message handling methods

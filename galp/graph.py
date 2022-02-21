@@ -171,7 +171,7 @@ class Task():
             [ Task._san(kw) + b'=' + Task._san(n) for kw, n in sortedkw ]
             )
         m += b')'
-        logging.warning("Hashed value is %s:", m)
+        logging.debug("Hashed value is %s:", m)
 
         return Task.hash_one(m)
 

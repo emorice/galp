@@ -183,7 +183,7 @@ class Client(Protocol):
         Reacts to messages.
         """
         # Todo: timeouts
-        logging.warning('Now reacting to completion events')
+        logging.info('Now reacting to completion events')
         terminate = False
         try:
             while not terminate:
@@ -192,7 +192,7 @@ class Client(Protocol):
                 asyncio.create_task(self.on_message(msg))
         except asyncio.CancelledError:
             pass
-        logging.warning('Message processing stopping')
+        logging.info('Message processing stopping')
 
     async def collect(self, *tasks):
         """

@@ -51,7 +51,7 @@ def load_steps(plugin_names):
         try:
             plugin = importlib.import_module(name)
             step_dir += plugin.export
-            logging.warning('Loaded plug-in %s', name)
+            logging.info('Loaded plug-in %s', name)
         except ModuleNotFoundError:
             logging.error('No such plug-in: %s', name)
             raise ConfigError(('No such plugin', name))
@@ -67,9 +67,14 @@ async def main(args):
         args: an object whose attributes are the the parsed arguments, as
             returned by argparse.ArgumentParser.parse_args.
     """
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
     config = {}
     if args.config:
-        logging.warning("Loading config file %s", args.config)
+        logging.info("Loading config file %s", args.config)
         with open(args.config) as fd:
             config = toml.load(fd)
 
@@ -81,8 +86,8 @@ async def main(args):
     loop.add_signal_handler(signal.SIGINT, terminate.set)
     loop.add_signal_handler(signal.SIGTERM, terminate.set)
 
-    logging.warning("Worker starting on %s", args.endpoint)
-    logging.warning("Caching to %s", args.cachedir)
+    logging.info("Worker starting on %s", args.endpoint)
+    logging.info("Caching to %s", args.cachedir)
 
     tasks = []
 
@@ -108,7 +113,7 @@ async def main(args):
             pass
         # let other exceptions be raised
 
-    logging.warning("Worker terminating normally")
+    logging.info("Worker terminating normally")
 
 class Worker(Protocol):
     def __init__(self, terminate):
@@ -129,7 +134,7 @@ class Worker(Protocol):
     async def log_heartbeat(self):
         i = 0
         while True:
-            logging.warning("Worker heartbeat %d", i)
+            logging.info("Worker heartbeat %d", i)
             await asyncio.sleep(10)
             i += 1
 
@@ -187,13 +192,13 @@ class Worker(Protocol):
         return True
 
     async def on_get(self, route, name):
-        logging.warning('Received GET for %s', name.hex())
+        logging.debug('Received GET for %s', name.hex())
         try:
             proto, data, children = self.cache.get_serial(name)
             await self.put(route, name, proto, data, children)
-            logging.warning('Cache Hit: %s', name.hex())
+            logging.info('GET: Cache HIT: %s', name.hex())
         except KeyError:
-            logging.warning('Cache Miss: %s', name.hex())
+            logging.info('GET: Cache MISS: %s', name.hex())
             await self.not_found(route, name)
 
     async def on_submit(self, route, name, step_key, arg_names, kwarg_names):
@@ -237,14 +242,14 @@ class Worker(Protocol):
         """
         try:
 
-            logging.warning('Received SUBMIT for step %s', step_key)
+            logging.info('SUBMIT: %s', step_key)
 
             # Cache hook. For now we just check the local cache, later we'll have a
             # central locking mechanism (replacing cache with store is not enough
             # for that)
             # FIXME: that's probably not correct for multi-output tasks !
             if self.cache.contains(name):
-                logging.warning('Cache hit on SUBMIT: %s', name.hex())
+                logging.info('SUBMIT: Cache HIT: %s', name.hex())
                 await self.done(route, name)
                 return
 
@@ -321,6 +326,8 @@ def add_parser_arguments(parser):
     parser.add_argument('cachedir')
     parser.add_argument('-c', '--config',
         help='Path to optional TOML configuration file')
+    parser.add_argument('-d', '--debug', action='store_true',
+        help='Turn on debug-level logging')
 
 if __name__ == '__main__':
     """Convenience hook to start a worker from CLI""" 

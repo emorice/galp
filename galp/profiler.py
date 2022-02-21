@@ -32,7 +32,7 @@ class Profiler:
             if 'steps' in config:
                 try:
                     self.patterns = [re.compile(pat.encode('ascii')) for pat in config['steps']]
-                    logging.warning('Profiler loaded patterns: %s', self.patterns)
+                    logging.info('Profiler loaded patterns: %s', self.patterns)
                 except re.error as e:
                     raise ConfigError(f'Invalid step pattern {e}')
             self.on = True

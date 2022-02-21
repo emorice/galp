@@ -47,6 +47,7 @@ def make_worker(tmp_path):
             sys.executable,
             '-m', 'galp.worker',
             '-c', 'galp/tests/config.toml',
+            #'--debug',
             endpoint, str(tmp_path)
             ])
         phandles.append(phandle)
@@ -171,15 +172,15 @@ def any_client(request, make_client, make_standalone_client, worker):
         return make_standalone_client(endpoint)
 
 @pytest.fixture
-def client_pair(async_worker_socket):
-    """A pair of clients connected to the same socket and worker.
+def client_pair(worker):
+    """A pair of clients connected to the worker.
 
-    Obviously unsafe for concurrent use. When we introduce routing, swap this
-    implementation to use two sockets.
+    This is now implemented with two incoming connection to the same worker,
+    routing on worker-side should disantangle things.
     """
-    s = async_worker_socket
-    c1 = galp.client.Client(s)
-    c2 = galp.client.Client(s)
+    endpoint, _ = worker
+    c1 = galp.client.Client(endpoint=endpoint)
+    c2 = galp.client.Client(endpoint=endpoint)
     return c1, c2
 
 @pytest.fixture
