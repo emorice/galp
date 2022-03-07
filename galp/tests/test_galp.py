@@ -641,6 +641,14 @@ async def test_step_error(client):
        await asyncio.wait_for(client.collect(gts.raises_error()), 3) 
 
 @pytest.mark.asyncio
+async def test_step_error_multiple(client):
+    """
+    Test running a multiple task containing a bug
+    """
+    with pytest.raises(galp.TaskFailedError):
+       await asyncio.wait_for(client.collect(*gts.raises_error_multiple()), 3) 
+
+@pytest.mark.asyncio
 async def test_missing_step_error(client):
     """
     Test running a unexisting step

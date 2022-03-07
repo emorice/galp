@@ -187,6 +187,11 @@ class Task():
     def __getitem__(self, index):
         return SubTask(self, self.handle[index])
 
+    @property
+    def description(self):
+        """Return a readable description of task"""
+        return str(self.step.key, 'ascii')
+
 class SubTask(Task):
     """
     A Task refering to an item of a Task representing a collection.
@@ -218,6 +223,11 @@ class SubTask(Task):
     @property
     def dependencies(self):
         return [self.parent]
+
+    @property
+    def description(self):
+        """Return a readable description of task"""
+        return self.parent.description + '[sub]'
 
 @dataclass
 class Handle():
@@ -276,6 +286,11 @@ class HereisTask(Task):
     @property
     def dependencies(self):
         return []
+
+    @property
+    def description(self):
+        """Return a readable description of task"""
+        return '[hereis]'
 
 class StepSet(EventNamespace):
     """A collection of steps"""

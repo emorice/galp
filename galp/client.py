@@ -295,7 +295,7 @@ class Client(Protocol):
         # GETs for resources we do not have and store blocks in these cases.
         try:
             await self.put(route, name, *self._cache.get_serial(name))
-            logging.warning('Client GET on %s', name.hex())
+            logging.debug('Client GET on %s', name.hex())
         except KeyError:
             await self.not_found(route, name)
             logging.warning('Client missed GET on %s', name.hex())
@@ -348,15 +348,21 @@ class Client(Protocol):
         self.run_count[task] += 1
         self._status[task] = TaskStatus.RUNNING
 
-    async def on_failed(self, task):
+    async def on_failed(self, failed_task):
         """
         Mark a task and all its dependents as failed, and unblock any watcher.  
         """
 
-        tasks = set([task])
+        tasks = set([failed_task])
 
         while tasks:
             task = tasks.pop()
+            task_desc = self._details[task].description
+
+            if task == failed_task:
+                logging.error('TASK FAILED: %s [%s]', task_desc, task.hex())
+            else:
+                logging.error('Propagating failure: %s [%s]', task_desc, task.hex())
 
             # Mark as failed
             self._status[task] = TaskStatus.FAILED
@@ -366,7 +372,7 @@ class Client(Protocol):
             # Fails the dependents
             # Note: this can visit a task several time, not a problem
             for subtask in self._dependents[task]:
-                tasks.add(task)
+                tasks.add(subtask)
 
         # This is not a fatal error to the client, by default processing of
         # messages for other ongoing tasks is still permitted.

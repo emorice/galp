@@ -89,3 +89,10 @@ def some_numerical_list() -> ArrayLike:
 @export(items=3)
 def light_syntax():
     return 5, ["a", "b"], {'x': 7.}
+
+@export(items=2)
+def raises_error_multiple():
+    """
+    Like raises_error, but returns an iterable handle
+    """
+    return True, 1 / 0
