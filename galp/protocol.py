@@ -19,6 +19,9 @@ class Protocol:
     be ignored (with a warning).
     """
 
+    def __init__(self, name=None):
+        self.proto_name = name
+
     # Callback methods
     # ================
     # The methods below are just placeholders that double as documentation.
@@ -27,7 +30,7 @@ class Protocol:
         return self.on_unhandled(b'GET')
 
     def on_put(self, route, name, proto: bytes, data: bytes, children: int):
-        """A `PUT` message was received for resource `name` 
+        """A `PUT` message was received for resource `name`
         """
         return self.on_unhandled(b'PUT')
 
@@ -55,6 +58,10 @@ class Protocol:
         """An `ILLEGAL` message was received"""
         return self.on_unhandled(b'ILLEGAL')
 
+    def on_ready(self, route):
+        """A `READY` message was received"""
+        return self.on_unhandled(b'READY')
+
     def on_invalid(self, route, reason):
         """
         An invalid message was received.
@@ -65,7 +72,7 @@ class Protocol:
         """
         A message without an overriden callback was received.
         """
-        logging.warning("Unhandled GALP verb %s", verb.decode('ascii'))
+        logging.error("Unhandled GALP verb %s", verb.decode('ascii'))
         return False # Not fatal by default
 
 
@@ -89,7 +96,7 @@ class Protocol:
     def not_found(self, route, name):
         return self._send_message(route, [b'NOTFOUND', name])
 
-    def submit(self, route, task):
+    def submit_task(self, route, task):
         """Send submit for given task object.
 
         Hereis-tasks should not be passed at all and will trigger an error.
@@ -104,17 +111,33 @@ class Protocol:
                 'Protocol layer')
 
         # Step
-        msg = [b'SUBMIT', task.step.key]
+        step_name = task.step.key
         # Vtags
-        msg += [ len(task.vtags).to_bytes(1, 'big') ]
-        for tag in task.vtags:
+        vtags = task.vtags
+        # Pos args
+        arg_names = [ arg.name for arg in task.args ]
+        # Kw args
+        kwarg_names = { kw: kwarg.name for kw, kwarg in task.kwargs.items() }
+
+        return self.submit(route, step_name, vtags, arg_names, kwarg_names)
+
+    def submit(self, route, step_name, vtags, arg_names, kwarg_names):
+        """
+        Low-level submit routine.
+
+        See also submit_task.
+        """
+        msg = [b'SUBMIT', step_name]
+        # Vtags
+        msg += [ len(vtags).to_bytes(1, 'big') ]
+        for tag in vtags:
             msg += [ tag ]
         # Pos args
-        for arg in task.args:
-            msg += [ b'', arg.name ]
+        for arg_name in arg_names:
+            msg += [ b'', arg_name ]
         # Kw args
-        for kw, kwarg in task.kwargs.items():
-            msg += [ kw , kwarg.name ]
+        for kw, kwarg_name in kwarg_names.items():
+            msg += [ kw , kwarg_name ]
         return self._send_message(route, msg)
 
     def done(self, route, name):
@@ -151,7 +174,10 @@ class Protocol:
         """
         self.validate(len(msg) > 0, 'Empty message')
         msg, route = self.get_routing_parts(msg)
-        logging.info('<- [%s] %s', route[0].hex() if route else "", msg[0].decode('ascii'))
+        logging.info('<- %s[%s] %s',
+            self.proto_name +" " if self.proto_name else "",
+            route[0].hex() if route else "",
+            msg[0].decode('ascii'))
         try:
             return self.handler(str(msg[0], 'ascii'))(route, msg)
         except NoHandlerError:
@@ -188,7 +214,10 @@ class Protocol:
 
         Wrapper around send_message that concats route and message.
         """
-        logging.info('-> [%s] %s', route[0].hex() if route else "", msg[0].decode('ascii'))
+        logging.info('-> %s[%s] %s',
+            self.proto_name +" " if self.proto_name else "",
+            route[0].hex() if route else "",
+            msg[0].decode('ascii'))
         return self.send_message(route + [b''] + msg)
 
     # Internal message handling methods
@@ -203,6 +232,15 @@ class Protocol:
     def validate(self, condition, route, reason='Unknown error'):
         if not condition:
             self.on_invalid(route, reason)
+
+    def send_illegal(self, route):
+        """Send a straightforward error message back so that hell is raised where
+        due.
+
+        Note: this is technically part of the Protocol and should probably be
+            moved there.
+        """
+        return self.illegal(route)
 
     @event.on('EXIT')
     def _on_exit(self, route, msg):
@@ -230,7 +268,7 @@ class Protocol:
 
         name = msg[1]
 
-        return self.on_doing(name)
+        return self.on_doing(route, name)
 
     @event.on('DONE')
     def _on_done(self, route, msg):
@@ -270,6 +308,11 @@ class Protocol:
 
         return self.on_put(route, name, proto, data, children)
 
+    @event.on('READY')
+    def _on_ready(self, route, msg):
+        self.validate(len(msg) == 1, route, 'READY with args')
+        return self.on_ready(route)
+
     @event.on('SUBMIT')
     def _on_submit(self, route, msg):
         self.validate(len(msg) >= 3, route, 'SUBMIT without step or tag count') # SUBMIT step n_tags
@@ -298,4 +341,4 @@ class Protocol:
 
         name = galp.graph.Task.gen_name(step_name, arg_names, kwarg_names, vtags)
 
-        return self.on_submit(route, name, step_name, arg_names, kwarg_names)
+        return self.on_submit(route, name, step_name, vtags, arg_names, kwarg_names)

@@ -42,7 +42,7 @@ class Broker:
                 try:
                     terminate = await self.client.on_message(msg)
                 except IllegalRequestError as err:
-                    logging.warning('Bad client request: %s', err.reason)
+                    logging.error('Bad client request: %s', err.reason)
                     await self.client.send_illegal(err.route)
         finally:
             client_socket.close(linger=1)
@@ -70,7 +70,7 @@ class Broker:
                 try:
                     terminate = await self.worker.on_message(msg)
                 except IllegalRequestError as err:
-                    logging.warning('Bad worker request: %s', err.reason)
+                    logging.error('Bad worker request: %s', err.reason)
                     await self.worker.send_illegal(err.route)
         finally:
             worker_socket.close(linger=1)
@@ -79,26 +79,63 @@ class Broker:
 
         self.terminate.set()
 
-class ClientProtocol(Protocol):
+class BrokerProtocol(Protocol):
+    """
+    Common behavior for both sides
+    """
+    def __init__(self, name, broker):
+        super().__init__(name)
+        self.broker = broker
+
+    def on_invalid(self, route, reason):
+        raise IllegalRequestError(route, reason)
+
+    async def on_unhandled(self, verb):
+        logging.error("Unhandled GALP verb %s", verb.decode('ascii'))
+
+class ClientProtocol(BrokerProtocol):
     """
     Handler for messages received from clients.
     """
     def __init__(self, broker):
-        self.broker = broker
+        super().__init__('CL', broker)
 
-    async def on_submit(self, route, name, step_name, arg_names, kwarg_names):
+    async def on_submit(self, route, name, step_name, vtags, arg_names, kwarg_names):
         """
         Waits for a worker to be available and forwards the request.
         """
         worker = await self.broker.workers.get()
-        self.submit(worker + route, name, step_name, arg_name, kwargs_names)
+        await self.broker.worker.submit(worker + route, step_name, vtags, arg_names, kwarg_names)
 
-class WorkerProtocol(Protocol):
+    async def send_message(self, msg):
+        await self.broker.client_socket.send_multipart(msg)
+
+
+class WorkerProtocol(BrokerProtocol):
     """
     Handler for messages received from clients.
     """
     def __init__(self, broker):
-        self.broker = broker
+        super().__init__('WK', broker)
+
+    async def send_message(self, msg):
+        await self.broker.worker_socket.send_multipart(msg)
+
+    async def on_ready(self, route):
+        await self.broker.workers.put(route)
+
+    async def on_doing(self, route, name):
+        route = route[1:]
+        await self.broker.client.doing(route, name)
+
+    async def on_done(self, route):
+        await self.broker.workers.put(route)
+
+    async def on_failed(self, route):
+        await self.broker.workers.put(route)
+
+    async def on_put(self, route):
+        await self.broker.workers.put(route)
 
 async def main(args):
     """Entry point for the broker program

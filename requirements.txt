@@ -5,3 +5,4 @@ pyarrow
 diskcache
 pytest-asyncio
 dill
+toml

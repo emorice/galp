@@ -98,6 +98,7 @@ async def main(args):
 
 class Worker(Protocol):
     def __init__(self, terminate):
+        super().__init__()
         self.terminate = terminate
         self.socket = None
         self.tasks = []
@@ -126,7 +127,7 @@ class Worker(Protocol):
         assert self.socket is None
 
         ctx = zmq.asyncio.Context()
-        socket = ctx.socket(zmq.ROUTER)
+        socket = ctx.socket(zmq.DEALER)
         socket.connect(endpoint)
 
         self.socket = socket
@@ -139,7 +140,7 @@ class Worker(Protocol):
                 try:
                     terminate = await self.on_message(msg)
                 except IllegalRequestError as err:
-                    logging.warning('Bad request: %s', err.reason)
+                    logging.error('Bad request: %s', err.reason)
                     await self.send_illegal(err.route)
         finally:
             socket.close(linger=1)
@@ -147,15 +148,6 @@ class Worker(Protocol):
             self.socket = None
 
         self.terminate.set()
-
-    async def send_illegal(self, route):
-        """Send a straightforward error message back so that hell is raised where
-        due.
-
-        Note: this is technically part of the Protocol and should probably be
-            moved there.
-        """
-        await self.illegal(route)
 
     # Protocol handlers
     # =================
@@ -183,7 +175,7 @@ class Worker(Protocol):
             logging.info('GET: Cache MISS: %s', name.hex())
             await self.not_found(route, name)
 
-    async def on_submit(self, route, name, step_key, arg_names, kwarg_names):
+    async def on_submit(self, route, name, step_key, vtags, arg_names, kwarg_names):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -192,6 +184,7 @@ class Worker(Protocol):
 
         This the only asynchronous handler, all others are semantically blocking.
         """
+        del vtags
 
         task = asyncio.create_task(
             self.run_submission(route, name, step_key, arg_names, kwarg_names)

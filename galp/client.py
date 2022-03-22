@@ -56,6 +56,7 @@ class Client(Protocol):
     # 'tasks' public argument itself. The tasks themselves are called 'details'
 
     def __init__(self, endpoint):
+        super().__init__()
 
         socket = zmq.asyncio.Context.instance().socket(zmq.DEALER)
         socket.connect(endpoint)
@@ -199,7 +200,7 @@ class Client(Protocol):
 
         # Send SUBMITs for all possibly new and ready downstream tasks
         for task in new_inputs:
-            await self.submit(task)
+            await self.submit_task(task)
 
         # Update the list of final tasks and send GETs for the already done 
         # Note: comes after submit as derived task need to be submitted first to
@@ -239,7 +240,7 @@ class Client(Protocol):
     # ======================
     # For simplicity these set the route inside them
 
-    async def submit(self, task_name):
+    async def submit_task(self, task_name):
         """Loads details, handles hereis and subtasks, and manage stats"""
         details = self._details[task_name]
 
@@ -260,7 +261,7 @@ class Client(Protocol):
             await self.on_done(task_name)
             return
 
-        r = await super().submit(self.route, details)
+        r = await super().submit_task(self.route, details)
         self.submitted_count[task_name] += 1
         return r
 
@@ -329,7 +330,7 @@ class Client(Protocol):
 
         for dept in self._dependents[done_task]:
             if all(self._status[sister_dep] >= TaskStatus.COMPLETED for sister_dep in self._dependencies[dept]):
-                await self.submit(dept)
+                await self.submit_task(dept)
 
 
     async def on_doing(self, task):
