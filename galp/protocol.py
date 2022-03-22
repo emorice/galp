@@ -83,6 +83,9 @@ class Protocol:
         m = [b'PUT', name, proto, data, children]
         return self._send_message(route, m)
 
+    def ready(self, route):
+        return self._send_message(route, [b'READY'])
+
     def not_found(self, route, name):
         return self._send_message(route, [b'NOTFOUND', name])
 

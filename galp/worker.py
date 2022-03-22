@@ -23,6 +23,8 @@ import toml
 
 import galp.steps
 import galp.cache
+import galp.cli
+from galp.cli import IllegalRequestError
 from galp.config import ConfigError
 from galp.store import NetStore
 from galp.resolver import Resolver
@@ -30,13 +32,6 @@ from galp.protocol import Protocol
 from galp.profiler import Profiler
 from galp.serializer import Serializer
 from galp.eventnamespace import EventNamespace, NoHandlerError
-
-class IllegalRequestError(Exception):
-    """Base class for all badly formed requests, triggers sending an ILLEGAL
-    message back"""
-    def __init__(self, route, reason):
-        self.route = route
-        self.reason = reason
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -67,10 +62,7 @@ async def main(args):
         args: an object whose attributes are the the parsed arguments, as
             returned by argparse.ArgumentParser.parse_args.
     """
-    if args.debug:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
+    galp.cli.setup(args, "worker")
 
     config = {}
     if args.config:
@@ -81,12 +73,9 @@ async def main(args):
     step_dir = load_steps(config['steps'] if 'steps' in config else [])
 
     # Signal handler
-    terminate = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, terminate.set)
-    loop.add_signal_handler(signal.SIGTERM, terminate.set)
+    terminate = galp.cli.create_terminate()
 
-    logging.info("Worker starting on %s", args.endpoint)
+    logging.info("Worker connecting to %s", args.endpoint)
     logging.info("Caching to %s", args.cachedir)
 
     tasks = []
@@ -103,15 +92,7 @@ async def main(args):
 
     await terminate.wait()
 
-    for task in tasks + worker.tasks:
-        task.cancel()
-
-    for task in tasks + worker.tasks:
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        # let other exceptions be raised
+    await galp.cli.cleanup_tasks(tasks + worker.tasks)
 
     logging.info("Worker terminating normally")
 
@@ -146,12 +127,13 @@ class Worker(Protocol):
 
         ctx = zmq.asyncio.Context()
         socket = ctx.socket(zmq.ROUTER)
-        socket.bind(endpoint)
+        socket.connect(endpoint)
 
         self.socket = socket
 
         terminate = False
         try:
+            await self.ready([])
             while not terminate:
                 msg = await socket.recv_multipart()
                 try:
@@ -326,8 +308,8 @@ def add_parser_arguments(parser):
     parser.add_argument('cachedir')
     parser.add_argument('-c', '--config',
         help='Path to optional TOML configuration file')
-    parser.add_argument('-d', '--debug', action='store_true',
-        help='Turn on debug-level logging')
+    
+    galp.cli.add_parser_arguments(parser)
 
 if __name__ == '__main__':
     """Convenience hook to start a worker from CLI""" 

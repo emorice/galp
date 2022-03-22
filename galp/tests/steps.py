@@ -1,6 +1,7 @@
 """
 Steps only used for testing, and loaded through the plugin system.
 """
+import time
 
 import numpy as np
 import pyarrow as pa
@@ -96,3 +97,9 @@ def raises_error_multiple():
     Like raises_error, but returns an iterable handle
     """
     return True, 1 / 0
+
+@export
+def sleeps(secs, some_arg):
+    time.sleep(secs)
+    return some_arg
+    

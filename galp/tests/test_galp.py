@@ -40,8 +40,9 @@ def make_worker(tmp_path):
     port = itertools.count(48652)
     phandles = []
 
-    def _make():
-        endpoint = f"tcp://127.0.0.1:{next(port)}"
+    def _make(endpoint=None):
+        if endpoint is None:
+            endpoint = f"tcp://127.0.0.1:{next(port)}"
 
         phandle = subprocess.Popen([
             sys.executable,
@@ -65,8 +66,70 @@ def make_worker(tmp_path):
         phandle.wait()
 
 @pytest.fixture
+def make_broker():
+    """Broker fixture, starts a broker in background.
+
+    Returns:
+        (endpoint, Popen) tuple
+    """
+    # todo: safer port picking
+    port = itertools.count(48652)
+    phandles = []
+
+    def _make():
+        client_endpoint = f"tcp://127.0.0.1:{next(port)}"
+        worker_endpoint = f"tcp://127.0.0.1:{next(port)}"
+
+        phandle = subprocess.Popen([
+            sys.executable,
+            '-m', 'galp.broker',
+            client_endpoint,
+            worker_endpoint,
+            ])
+        phandles.append(phandle)
+
+        return client_endpoint, worker_endpoint, phandle
+
+    yield _make
+
+    for phandle in phandles:
+        phandle.terminate()
+        phandle.wait()
+
+@pytest.fixture
 def worker(make_worker):
     return make_worker()
+
+@pytest.fixture
+def broker(make_broker):
+    return make_broker()
+
+@pytest.fixture
+def make_worker_pool(broker, make_worker):
+    """
+    A pool of n workers
+    """
+    def _make(n):
+        cl_ep, w_ep, _ = broker
+        for i in range(n):
+            make_worker(w_ep)
+        return cl_ep
+
+    return _make
+
+@pytest.fixture
+def worker_pool(make_worker_pool):
+    """
+    A pool of 10 workers
+    """
+    return make_worker_pool(10)
+
+@pytest.fixture
+def broker_worker(broker, make_worker_pool):
+    """
+    A "pool" with a single worker
+    """
+    return make_worker_pool(1)
 
 @pytest.fixture
 def ctx():
@@ -98,7 +161,7 @@ def worker_socket(ctx, worker):
     endpoint, _ = worker
 
     socket = ctx.socket(zmq.DEALER)
-    socket.connect(endpoint)
+    socket.bind(endpoint)
 
     yield socket
 
@@ -112,7 +175,7 @@ def make_async_socket(async_ctx):
 
     The return factory takes an endpoint as sole argument.
 
-    Note that your endpoint must be able to deal with several clients !"""
+    Note that youbroker_r endpoint must be able to deal with several clients !"""
 
     """
     Helper to create both sync and async sockets
@@ -121,7 +184,7 @@ def make_async_socket(async_ctx):
     def _make(endpoint):
         socket = async_ctx.socket(zmq.DEALER)
         sockets.append(socket)
-        socket.connect(endpoint)
+        socket.bind(endpoint)
         return socket
 
     yield _make
@@ -143,33 +206,23 @@ def fatal_order(request):
     return request.param
 
 @pytest.fixture
-def make_client(make_async_socket):
+def make_client():
+    """Factory fixture for client managing its own sockets"""
     def _make(endpoint):
-        socket = make_async_socket(endpoint)
-        return galp.client.Client(socket)
+        return galp.client.Client(endpoint)
     return _make
 
 @pytest.fixture
-def client(make_client, worker):
-    """A client connected to a worker"""
-    endpoint, _ = worker
+def client(make_client, broker_worker):
+    """A client connected to a pool with one worker"""
+    endpoint = broker_worker
     return make_client(endpoint)
 
 @pytest.fixture
-def make_standalone_client():
-    """Factory fixture for client managing its own sockets"""
-    def _make(endpoint):
-        return galp.client.Client(endpoint=endpoint)
-    return _make
-
-@pytest.fixture(params=['preconnected', 'standalone'])
-def any_client(request, make_client, make_standalone_client, worker):
-    """A client connected to a worker, with different creation methods"""
-    endpoint, _ = worker
-    if request.param == 'preconnected':
-        return make_client(endpoint)
-    else:
-        return make_standalone_client(endpoint)
+def client_pool(make_client, worker_pool):
+    """A client connected to a pool of 10 workers"""
+    endpoint = worker_pool
+    return make_client(endpoint)
 
 @pytest.fixture
 def client_pair(worker):
@@ -221,7 +274,7 @@ def test_shutdown(ctx, worker, fatal_order):
     assert worker_handle.poll() is None
 
     socket = ctx.socket(zmq.DEALER)
-    socket.connect(endpoint)
+    socket.bind(endpoint)
     # Mind the empty frame
     socket.send_multipart([b'', fatal_order])
 
@@ -343,12 +396,12 @@ async def test_async_socket(async_worker_socket):
     assert ans == [b'', b'ILLEGAL']
 
 @pytest.mark.asyncio
-async def test_client(any_client):
+async def test_client(client):
     """Test simple functionnalities of client"""
     task = galp.steps.galp_hello()
 
     ans = await asyncio.wait_for(
-        any_client.collect(task),
+        client.collect(task),
         3)
 
     assert ans == [42,]
@@ -680,3 +733,15 @@ async def test_light_syntax(client):
     ans = await asyncio.wait_for(client.collect(*task), 3)
 
     assert tuple(ans) == task.step.function()
+
+@pytest.mark.asyncio
+async def test_parallel_tasks(client_pool):
+    tasks = [
+        gts.sleeps(1, i)
+        for i in range(10)
+        ]
+
+    ans = await asyncio.wait_for(client_pool.collect(*tasks), 3)
+
+    assert set(ans) == set(range(10))
+

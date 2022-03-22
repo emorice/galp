@@ -44,15 +44,10 @@ class Client(Protocol):
     """
     A client that communicate with a worker.
 
-    Either socket or endpoint must be specified, never both. Socket is intended
-    for testing, and custom socket manipulation. Endpoint also uses pyzmq's global
+    The endpoint must be specified. The client uses pyzmq's global
     context instance, creating it if needed -- and implicitely reusing it.
 
     Args:
-        socket: a ZeroMQ asyncio socket, already connected to the worker endpoint.
-            The client will not attempt to close it. No read operation must be
-            attempted by external code while the client exists. New write,
-            connect and binds should not be a problem.
        endpoint: a ZeroMQ endpoint string to the worker. The client will create
             its own socket and destroy it in the end, using the global sync context.
     """
@@ -60,15 +55,10 @@ class Client(Protocol):
     # For our sanity, below this point, by 'task' here we need task _name_, except for the
     # 'tasks' public argument itself. The tasks themselves are called 'details'
 
-    def __init__(self, socket=None, endpoint=None):
-        if (socket is None ) == (endpoint is None):
-            raise ValueError('Exactly one of endpoint or socket must be specified')
+    def __init__(self, endpoint):
 
-        self.close_socket = False
-        if socket is None:
-            socket = zmq.asyncio.Context.instance().socket(zmq.DEALER)
-            socket.connect(endpoint)
-            self.close_socket = True
+        socket = zmq.asyncio.Context.instance().socket(zmq.DEALER)
+        socket.connect(endpoint)
         self.socket = socket
 
         # With a DEALER socket, we send all messages with no routing information
@@ -102,8 +92,7 @@ class Client(Protocol):
         self._collections = 0
 
     def __delete__(self):
-        if self.close_socket:
-            self.socket.close()
+        self.socket.close()
 
     def add(self, tasks):
         """
