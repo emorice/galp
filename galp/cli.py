@@ -22,7 +22,7 @@ def setup(args, name):
     """
     Common CLI setup steps
     """
-    log_format = "%(levelname)s [" + name + "] %(name)s:%(filename)s:%(lineno)d %(message)s"
+    log_format = "%(levelname)s\t%(name)s:%(filename)s:%(lineno)d\t["+name+"] %(message)s"
     if args.debug:
         logging.basicConfig(level=logging.DEBUG, format=log_format)
     else:

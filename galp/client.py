@@ -253,12 +253,12 @@ class Client(Protocol):
         # case where a hereis is collected
         if hasattr(details, 'hereis'):
             await self._store.put_native(details.handle, details.hereis)
-            await self.on_done(task_name)
+            await self.on_done(None, task_name)
             return
         # Sub-tasks are automatically satisfied when their parent and unique
         # dependency is
         if hasattr(details, 'parent'):
-            await self.on_done(task_name)
+            await self.on_done(None, task_name)
             return
 
         r = await super().submit_task(self.route, details)
@@ -315,7 +315,7 @@ class Client(Protocol):
         await self._store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
         self._status[name] = TaskStatus.AVAILABLE
 
-    async def on_done(self, done_task):
+    async def on_done(self, route, done_task):
         """Given that done_task just finished, mark it as done, submit any
         dependent ready to be submitted, and send GETs for final tasks.
 
@@ -332,13 +332,12 @@ class Client(Protocol):
             if all(self._status[sister_dep] >= TaskStatus.COMPLETED for sister_dep in self._dependencies[dept]):
                 await self.submit_task(dept)
 
-
-    async def on_doing(self, task):
+    async def on_doing(self, route, task):
         """Just updates statistics"""
         self.run_count[task] += 1
         self._status[task] = TaskStatus.RUNNING
 
-    async def on_failed(self, failed_task):
+    async def on_failed(self, route, failed_task):
         """
         Mark a task and all its dependents as failed, and unblock any watcher.  
         """
@@ -368,7 +367,7 @@ class Client(Protocol):
         # messages for other ongoing tasks is still permitted.
         return
 
-    async def on_not_found(self, task):
+    async def on_not_found(self, route, task):
         """
         Unblocks watchers on NOTFOUND
 

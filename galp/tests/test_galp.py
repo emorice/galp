@@ -83,6 +83,7 @@ def make_broker():
         phandle = subprocess.Popen([
             sys.executable,
             '-m', 'galp.broker',
+            #'--debug',
             client_endpoint,
             worker_endpoint,
             ])
@@ -225,28 +226,28 @@ def client_pool(make_client, worker_pool):
     return make_client(endpoint)
 
 @pytest.fixture
-def client_pair(worker):
-    """A pair of clients connected to the worker.
+def client_pair(broker_worker):
+    """A pair of clients connected to one worker.
 
-    This is now implemented with two incoming connection to the same worker,
+    This is now implemented with two incoming connections to the same broker/worker,
     routing on worker-side should disantangle things.
     """
-    endpoint, _ = worker
+    endpoint = broker_worker
     c1 = galp.client.Client(endpoint=endpoint)
     c2 = galp.client.Client(endpoint=endpoint)
     return c1, c2
 
 @pytest.fixture
-def disjoined_client_pair(make_worker, make_client):
+def disjoined_client_pair(make_worker_pool, make_client):
     """A pair of client connected to two different workers"""
-    e1, w1 = make_worker()
-    e2, w2 = make_worker()
+    e1 = make_worker_pool(1)
+    e2 = make_worker_pool(1)
     return make_client(e1), make_client(e2)
 
 @pytest.fixture
-def async_sync_client_pair(make_worker):
-    e1, w1 = make_worker()
-    e2, w2 = make_worker()
+def async_sync_client_pair(make_worker_pool):
+    e1 = make_worker_pool(1)
+    e2 = make_worker_pool(1)
     yield galp.client.Client(endpoint=e1), galp.synclient.SynClient(endpoint=e2)
 
 # Helpers

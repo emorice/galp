@@ -14,6 +14,8 @@ class SynClient(Protocol):
     """
 
     def __init__(self, endpoint):
+       super().__init__()
+
        self.socket = zmq.Context.instance().socket(zmq.DEALER)
        self.socket.connect(endpoint)
        self.serializer = Serializer()

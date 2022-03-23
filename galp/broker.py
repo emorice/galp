@@ -23,6 +23,12 @@ class Broker:
 
         self.workers = asyncio.Queue()
 
+        ctx = zmq.asyncio.Context()
+        self.tasks_push = ctx.socket(zmq.PUSH)
+        self.tasks_pull = ctx.socket(zmq.PULL)
+        self.tasks_push.bind('inproc://tasks')
+        self.tasks_pull.connect('inproc://tasks')
+
     async def listen_clients(self, client_endpoint):
         """Client-side message processing loop of the broker"""
 
@@ -38,12 +44,27 @@ class Broker:
         logging.info("Broker listening for clients on %s", client_endpoint)
         try:
             while not terminate:
+                # Reveive message
                 msg = await client_socket.recv_multipart()
+                # Parse it and handle broker-side actions
                 try:
                     terminate = await self.client.on_message(msg)
                 except IllegalRequestError as err:
                     logging.error('Bad client request: %s', err.reason)
                     await self.client.send_illegal(err.route)
+                # Forward to worker if needed
+                msg_body, route = self.worker.get_routing_parts(msg)
+                incoming_route, forward_route = self.split_route(route)
+                if forward_route:
+                    logging.debug('Forwarding %s', msg_body[:1])
+                    await self.worker.send_message_to(
+                        forward_route + incoming_route,
+                        msg_body)
+                else:
+                    logging.debug('Queuing %s', msg_body[:1])
+                    await self.tasks_push.send_multipart(
+                        incoming_route + [b''] + msg_body
+                        )
         finally:
             client_socket.close(linger=1)
             ctx.destroy()
@@ -66,18 +87,48 @@ class Broker:
         logging.info("Broker listening for workers on %s", worker_endpoint)
         try:
             while not terminate:
+                # Reveive message
                 msg = await worker_socket.recv_multipart()
+                # Parse it and handle broker-side actions
                 try:
                     terminate = await self.worker.on_message(msg)
                 except IllegalRequestError as err:
                     logging.error('Bad worker request: %s', err.reason)
                     await self.worker.send_illegal(err.route)
+                # Forward to client if needed
+                msg_body, route = self.worker.get_routing_parts(msg)
+                incoming_route, forward_route = self.split_route(route)
+                if forward_route:
+                    logging.debug('Forwarding %s', msg_body[:1])
+                    await self.client.send_message_to(
+                        forward_route + incoming_route,
+                        msg_body)
+                else:
+                    logging.debug('Not forwarding %s', msg_body[:1])
         finally:
             worker_socket.close(linger=1)
             ctx.destroy()
             self.worker_socket = None
 
         self.terminate.set()
+
+    def split_route(self, route):
+        incoming_route = route[:1]
+        forward_route = route[1:]
+        return incoming_route, forward_route
+
+    async def process_tasks(self):
+        """
+        This event loop needs to be cancelled.
+        """
+        logging.debug('Starting to process task queue')
+        while True:
+            task = await self.tasks_pull.recv_multipart()
+            task_body, task_route = self.client.get_routing_parts(task)
+            logging.debug('Task pending')
+            worker = await self.workers.get()
+            logging.debug('Worker available, forwarding')
+            await self.worker.send_message_to(worker + task_route, task_body)
 
 class BrokerProtocol(Protocol):
     """
@@ -91,7 +142,11 @@ class BrokerProtocol(Protocol):
         raise IllegalRequestError(route, reason)
 
     async def on_unhandled(self, verb):
-        logging.error("Unhandled GALP verb %s", verb.decode('ascii'))
+        """
+        For the broker, many messages will just be forwarded and no handler is
+        needed.
+        """
+        logging.debug("No broker action for %s", verb.decode('ascii'))
 
 class ClientProtocol(BrokerProtocol):
     """
@@ -100,16 +155,8 @@ class ClientProtocol(BrokerProtocol):
     def __init__(self, broker):
         super().__init__('CL', broker)
 
-    async def on_submit(self, route, name, step_name, vtags, arg_names, kwarg_names):
-        """
-        Waits for a worker to be available and forwards the request.
-        """
-        worker = await self.broker.workers.get()
-        await self.broker.worker.submit(worker + route, step_name, vtags, arg_names, kwarg_names)
-
     async def send_message(self, msg):
         await self.broker.client_socket.send_multipart(msg)
-
 
 class WorkerProtocol(BrokerProtocol):
     """
@@ -122,20 +169,16 @@ class WorkerProtocol(BrokerProtocol):
         await self.broker.worker_socket.send_multipart(msg)
 
     async def on_ready(self, route):
-        await self.broker.workers.put(route)
+        await self.broker.workers.put(route[:1])
 
-    async def on_doing(self, route, name):
-        route = route[1:]
-        await self.broker.client.doing(route, name)
+    async def on_done(self, route, name):
+        await self.broker.workers.put(route[:1])
 
-    async def on_done(self, route):
-        await self.broker.workers.put(route)
+    async def on_failed(self, route, name):
+        await self.broker.workers.put(route[:1])
 
-    async def on_failed(self, route):
-        await self.broker.workers.put(route)
-
-    async def on_put(self, route):
-        await self.broker.workers.put(route)
+    async def on_put(self, route, name, proto, data, children):
+        await self.broker.workers.put(route[:1])
 
 async def main(args):
     """Entry point for the broker program
@@ -154,6 +197,7 @@ async def main(args):
 
     tasks.append(asyncio.create_task(broker.listen_clients(args.client_endpoint)))
     tasks.append(asyncio.create_task(broker.listen_workers(args.worker_endpoint)))
+    tasks.append(asyncio.create_task(broker.process_tasks()))
 
     await terminate.wait()
 

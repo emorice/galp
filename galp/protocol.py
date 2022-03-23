@@ -25,15 +25,6 @@ class Protocol:
     # Callback methods
     # ================
     # The methods below are just placeholders that double as documentation.
-    def on_get(self, route, name):
-        """A `GET` request was received for resource `name`"""
-        return self.on_unhandled(b'GET')
-
-    def on_put(self, route, name, proto: bytes, data: bytes, children: int):
-        """A `PUT` message was received for resource `name`
-        """
-        return self.on_unhandled(b'PUT')
-
     def on_doing(self, route, name):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
@@ -42,31 +33,44 @@ class Protocol:
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
-    def on_failed(self, route, name):
-        """A `FAILED` message was received"""
-        return self.on_unhandled(b'FAILED')
-
-    def on_not_found(self, route, name):
-        """A `NOTFOUND` message was received"""
-        return self.on_unhandled(b'NOTFOUND')
-
     def on_exit(self, route):
         """An `EXIT` message was received"""
         return self.on_unhandled(b'EXIT')
 
+    def on_failed(self, route, name):
+        """A `FAILED` message was received"""
+        return self.on_unhandled(b'FAILED')
+
+    def on_get(self, route, name):
+        """A `GET` request was received for resource `name`"""
+        return self.on_unhandled(b'GET')
+
     def on_illegal(self, route):
         """An `ILLEGAL` message was received"""
         return self.on_unhandled(b'ILLEGAL')
-
-    def on_ready(self, route):
-        """A `READY` message was received"""
-        return self.on_unhandled(b'READY')
 
     def on_invalid(self, route, reason):
         """
         An invalid message was received.
         """
         logging.warning("Invalid message but no handler: %s", reason)
+
+    def on_not_found(self, route, name):
+        """A `NOTFOUND` message was received"""
+        return self.on_unhandled(b'NOTFOUND')
+
+    def on_put(self, route, name, proto: bytes, data: bytes, children: int):
+        """A `PUT` message was received for resource `name`
+        """
+        return self.on_unhandled(b'PUT')
+
+    def on_ready(self, route):
+        """A `READY` message was received"""
+        return self.on_unhandled(b'READY')
+
+    def on_submit(self, route, name, step_name, vtags, arg_names, kwarg_names):
+        """A `SUBMIT` message was received"""
+        return self.on_unhandled(b'SUBMIT')
 
     def on_unhandled(self, verb):
         """
@@ -81,20 +85,20 @@ class Protocol:
     def get(self, route, task):
         """Send get for task with given name"""
         msg = [b'GET', task]
-        return self._send_message(route, msg)
+        return self.send_message_to(route, msg)
 
     def put(self, route, name, proto, data, children):
         if data is None:
             data = b''
         logging.debug('-> putting %d bytes', len(data))
         m = [b'PUT', name, proto, data, children]
-        return self._send_message(route, m)
+        return self.send_message_to(route, m)
 
     def ready(self, route):
-        return self._send_message(route, [b'READY'])
+        return self.send_message_to(route, [b'READY'])
 
     def not_found(self, route, name):
-        return self._send_message(route, [b'NOTFOUND', name])
+        return self.send_message_to(route, [b'NOTFOUND', name])
 
     def submit_task(self, route, task):
         """Send submit for given task object.
@@ -138,19 +142,19 @@ class Protocol:
         # Kw args
         for kw, kwarg_name in kwarg_names.items():
             msg += [ kw , kwarg_name ]
-        return self._send_message(route, msg)
+        return self.send_message_to(route, msg)
 
     def done(self, route, name):
-        return self._send_message(route, [b'DONE', name])
+        return self.send_message_to(route, [b'DONE', name])
 
     def doing(self, route, name):
-        return self._send_message(route, [b'DOING', name])
+        return self.send_message_to(route, [b'DOING', name])
 
     def failed(self, route, name):
-        return self._send_message(route, [b'FAILED', name])
+        return self.send_message_to(route, [b'FAILED', name])
 
     def illegal(self, route):
-        return self._send_message(route, [b'ILLEGAL'])
+        return self.send_message_to(route, [b'ILLEGAL'])
 
     # Main logic methods
     # ==================
@@ -178,6 +182,7 @@ class Protocol:
             self.proto_name +" " if self.proto_name else "",
             route[0].hex() if route else "",
             msg[0].decode('ascii'))
+        logging.debug("%d routing part(s)", len(route))
         try:
             return self.handler(str(msg[0], 'ascii'))(route, msg)
         except NoHandlerError:
@@ -197,7 +202,6 @@ class Protocol:
         # Discard empty frame
         msg = msg[1:]
         self.validate(len(msg) > 0, route, 'Empty message with only routing information')
-        logging.debug("%d routing part(s)", len(route))
         return msg, route
 
 
@@ -209,8 +213,8 @@ class Protocol:
         raise NotImplementedError("You must override the send_message method "
             "when subclassing a Protocol object.")
 
-    def _send_message(self, route, msg):
-        """Private callback method to send a message just built.
+    def send_message_to(self, route, msg):
+        """Callback method to send a message just built.
 
         Wrapper around send_message that concats route and message.
         """
@@ -277,7 +281,7 @@ class Protocol:
 
         name = msg[1]
 
-        return self.on_done(name)
+        return self.on_done(route, name)
 
     @event.on('FAILED')
     def _on_done(self, route, msg):
@@ -286,7 +290,7 @@ class Protocol:
 
         name = msg[1]
 
-        return self.on_failed(name)
+        return self.on_failed(route, name)
 
     @event.on('NOTFOUND')
     def _on_not_found(self, route, msg):
@@ -295,7 +299,7 @@ class Protocol:
 
         name = msg[1]
 
-        return self.on_not_found(name)
+        return self.on_not_found(route, name)
 
     @event.on('PUT')
     def _on_put(self, route, msg):
