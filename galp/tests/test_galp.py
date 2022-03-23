@@ -317,8 +317,10 @@ def test_illegals(worker_socket, msg):
     # Mind the empty frame on both send and receive sides
     worker_socket.send_multipart([b''] + msg)
 
-    ans = asserted_zmq_recv_multipart(worker_socket)
-    assert ans == [b'', b'ILLEGAL']
+    ans1 = asserted_zmq_recv_multipart(worker_socket)
+    assert ans1 == [b'', b'READY']
+    ans2 = asserted_zmq_recv_multipart(worker_socket)
+    assert ans2 == [b'', b'ILLEGAL']
 
 def test_task(worker_socket):
     task = galp.steps.galp_hello()
@@ -329,6 +331,9 @@ def test_task(worker_socket):
     handle = galp.graph.Task.gen_name(step_name, [], {}, [])
 
     worker_socket.send_multipart([b'', b'SUBMIT', step_name, b'\x00'])
+
+    ans = asserted_zmq_recv_multipart(worker_socket)
+    assert ans == [b'', b'READY']
 
     ans = asserted_zmq_recv_multipart(worker_socket)
     assert ans == [b'', b'DOING', handle]
@@ -348,6 +353,9 @@ def test_notfound(worker_socket):
     worker_socket.send_multipart([b'', b'GET', bad_handle])
 
     ans = asserted_zmq_recv_multipart(worker_socket)
+    assert ans == [b'', b'READY']
+
+    ans = asserted_zmq_recv_multipart(worker_socket)
     assert ans == [b'', b'NOTFOUND', bad_handle]
 
 def test_reference(worker_socket):
@@ -358,6 +366,10 @@ def test_reference(worker_socket):
     task2 = galp.steps.galp_double(task1)
 
     worker_socket.send_multipart([b'', b'SUBMIT', task1.step.key, b'\x00'])
+
+    ready = asserted_zmq_recv_multipart(worker_socket)
+    assert ready == [b'', b'READY']
+
     # doing
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)
@@ -391,7 +403,12 @@ def test_reference(worker_socket):
 @pytest.mark.asyncio
 async def test_async_socket(async_worker_socket):
     sock = async_worker_socket
+
     await asyncio.wait_for(sock.send_multipart([b'', b'RABBIT']), 3)
+
+    ready = await asyncio.wait_for(sock.recv_multipart(), 3)
+    assert ready == [b'', b'READY']
+
     ans = await asyncio.wait_for(sock.recv_multipart(), 3)
     assert ans == [b'', b'ILLEGAL']
 
