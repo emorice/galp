@@ -163,7 +163,7 @@ class Client(Protocol):
                 and
                 self._status[task_details.name] is TaskStatus.COMPLETED
                 ):
-                logging.warning("Sending extra GET for upgraded %s",
+                logging.debug("Sending extra GET for upgraded %s",
                     task_details.name.hex())
                 await self.get(task_details.name)
             self._finals.add(task_details.name)

@@ -103,3 +103,6 @@ def sleeps(secs, some_arg):
     time.sleep(secs)
     return some_arg
     
+@export
+def sum_variadic(*args):
+    return sum(args)

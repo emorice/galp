@@ -46,17 +46,12 @@ class Step():
         """
         Make initial handles.
         """
-        sig = inspect.signature(self.function)
-
-        # Get the declared names of the positional parameters
-        arg_param_names = list(sig.parameters.keys())[:len(arg_names)]
-
         handle = Handle(name, self.items)
 
         # arg handles are never iterable
         arg_handles = [
             Handle(arg_name, 0)
-            for arg_name, arg_param_name in zip(arg_names, arg_param_names)
+            for arg_name in arg_names
             ]
 
         kwarg_handles = {

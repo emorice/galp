@@ -709,7 +709,7 @@ async def test_step_error(client):
     Test running a task containing a bug
     """
     with pytest.raises(galp.TaskFailedError):
-       await asyncio.wait_for(client.collect(gts.raises_error()), 3) 
+       await asyncio.wait_for(client.collect(gts.raises_error()), 3)
 
 @pytest.mark.asyncio
 async def test_step_error_multiple(client):
@@ -717,7 +717,7 @@ async def test_step_error_multiple(client):
     Test running a multiple task containing a bug
     """
     with pytest.raises(galp.TaskFailedError):
-       await asyncio.wait_for(client.collect(*gts.raises_error_multiple()), 3) 
+       await asyncio.wait_for(client.collect(*gts.raises_error_multiple()), 3)
 
 @pytest.mark.asyncio
 async def test_missing_step_error(client):
@@ -732,12 +732,12 @@ async def test_missing_step_error(client):
         pass
 
     with pytest.raises(galp.TaskFailedError):
-       await asyncio.wait_for(client.collect(missing()), 3) 
+       await asyncio.wait_for(client.collect(missing()), 3)
 
 @pytest.mark.asyncio
 async def test_array_like(client):
     """Test numpy serialization for non-numpy array-like types"""
-    ans = await asyncio.wait_for(client.collect(gts.some_numerical_list()), 3) 
+    ans = await asyncio.wait_for(client.collect(gts.some_numerical_list()), 3)
 
     np.testing.assert_array_equal(
         ans[0],
@@ -754,12 +754,28 @@ async def test_light_syntax(client):
 
 @pytest.mark.asyncio
 async def test_parallel_tasks(client_pool):
+    pre_task = galp.steps.galp_hello()
+
+    # Run a first task to warm the pool
+    # FIXME: this is a hack, not a reliable way to ensure workers are online
+    pre_ans = await asyncio.wait_for(client_pool.collect(pre_task), 5)
+
     tasks = [
         gts.sleeps(1, i)
         for i in range(10)
         ]
 
-    ans = await asyncio.wait_for(client_pool.collect(*tasks), 3)
+    ans = await asyncio.wait_for(client_pool.collect(*tasks), 2)
 
     assert set(ans) == set(range(10))
+
+@pytest.mark.asyncio
+async def test_variadic(client):
+    args = [1, 2, 3]
+
+    task = gts.sum_variadic(*args)
+
+    ans, = await asyncio.wait_for(client.collect(task), 3)
+
+    assert ans == sum(args)
 
