@@ -112,9 +112,11 @@ def make_worker_pool(broker, make_worker):
     """
     def _make(n):
         cl_ep, w_ep, _ = broker
+        phandles = []
         for i in range(n):
-            make_worker(w_ep)
-        return cl_ep
+            _, phandle = make_worker(w_ep)
+            phandles.append(phandle)
+        return cl_ep, phandles
 
     return _make
 
@@ -216,13 +218,13 @@ def make_client():
 @pytest.fixture
 def client(make_client, broker_worker):
     """A client connected to a pool with one worker"""
-    endpoint = broker_worker
+    endpoint, _ = broker_worker
     return make_client(endpoint)
 
 @pytest.fixture
 def client_pool(make_client, worker_pool):
     """A client connected to a pool of 10 workers"""
-    endpoint = worker_pool
+    endpoint, _ = worker_pool
     return make_client(endpoint)
 
 @pytest.fixture
@@ -232,7 +234,7 @@ def client_pair(broker_worker):
     This is now implemented with two incoming connections to the same broker/worker,
     routing on worker-side should disantangle things.
     """
-    endpoint = broker_worker
+    endpoint, _ = broker_worker
     c1 = galp.client.Client(endpoint=endpoint)
     c2 = galp.client.Client(endpoint=endpoint)
     return c1, c2
@@ -240,14 +242,14 @@ def client_pair(broker_worker):
 @pytest.fixture
 def disjoined_client_pair(make_worker_pool, make_client):
     """A pair of client connected to two different workers"""
-    e1 = make_worker_pool(1)
-    e2 = make_worker_pool(1)
+    e1, _ = make_worker_pool(1)
+    e2, _ = make_worker_pool(1)
     return make_client(e1), make_client(e2)
 
 @pytest.fixture
 def async_sync_client_pair(make_worker_pool):
-    e1 = make_worker_pool(1)
-    e2 = make_worker_pool(1)
+    e1, _ = make_worker_pool(1)
+    e2, _ = make_worker_pool(1)
     yield galp.client.Client(endpoint=e1), galp.synclient.SynClient(endpoint=e2)
 
 # Helpers
@@ -287,7 +289,7 @@ def test_shutdown(ctx, worker, fatal_order):
 
 @pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
 def test_signals(worker, sig):
-    """Test for clean termination on INT and TERM)"""
+    """Test for termination on INT and TERM)"""
 
     endpoint, worker_handle = worker
 
@@ -300,7 +302,7 @@ def test_signals(worker, sig):
     time.sleep(0.5)
     worker_handle.send_signal(sig)
 
-    assert worker_handle.wait(timeout=4) == 0
+    worker_handle.wait(timeout=4)
 
 @pytest.mark.parametrize('msg', [
     [b'RABBIT'],
@@ -778,4 +780,26 @@ async def test_variadic(client):
     ans, = await asyncio.wait_for(client.collect(task), 3)
 
     assert ans == sum(args)
+
+@pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
+async def test_signals_busyloop(client, broker_worker, sig):
+    """Tests that worker terminate on signal when stuck in busy loop"""
+    client_endoint, worker_handles = broker_worker
+    task = gts.busy_loop()
+
+    bg = asyncio.create_task(client.collect(task))
+
+    #FIXME: we should wait for the DOING message instead
+    await asyncio.sleep(1)
+
+    for worker_handle in worker_handles:
+        worker_handle.send_signal(sig)
+
+    worker_handle.wait(timeout=4)
+
+    bg.cancel()
+    try:
+        await bg
+    except asyncio.CancelledError:
+        pass
 

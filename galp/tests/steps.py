@@ -106,3 +106,8 @@ def sleeps(secs, some_arg):
 @export
 def sum_variadic(*args):
     return sum(args)
+
+@export
+def busy_loop():
+    while True:
+        pass

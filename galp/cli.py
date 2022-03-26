@@ -5,6 +5,7 @@ Common CLI features used by several cli endpoints.
 import asyncio
 import logging
 import signal
+import sys
 
 class IllegalRequestError(Exception):
     """Base class for all badly formed requests, triggers sending an ILLEGAL
@@ -22,20 +23,44 @@ def setup(args, name):
     """
     Common CLI setup steps
     """
-    log_format = "%(levelname)s\t%(name)s:%(filename)s:%(lineno)d\t["+name+"] %(message)s"
+    log_format = (
+        "%(asctime)s " # Time, useful when reading logs from overnight pipeline runs
+        "%(levelname)s\t" # Level
+        "%(name)s:%(filename)s:%(lineno)d\t" # Origin of log message inside process
+        "["+name+" %(process)d] " # Identification of the process (type + pid)
+        "%(message)s" # Message
+    )
     if args.debug:
         logging.basicConfig(level=logging.DEBUG, format=log_format)
     else:
         logging.basicConfig(level=logging.INFO, format=log_format)
+
+def log_signal(sig, context, orig_handler):
+    logging.error("Caught signal %s", signal.strsignal(sig))
+    if callable(orig_handler):
+        return orig_handler(sig, context)
+    else:
+        logging.error('Re-raising signal', stack_info=context)
+        signal.signal(sig, orig_handler)
+        signal.raise_signal(sig)
 
 def create_terminate():
     """
     Creates a terminate event with signal handler attached
     """
     terminate = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, terminate.set)
-    loop.add_signal_handler(signal.SIGTERM, terminate.set)
+
+    # FIXME: graceful termination on signals
+
+    #loop = asyncio.get_running_loop()
+    #loop.add_signal_handler(signal.SIGINT, terminate.set)
+    #loop.add_signal_handler(signal.SIGTERM, terminate.set)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        orig_handler = signal.getsignal(sig)
+        signal.signal(sig,
+            lambda sig, context, orig=orig_handler: log_signal(sig, context, orig)
+            )
 
     return terminate
 
