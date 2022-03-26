@@ -288,18 +288,16 @@ def test_shutdown(ctx, worker, fatal_order):
     socket.close()
 
 @pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
-def test_signals(worker, sig):
+def test_signals(worker, worker_socket, sig):
     """Test for termination on INT and TERM)"""
 
     endpoint, worker_handle = worker
 
     assert worker_handle.poll() is None
 
-    # Race condition, process exists before signal handlers do
-    # Not a problem in practice, before handlers are set there's no cleanup to
-    # do anyway
-    # We can plug a 'ready' event from worker later on
-    time.sleep(0.5)
+    ans1 = asserted_zmq_recv_multipart(worker_socket)
+    assert ans1 == [b'', b'READY']
+
     worker_handle.send_signal(sig)
 
     worker_handle.wait(timeout=4)
