@@ -63,6 +63,8 @@ async def main(args):
             returned by argparse.ArgumentParser.parse_args.
     """
     galp.cli.setup(args, "worker")
+    # Signal handler
+    terminate = galp.cli.create_terminate()
 
     config = {}
     if args.config:
@@ -71,9 +73,6 @@ async def main(args):
             config = toml.load(fd)
 
     step_dir = load_steps(config['steps'] if 'steps' in config else [])
-
-    # Signal handler
-    terminate = galp.cli.create_terminate()
 
     logging.info("Worker connecting to %s", args.endpoint)
     logging.info("Caching to %s", args.cachedir)
