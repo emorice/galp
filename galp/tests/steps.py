@@ -1,6 +1,7 @@
 """
 Steps only used for testing, and loaded through the plugin system.
 """
+import os
 import time
 
 import numpy as np
@@ -111,3 +112,7 @@ def sum_variadic(*args):
 def busy_loop():
     while True:
         pass
+
+@export
+def suicide(sig):
+    os.kill(os.getpid(), sig)

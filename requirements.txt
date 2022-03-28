@@ -6,3 +6,4 @@ diskcache
 pytest-asyncio
 dill
 toml
+psutil

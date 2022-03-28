@@ -3,6 +3,7 @@ Generic tests for galp
 """
 
 import os
+import signal
 import sys
 import subprocess
 import logging
@@ -11,6 +12,7 @@ import itertools
 import signal
 import time
 import pstats
+import psutil
 
 import dill
 import zmq
@@ -31,7 +33,7 @@ import galp.tests.steps as gts
 
 @pytest.fixture
 def make_worker(tmp_path):
-    """Worker fixture, starts a worker in background.
+    """Worker fixture, starts a worker pool in background.
 
     Returns:
         (endpoint, Popen) tuple
@@ -40,13 +42,14 @@ def make_worker(tmp_path):
     port = itertools.count(48652)
     phandles = []
 
-    def _make(endpoint=None):
+    def _make(endpoint=None, pool_size=1):
         if endpoint is None:
             endpoint = f"tcp://127.0.0.1:{next(port)}"
 
         phandle = subprocess.Popen([
             sys.executable,
-            '-m', 'galp.worker',
+            '-m', 'galp.pool',
+            str(pool_size),
             '-c', 'galp/tests/config.toml',
             #'--debug',
             endpoint, str(tmp_path)
@@ -112,11 +115,8 @@ def make_worker_pool(broker, make_worker):
     """
     def _make(n):
         cl_ep, w_ep, _ = broker
-        phandles = []
-        for i in range(n):
-            _, phandle = make_worker(w_ep)
-            phandles.append(phandle)
-        return cl_ep, phandles
+        _, phandle = make_worker(w_ep, n)
+        return cl_ep, [phandle]
 
     return _make
 
@@ -159,14 +159,16 @@ def async_ctx():
     logging.warning('Done')
 
 @pytest.fixture
-def worker_socket(ctx, worker):
+def worker_socket(ctx, make_worker):
     """Dealer socket connected to some worker"""
-    endpoint, _ = worker
 
     socket = ctx.socket(zmq.DEALER)
-    socket.bind(endpoint)
+    socket.bind('tcp://127.0.0.1:*')
+    endpoint = socket.getsockopt(zmq.LAST_ENDPOINT)
 
-    yield socket
+    endpoint, handle = make_worker(endpoint)
+
+    yield socket, endpoint, handle
 
     # Closing with linger since we do not know if the test has failed or left
     # pending messages for whatever reason.
@@ -288,19 +290,26 @@ def test_shutdown(ctx, worker, fatal_order):
     socket.close()
 
 @pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
-def test_signals(worker, worker_socket, sig):
+def test_signals(worker_socket, sig):
     """Test for termination on INT and TERM)"""
 
-    endpoint, worker_handle = worker
+    socket, endpoint, worker_handle = worker_socket
 
     assert worker_handle.poll() is None
 
-    ans1 = asserted_zmq_recv_multipart(worker_socket)
+    ans1 = asserted_zmq_recv_multipart(socket)
     assert ans1 == [b'', b'READY']
+
+    process = psutil.Process(worker_handle.pid)
+    children = process.children(recursive=True)
+
+    # If not our children list may not be valid
+    assert process.status() != psutil.STATUS_ZOMBIE
 
     worker_handle.send_signal(sig)
 
-    worker_handle.wait(timeout=4)
+    gone, alive = psutil.wait_procs([process, *children], timeout=4)
+    assert not alive
 
 @pytest.mark.parametrize('msg', [
     [b'RABBIT'],
@@ -315,15 +324,19 @@ def test_illegals(worker_socket, msg):
 
     Note that we should pick some that will not be valid later"""
 
-    # Mind the empty frame on both send and receive sides
-    worker_socket.send_multipart([b''] + msg)
+    socket, *_ = worker_socket
 
-    ans1 = asserted_zmq_recv_multipart(worker_socket)
+    # Mind the empty frame on both send and receive sides
+    socket.send_multipart([b''] + msg)
+
+    ans1 = asserted_zmq_recv_multipart(socket)
     assert ans1 == [b'', b'READY']
-    ans2 = asserted_zmq_recv_multipart(worker_socket)
+    ans2 = asserted_zmq_recv_multipart(socket)
     assert ans2 == [b'', b'ILLEGAL']
 
 def test_task(worker_socket):
+    socket, *_ = worker_socket
+
     task = galp.steps.galp_hello()
     step_name = task.step.key
 
@@ -331,25 +344,27 @@ def test_task(worker_socket):
 
     handle = galp.graph.Task.gen_name(step_name, [], {}, [])
 
-    worker_socket.send_multipart([b'', b'SUBMIT', step_name, b'\x00'])
+    socket.send_multipart([b'', b'SUBMIT', step_name, b'\x00'])
 
-    ans = asserted_zmq_recv_multipart(worker_socket)
+    ans = asserted_zmq_recv_multipart(socket)
     assert ans == [b'', b'READY']
 
-    ans = asserted_zmq_recv_multipart(worker_socket)
+    ans = asserted_zmq_recv_multipart(socket)
     assert ans == [b'', b'DOING', handle]
 
-    ans = asserted_zmq_recv_multipart(worker_socket)
+    ans = asserted_zmq_recv_multipart(socket)
     assert ans == [b'', b'DONE', handle]
 
-    worker_socket.send_multipart([b'', b'GET', handle])
+    socket.send_multipart([b'', b'GET', handle])
 
-    ans = asserted_zmq_recv_multipart(worker_socket)
+    ans = asserted_zmq_recv_multipart(socket)
     assert ans[:4] == [b'', b'PUT', handle, b'dill']
     assert dill.loads(ans[4]) == 42
 
 def test_notfound(worker_socket):
     """Tests the answer of server when asking to send unexisting resource"""
+    worker_socket, *_ = worker_socket
+
     bad_handle = b'RABBIT'
     worker_socket.send_multipart([b'', b'GET', bad_handle])
 
@@ -361,6 +376,7 @@ def test_notfound(worker_socket):
 
 def test_reference(worker_socket):
     """Tests passing the result of a task to an other through handle"""
+    worker_socket, *_ = worker_socket
 
     task1 = galp.steps.galp_double()
 
@@ -710,6 +726,14 @@ async def test_step_error(client):
     """
     with pytest.raises(galp.TaskFailedError):
        await asyncio.wait_for(client.collect(gts.raises_error()), 3)
+
+@pytest.mark.xfail
+async def test_suicide(client):
+    """
+    Test running a task triggering a signal
+    """
+    with pytest.raises(galp.TaskFailedError):
+       await asyncio.wait_for(client.collect(gts.suicide(signal.SIGKILL)), 3)
 
 @pytest.mark.asyncio
 async def test_step_error_multiple(client):
