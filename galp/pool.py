@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import sys
+import time
 
 import galp.worker
 
@@ -16,6 +17,7 @@ class Pool:
         self.args = args
         self.tasks = []
         self.pending_signal = asyncio.Event()
+        self.last_start_time = time.time()
 
     def set_signal(self, sig):
         self.signal = sig
@@ -41,6 +43,7 @@ class Pool:
 
         ret = True
         while ret and not self.pending_signal.is_set():
+            self.last_start_time = time.time()
             process = await asyncio.create_subprocess_exec(
                     sys.executable,
                     *arg_list,
@@ -64,13 +67,30 @@ class Pool:
             else:
                 ret = wait_process.result() 
                 if ret:
+                    delay = self.last_start_time - time.time() + args.restart_delay
+                    delay = max(args.min_restart_delay, delay)
                     logging.error(
                         "Child %d exited with abnormal status %d, "
-                        "restarting in %d seconds",
-                        process.pid, ret,
-                        args.restart_delay
+                        "scheduling restart in at least %d seconds",
+                        process.pid, ret, delay
                     )
-                    await asyncio.sleep(args.restart_delay)
+                    while delay > 0:
+                        wait_delay = asyncio.create_task(asyncio.sleep(delay))
+                        done, pending = await asyncio.wait(
+                            (wait_signal, wait_delay),
+                            return_when=asyncio.FIRST_COMPLETED)
+                        if wait_signal in done:
+                            logging.info("Not forwarding to dead worker %d", process.pid)
+                            break
+                        else:
+                            # We have waited the min time, now loop and start asap
+                            delay = self.last_start_time - time.time() + args.restart_delay
+                            if delay > 0:
+                                logging.error(
+                                    "Postponing restart due to rate limiting, "
+                                    "next restart in at least %d seconds",
+                                    delay
+                                )
                 else:
                     logging.info('Child %d exited normally, not restarting',
                         process.pid)
@@ -99,8 +119,13 @@ def add_parser_arguments(parser):
     parser.add_argument('pool_size', type=int,
         help='Number of workers to start')
     parser.add_argument('--restart_delay', type=int,
-        help='Number of seconds to wait before restarting a failed worker',
-        default=1
+        help='Do not restart more than one failed worker '
+        'per this interval of time (s)',
+        default=3600
+        )
+    parser.add_argument('--min_restart_delay', type=int,
+        help='Wait at least this time (s) before restarting a failed worker',
+        default=300
         )
     galp.worker.add_parser_arguments(parser)
 
