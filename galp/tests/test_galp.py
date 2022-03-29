@@ -257,6 +257,25 @@ def async_sync_client_pair(make_worker_pool):
     e2, _ = make_worker_pool(1)
     yield galp.client.Client(endpoint=e1), galp.synclient.SynClient(endpoint=e2)
 
+@pytest.fixture
+def poisoned_cache(tmpdir):
+
+    task = gts.arange(5)
+
+    # use a valid name
+    name = task.handle.name
+    # Use a valid proto name
+    proto = galp.serializer.DillSerializer.proto_id
+    data = bytes.fromhex('0123456789abcdef')
+    children = b'\x00'
+
+    serializer = None
+
+    cache = galp.cache.CacheStack(tmpdir, serializer)
+    cache.put_serial(name, proto, data, children)
+
+    return task
+
 # Helpers
 # =======
 
@@ -845,3 +864,35 @@ async def test_return_exceptions(client):
 
     assert type(ans_fail) is galp.TaskFailedError
     assert ans_ok == task_ok.step.function()
+
+async def test_cache_corruption(poisoned_cache, client):
+    """
+    Raise a TaskFailed if we cannot deserialize in client
+    """
+    task = poisoned_cache
+
+    with pytest.raises(galp.TaskFailedError):
+        ans, = await asyncio.wait_for(
+            client.collect(task),
+            3)
+
+async def test_remote_cache_corruption(poisoned_cache, client):
+    """
+    Raise a TaskFailed if we cannot deserialize in worker
+    """
+    task = poisoned_cache
+
+    task2 = gts.npsum(task)
+
+    with pytest.raises(galp.TaskFailedError):
+        ans, = await asyncio.wait_for(
+            client.collect(task2),
+            3)
+
+    # Test that the worker recovered
+    task3 = gts.plugin_hello()
+    ans, = await asyncio.wait_for(
+        client.collect(task3),
+        3)
+
+    assert ans == task3.step.function()

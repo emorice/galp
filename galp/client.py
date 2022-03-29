@@ -17,7 +17,7 @@ from enum import IntEnum, auto
 from collections import defaultdict
 
 from galp.cache import CacheStack
-from galp.serializer import Serializer
+from galp.serializer import Serializer, DeserializeError
 from galp.protocol import Protocol
 from galp.store import Store
 from galp.graph import Handle
@@ -219,18 +219,19 @@ class Client(Protocol):
         # Not thread-safe but ok in coop mt
         self._collections += 1
 
-        async def _raise_failed_on_keyerror(aw):
+        async def _raise_failed_on_errors(aw):
             try:
                 return await aw
-            except KeyError:
-                # The store returned without the object available, meaning something
-                # failed
+            except (KeyError, DeserializeError):
+                # KeyError: we could not fetch the data
+                # DeserializeError: we could fetch it but not deserialize it
                 raise TaskFailedError
+
 
         # Note that we need to go the handle since this is where we deserialize.
         try:
             results =  await asyncio.gather(*(
-                _raise_failed_on_keyerror(
+                _raise_failed_on_errors(
                     self._store.get_native(task.handle)
                     )
                 for task in tasks

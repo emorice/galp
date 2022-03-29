@@ -30,7 +30,7 @@ from galp.store import NetStore
 from galp.resolver import Resolver
 from galp.protocol import Protocol
 from galp.profiler import Profiler
-from galp.serializer import Serializer
+from galp.serializer import Serializer, DeserializeError
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
 class NonFatalTaskError(RuntimeError):
@@ -248,9 +248,13 @@ class Worker(Protocol):
                 for in_handle in (arg_handles + kwhandles):
                     self.resolver.set_route(in_handle.name, route)
 
-                all_args = await asyncio.gather(*[
-                    self.store.get_native(in_handle) for in_handle in (arg_handles + kwhandles)
-                    ])
+                try:
+                    all_args = await asyncio.gather(*[
+                        self.store.get_native(in_handle) for in_handle in (arg_handles + kwhandles)
+                        ])
+                except DeserializeError:
+                    raise NonFatalTaskError
+
                 args = all_args[:len(arg_handles)]
                 kwargs = {
                     kw.decode('ascii'): v
@@ -269,7 +273,6 @@ class Worker(Protocol):
             try:
                 result = self.profiler.wrap(name, step)(*args, **kwargs)
             except Exception as e:
-                logging.exception('Submitted task step failed: %s', step_key.decode('ascii'))
                 raise NonFatalTaskError
 
             # Caching
@@ -277,6 +280,7 @@ class Worker(Protocol):
 
             await self.done(route, name)
         except NonFatalTaskError:
+            logging.exception('Submitted task step failed: %s', step_key.decode('ascii'))
             await self.failed(route, name)
             raise
         except Exception as e:
@@ -300,11 +304,11 @@ def add_parser_arguments(parser):
     parser.add_argument('cachedir')
     parser.add_argument('-c', '--config',
         help='Path to optional TOML configuration file')
-    
+
     galp.cli.add_parser_arguments(parser)
 
 if __name__ == '__main__':
-    """Convenience hook to start a worker from CLI""" 
+    """Convenience hook to start a worker from CLI"""
     parser = argparse.ArgumentParser()
     add_parser_arguments(parser)
     asyncio.run(main(parser.parse_args()))

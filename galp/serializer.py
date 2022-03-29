@@ -13,6 +13,13 @@ import pyarrow as pa
 from typing import Any, Tuple, List
 from galp.typing import ArrayLike, Table
 
+class DeserializeError(ValueError):
+    def __init__(self, name):
+        self.name = name
+        super().__init__(
+            f'cache entry {name.hex()} may be corrupted'
+            )
+
 class Serializer:
     """
     Abstraction for a serialization strategy
@@ -28,8 +35,13 @@ class Serializer:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.
+
+        Re-raises DeserializeError on any exception.
         """
-        return self.get_backend(handle, proto).loads(data, native_children)
+        try:
+            return self.get_backend(handle, proto).loads(data, native_children)
+        except:
+            raise DeserializeError(handle.name)
 
     def dumps(self, handle, obj: Any) -> Tuple[bytes, bytes]:
         """
