@@ -106,7 +106,7 @@ class Client(Protocol):
         tasks depending on already added ones, however, is safe. In other words,
         you can add new downstream steps, but not change the upstream part.
 
-        Return the names of all new tasks without uncompleted dependencies. 
+        Return the names of all new tasks without uncompleted dependencies.
 
         This justs updates the client's state, so it can never block and is a
         sync function.
@@ -184,7 +184,7 @@ class Client(Protocol):
             pass
         logging.info('Message processing stopping')
 
-    async def collect(self, *tasks):
+    async def collect(self, *tasks, return_exceptions=False):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
         and returns the actual results.
@@ -192,17 +192,23 @@ class Client(Protocol):
         Written as a coroutine, so that it can be called inside an asynchronous
         application, such as a worker or proxy or whatever: the caller is in
         charge of the event loop.
+
+        Args:
+            return_exceptions: if False, the collection is interrupted and an
+                exception is raised as soon as we know any result will not be
+                obtained due to failures. If True, keep running until all
+                required tasks are either done or failed.
         """
 
 
-        # Update our state 
+        # Update our state
         new_inputs = self.add(tasks)
 
         # Send SUBMITs for all possibly new and ready downstream tasks
         for task in new_inputs:
             await self.submit_task(task)
 
-        # Update the list of final tasks and send GETs for the already done 
+        # Update the list of final tasks and send GETs for the already done
         # Note: comes after submit as derived task need to be submitted first to
         # be marked as completed before.
         await self.add_finals(tasks)
@@ -213,16 +219,22 @@ class Client(Protocol):
         # Not thread-safe but ok in coop mt
         self._collections += 1
 
-        try:
-            # Note that we need to go the handle since this is where we deserialize.
-            results =  await asyncio.gather(*(
-                self._store.get_native(task.handle) for task in tasks
-                ))
-        except KeyError:
-            # The store returned without the object available, meaning something
-            # failed
-            raise TaskFailedError
+        async def _raise_failed_on_keyerror(aw):
+            try:
+                return await aw
+            except KeyError:
+                # The store returned without the object available, meaning something
+                # failed
+                raise TaskFailedError
 
+        # Note that we need to go the handle since this is where we deserialize.
+        try:
+            results =  await asyncio.gather(*(
+                _raise_failed_on_keyerror(
+                    self._store.get_native(task.handle)
+                    )
+                for task in tasks
+                ), return_exceptions=return_exceptions)
         finally:
             self._collections -= 1
             if not self._collections:
@@ -339,7 +351,7 @@ class Client(Protocol):
 
     async def on_failed(self, route, failed_task):
         """
-        Mark a task and all its dependents as failed, and unblock any watcher.  
+        Mark a task and all its dependents as failed, and unblock any watcher.
         """
 
         tasks = set([failed_task])

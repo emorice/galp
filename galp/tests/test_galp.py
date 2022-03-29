@@ -63,10 +63,13 @@ def make_worker(tmp_path):
     # If it's a kill test it's already done, later with remote worker we'll rely
     # on messages here
     # Note: terminate should be safe to call no matter how dead the child
-    # already is
+    # already is, but we still run into errors sometimes
     for phandle in phandles:
-        phandle.terminate()
-        phandle.wait()
+        try:
+            phandle.terminate()
+            phandle.wait()
+        except ProcessLookupError:
+            pass
 
 @pytest.fixture
 def make_broker():
@@ -825,3 +828,20 @@ async def test_signals_busyloop(client, broker_worker, sig):
     except asyncio.CancelledError:
         pass
 
+async def test_return_exceptions(client):
+    """
+    Test keeping on collecting tasks after first failure
+    """
+    task_fail = gts.raises_error()
+    task_ok = gts.plugin_hello()
+
+    # Ensured the first task fails before we run the second
+    with pytest.raises(galp.TaskFailedError):
+        ans_fail, = await asyncio.wait_for(client.collect(task_fail), 3)
+
+    ans_fail, ans_ok = await asyncio.wait_for(
+        client.collect(task_fail, task_ok, return_exceptions=True),
+        3)
+
+    assert type(ans_fail) is galp.TaskFailedError
+    assert ans_ok == task_ok.step.function()
