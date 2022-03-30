@@ -147,14 +147,22 @@ class WorkerProtocol(BrokerProtocol):
         self.broker.route_from_peer[peer] = route
         await self.broker.workers.put(route[:1])
 
+
+    async def mark_worker_available(self, route):
+        worker_route, client_route = self.split_route(route)
+        key = tuple(worker_route)
+        if key in self.broker.task_from_route:
+            del self.broker.task_from_route[key]
+        await self.broker.workers.put(worker_route)
+
     async def on_done(self, route, name):
-        await self.broker.workers.put(route[:1])
+        await self.mark_worker_available(route)
 
     async def on_failed(self, route, name):
-        await self.broker.workers.put(route[:1])
+        await self.mark_worker_available(route)
 
     async def on_put(self, route, name, proto, data, children):
-        await self.broker.workers.put(route[:1])
+        await self.mark_worker_available(route)
 
     async def on_exited(self, route, peer):
         logging.error("Worker %s exited", peer)
