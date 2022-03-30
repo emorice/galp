@@ -284,6 +284,15 @@ def asserted_zmq_recv_multipart(socket):
     assert zmq.select(*selectable, timeout=4) == selectable
     return socket.recv_multipart()
 
+def assert_ready(socket):
+    """
+    Awaits a READY message on the socket
+    """
+    ans = asserted_zmq_recv_multipart(socket)
+    assert len(ans) == 3
+    # Third part is a worker self-id
+    assert ans[:2] == [b'', b'READY']
+
 # Tests
 # =====
 
@@ -318,9 +327,7 @@ def test_signals(worker_socket, sig):
     socket, endpoint, worker_handle = worker_socket
 
     assert worker_handle.poll() is None
-
-    ans1 = asserted_zmq_recv_multipart(socket)
-    assert ans1 == [b'', b'READY']
+    assert_ready(socket)
 
     process = psutil.Process(worker_handle.pid)
     children = process.children(recursive=True)
@@ -351,8 +358,8 @@ def test_illegals(worker_socket, msg):
     # Mind the empty frame on both send and receive sides
     socket.send_multipart([b''] + msg)
 
-    ans1 = asserted_zmq_recv_multipart(socket)
-    assert ans1 == [b'', b'READY']
+    assert_ready(socket)
+
     ans2 = asserted_zmq_recv_multipart(socket)
     assert ans2 == [b'', b'ILLEGAL']
 
@@ -368,8 +375,7 @@ def test_task(worker_socket):
 
     socket.send_multipart([b'', b'SUBMIT', step_name, b'\x00'])
 
-    ans = asserted_zmq_recv_multipart(socket)
-    assert ans == [b'', b'READY']
+    assert_ready(socket)
 
     ans = asserted_zmq_recv_multipart(socket)
     assert ans == [b'', b'DOING', handle]
@@ -390,8 +396,7 @@ def test_notfound(worker_socket):
     bad_handle = b'RABBIT'
     worker_socket.send_multipart([b'', b'GET', bad_handle])
 
-    ans = asserted_zmq_recv_multipart(worker_socket)
-    assert ans == [b'', b'READY']
+    assert_ready(worker_socket)
 
     ans = asserted_zmq_recv_multipart(worker_socket)
     assert ans == [b'', b'NOTFOUND', bad_handle]
@@ -406,8 +411,7 @@ def test_reference(worker_socket):
 
     worker_socket.send_multipart([b'', b'SUBMIT', task1.step.key, b'\x00'])
 
-    ready = asserted_zmq_recv_multipart(worker_socket)
-    assert ready == [b'', b'READY']
+    assert_ready(worker_socket)
 
     # doing
     doing = asserted_zmq_recv_multipart(worker_socket)
@@ -446,7 +450,7 @@ async def test_async_socket(async_worker_socket):
     await asyncio.wait_for(sock.send_multipart([b'', b'RABBIT']), 3)
 
     ready = await asyncio.wait_for(sock.recv_multipart(), 3)
-    assert ready == [b'', b'READY']
+    assert ready[:2] == [b'', b'READY']
 
     ans = await asyncio.wait_for(sock.recv_multipart(), 3)
     assert ans == [b'', b'ILLEGAL']
