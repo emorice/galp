@@ -65,7 +65,7 @@ async def main(args):
     """
     galp.cli.setup(args, "worker")
     # Signal handler
-    terminate = galp.cli.create_terminate()
+    galp.cli.set_sync_handlers()
 
     config = {}
     if args.config:
@@ -80,30 +80,28 @@ async def main(args):
 
     tasks = []
 
-    worker = Worker(terminate)
+    worker = Worker(args.endpoint)
 
     worker.cache = galp.cache.CacheStack(args.cachedir, Serializer())
     worker.step_dir = step_dir
 
     worker.profiler = Profiler(config.get('profile'))
 
-    tasks.append(asyncio.create_task(worker.listen(args.endpoint)))
+    await galp.cli.wait(worker.run())
 
-    await galp.cli.wait(tasks)
-
-    # FIXME: this should have been done before
-    await galp.cli.cleanup_tasks(worker.tasks)
+    # TODO: the worker may still have submissions in queue, we should clean
+    # these
 
     logging.info("Worker terminating normally")
 
 class Worker(Protocol):
-    def __init__(self, terminate):
+    def __init__(self, endpoint):
         super().__init__()
-        self.terminate = terminate
+        self.endpoint = endpoint
         self.socket = None
-        self.tasks = []
-        self.heartbeat = None
-        self.start_heartbeat()
+
+        # Submitted jobs
+        self.galp_jobs = asyncio.Queue()
 
     @property
     def cache(self):
@@ -115,6 +113,18 @@ class Worker(Protocol):
         self.resolver = Resolver()
         self.store = NetStore(cache, self, self.resolver)
 
+    def run(self):
+        """
+        Starts and returns life-long tasks. You should cancel the others as soon
+        as any finishes or raises
+        """
+        tasks = [
+            asyncio.create_task(self.log_heartbeat()),
+            asyncio.create_task(self.monitor_jobs()),
+            asyncio.create_task(self.listen())
+            ]
+        return tasks
+
     async def log_heartbeat(self):
         i = 0
         while True:
@@ -122,19 +132,16 @@ class Worker(Protocol):
             await asyncio.sleep(10)
             i += 1
 
-    def start_heartbeat(self):
-        if self.heartbeat is not None:
-            self.heartbeat = asyncio.create_task(worker.log_heartbeat())
+    async def monitor_jobs(self):
+        while True:
+            task = await self.galp_jobs.get()
+            route, name, ok = await task
+            if ok:
+                await self.done(route, name)
+            else:
+                await self.failed(route, name)
 
-    async def stop_heartbeat(self):
-        if self.heartbeat is not None:
-            self.heartbeat.cancel()
-            await self.heartbeat
-
-    async def on_terminate(self):
-        await self.stop_heartbeat()
-
-    async def listen(self, endpoint):
+    async def listen(self):
         """Main message processing loop of the worker.
 
         Only supports one socket at once for now."""
@@ -142,7 +149,7 @@ class Worker(Protocol):
 
         ctx = zmq.asyncio.Context()
         socket = ctx.socket(zmq.DEALER)
-        socket.connect(endpoint)
+        socket.connect(self.endpoint)
 
         self.socket = socket
 
@@ -161,8 +168,9 @@ class Worker(Protocol):
             ctx.destroy()
             self.socket = None
 
-        await self.on_terminate()
-        self.terminate.set()
+        # Returning from a main task should stop the app
+        return
+
 
     # Protocol handlers
     # =================
@@ -177,7 +185,7 @@ class Worker(Protocol):
         return True
 
     async def on_exit(self, route):
-        logging.warning('Received EXIT, terminating')
+        logging.info('Received EXIT, terminating')
         return True
 
     async def on_get(self, route, name):
@@ -205,7 +213,7 @@ class Worker(Protocol):
             self.run_submission(route, name, step_key, arg_names, kwarg_names)
             )
 
-        self.tasks.append(task)
+        await self.galp_jobs.put(task)
 
     async def on_put(self, route, name, proto, data, children):
         """
@@ -240,8 +248,7 @@ class Worker(Protocol):
             # FIXME: that's probably not correct for multi-output tasks !
             if self.cache.contains(name):
                 logging.info('SUBMIT: Cache HIT: %s', name.hex())
-                await self.done(route, name)
-                return
+                return route, name, True
 
             # If not in cache, resolve metadata and run the task
             await self.doing(route, name)
@@ -294,21 +301,15 @@ class Worker(Protocol):
             # Caching
             self.cache.put_native(handle, result)
 
-            await self.done(route, name)
+            return route, name, True
+
         except NonFatalTaskError:
             logging.exception('Submitted task step failed: %s', step_key.decode('ascii'))
-            await self.failed(route, name)
-            raise
+            return route, name, False
         except Exception as e:
-            await self.failed(route, name)
-            # Log immediately the exception
             logging.exception('An unhandled error has occured within a step-'
                 'running asynchronous task. This signals a bug in GALP itself.')
-            # Signal the main thread to cancel all running tasks and exit
-            self.terminate.set()
-            # Raise the original exception for it be caught again in the main
-            # thread
-            raise
+            return route, name, False
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""

@@ -1,6 +1,7 @@
 """
 Steps only used for testing, and loaded through the plugin system.
 """
+import logging
 import os
 import time
 
@@ -116,3 +117,26 @@ def busy_loop():
 @export
 def suicide(sig):
     os.kill(os.getpid(), sig)
+
+class RefCounted:
+    count = 0
+    def __init__(self):
+        self.last_count = self.count
+        RefCounted.count += 1
+        logging.info('Creating refcounted object, counter now %d', RefCounted.count)
+
+    def __del__(self):
+        RefCounted.count -= 1
+        logging.info('Destroying refcounted object, counter now %d', RefCounted.count)
+@export
+def refcount(dummy, fail=True):
+    """
+    Create an instance of a reference-counted class and returns instance number
+    """
+
+    obj = RefCounted()
+
+    if fail:
+        raise ValueError
+    else:
+        return obj.count

@@ -28,11 +28,6 @@ import galp.synclient
 import galp.tests.steps as gts
 
 
-# Is there a cleaner way ?
-from galp.tests.fixtures_sockets import *
-from galp.tests.fixtures_processes import *
-from galp.tests.fixtures_clients import *
-
 # Other fixtures
 # ========
 
@@ -706,3 +701,30 @@ async def test_remote_cache_corruption(poisoned_cache, client):
         3)
 
     assert ans == task3.step.function()
+
+async def test_refcount(client):
+    """
+    Test that resources used by a failed tasks are cleaned up before the next
+    one executes
+    """
+    obj1, obj2 = gts.RefCounted(), gts.RefCounted()
+    assert obj1.last_count == 0
+    assert obj2.last_count == 1
+
+    fail_tasks = [
+        gts.refcount(i, fail=True)
+        for i in range(2)
+        ]
+    ok_task = gts.refcount(0, fail=False)
+
+
+    fails = await asyncio.wait_for(
+        client.collect(*fail_tasks, return_exceptions=True),
+        3)
+    assert all(type(fail) == galp.TaskFailedError for fail in fails)
+
+    ok, = await asyncio.wait_for(
+        client.collect(ok_task, return_exceptions=True),
+        3)
+
+    assert ok == 1

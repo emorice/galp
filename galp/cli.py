@@ -44,6 +44,13 @@ def log_signal(sig, context, orig_handler):
         signal.signal(sig, orig_handler)
         signal.raise_signal(sig)
 
+def set_sync_handlers():
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        orig_handler = signal.getsignal(sig)
+        signal.signal(sig,
+            lambda sig, context, orig=orig_handler: log_signal(sig, context, orig)
+            )
+
 def create_terminate():
     """
     Creates a terminate event with signal handler attached
@@ -56,24 +63,29 @@ def create_terminate():
     #loop.add_signal_handler(signal.SIGINT, terminate.set)
     #loop.add_signal_handler(signal.SIGTERM, terminate.set)
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        orig_handler = signal.getsignal(sig)
-        signal.signal(sig,
-            lambda sig, context, orig=orig_handler: log_signal(sig, context, orig)
-            )
+    # Fallback
+    set_sync_handlers()
 
     return terminate
 
 async def wait(tasks):
     """
-    Waits until all tasks are done, or one raises.
+    Waits until any task finishes or raises, then cancels and awaits the others.
 
-    If a task raises, cancels and await all the others, then re-raises
+    Re-raises if needed.
+
+    This is meant to be called with a list of the life-long tasks of your entry
+    point. If any of them raises, you have an error in your app or an interrupt,
+    and you want to re-raise it in the main task immediately. If any terminates,
+    this means you have reached a termination condition, you want to cancel all
+    the others and finish normally.
     """
     try:
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        done, pending = await asyncio.wait(tasks,
+            return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             await task
+        await cleanup_tasks(pending)
     except:
         logging.error("Aborting")
         await cleanup_tasks(pending)
@@ -82,10 +94,7 @@ async def wait(tasks):
         logging.info("Terminating normally")
 
 async def cleanup_tasks(tasks):
-    """Cancels all tasks and wait for them.
-
-    You should only need to call that on abnormal termination.
-    """
+    """Cancels all tasks and wait for them"""
     for task in tasks:
         task.cancel()
 
