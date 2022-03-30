@@ -828,18 +828,35 @@ async def test_variadic(client):
 @pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
 async def test_signals_busyloop(client, broker_worker, sig):
     """Tests that worker terminate on signal when stuck in busy loop"""
-    client_endoint, worker_handles = broker_worker
+    client_endoint, handles = broker_worker
     task = gts.busy_loop()
 
     bg = asyncio.create_task(client.collect(task))
 
+
     #FIXME: we should wait for the DOING message instead
     await asyncio.sleep(1)
 
-    for worker_handle in worker_handles:
-        worker_handle.send_signal(sig)
+    # List all processes and children
+    # Under the current implementation we should have started one pool manager
+    # and one worker
+    processes = [
+        psutil.Process(handle.pid)
+        for handle in handles
+        ]
+    children = []
+    for process in processes:
+        assert process.status() != psutil.STATUS_ZOMBIE
+        children.extend(process.children(recursive=True))
+    assert len(processes + children) == 2
 
-    worker_handle.wait(timeout=4)
+    # Send signal to the pool manager
+    for handle in handles:
+        handle.send_signal(sig)
+
+    # Check everyone died
+    gone, alive = psutil.wait_procs(processes + children, timeout=4)
+    assert not alive
 
     bg.cancel()
     try:
