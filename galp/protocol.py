@@ -7,7 +7,6 @@ import logging
 import galp.graph
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
-
 class Protocol:
     """
     Helper class gathering methods solely concerned with parsing and building
@@ -37,6 +36,10 @@ class Protocol:
         """An `EXIT` message was received"""
         return self.on_unhandled(b'EXIT')
 
+    def on_exited(self, route, peer):
+        """An `EXITED` message was received"""
+        return self.on_unhandled(b'EXITED')
+
     def on_failed(self, route, name):
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
@@ -64,7 +67,7 @@ class Protocol:
         """
         return self.on_unhandled(b'PUT')
 
-    def on_ready(self, route):
+    def on_ready(self, route, peer):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
@@ -82,10 +85,30 @@ class Protocol:
 
     # Send methods
     # ============
+    def doing(self, route, name):
+        return self.send_message_to(route, [b'DOING', name])
+
+    def done(self, route, name):
+        return self.send_message_to(route, [b'DONE', name])
+
+    def exited(self, route, peer):
+        """Signal the given peer has exited"""
+        msg = [b'EXITED', peer]
+        return self.send_message_to(route, msg)
+
+    def failed(self, route, name):
+        return self.send_message_to(route, [b'FAILED', name])
+
     def get(self, route, task):
         """Send get for task with given name"""
         msg = [b'GET', task]
         return self.send_message_to(route, msg)
+
+    def illegal(self, route):
+        return self.send_message_to(route, [b'ILLEGAL'])
+
+    def not_found(self, route, name):
+        return self.send_message_to(route, [b'NOTFOUND', name])
 
     def put(self, route, name, proto, data, children):
         if data is None:
@@ -94,11 +117,8 @@ class Protocol:
         m = [b'PUT', name, proto, data, children]
         return self.send_message_to(route, m)
 
-    def ready(self, route):
-        return self.send_message_to(route, [b'READY'])
-
-    def not_found(self, route, name):
-        return self.send_message_to(route, [b'NOTFOUND', name])
+    def ready(self, route, peer):
+        return self.send_message_to(route, [b'READY', peer])
 
     def submit_task(self, route, task):
         """Send submit for given task object.
@@ -143,18 +163,6 @@ class Protocol:
         for kw, kwarg_name in kwarg_names.items():
             msg += [ kw , kwarg_name ]
         return self.send_message_to(route, msg)
-
-    def done(self, route, name):
-        return self.send_message_to(route, [b'DONE', name])
-
-    def doing(self, route, name):
-        return self.send_message_to(route, [b'DOING', name])
-
-    def failed(self, route, name):
-        return self.send_message_to(route, [b'FAILED', name])
-
-    def illegal(self, route):
-        return self.send_message_to(route, [b'ILLEGAL'])
 
     # Main logic methods
     # ==================
@@ -204,6 +212,10 @@ class Protocol:
         self.validate(len(msg) > 0, route, 'Empty message with only routing information')
         return msg, route
 
+    def split_route(self, route):
+        incoming_route = route[:1]
+        forward_route = route[1:]
+        return incoming_route, forward_route
 
     def send_message(self, msg):
         """Callback method to send a message just built.
@@ -213,7 +225,7 @@ class Protocol:
         raise NotImplementedError("You must override the send_message method "
             "when subclassing a Protocol object.")
 
-    def send_message_to(self, route, msg):
+    def send_message_to(self, route, msg_body):
         """Callback method to send a message just built.
 
         Wrapper around send_message that concats route and message.
@@ -221,8 +233,11 @@ class Protocol:
         logging.info('-> %s[%s] %s',
             self.proto_name +" " if self.proto_name else "",
             route[0].hex() if route else "",
-            msg[0].decode('ascii'))
-        return self.send_message(route + [b''] + msg)
+            msg_body[0].decode('ascii'))
+        return self.send_message(self.build_message(route, msg_body))
+
+    def build_message(self, route, msg_body):
+        return route + [b''] + msg_body
 
     # Internal message handling methods
     event = EventNamespace()
@@ -250,6 +265,12 @@ class Protocol:
     def _on_exit(self, route, msg):
         self.validate(len(msg) == 1, route, 'EXIT with args')
         return self.on_exit()
+
+    @event.on('EXITED')
+    def _on_exited(self, route, msg):
+        self.validate(len(msg) == 2, route, 'EXITED without exactly one peer id')
+        peer = msg[1]
+        return self.on_exited(route, peer)
 
     @event.on('ILLEGAL')
     def _on_illegal(self, route, msg):
@@ -314,8 +335,9 @@ class Protocol:
 
     @event.on('READY')
     def _on_ready(self, route, msg):
-        self.validate(len(msg) == 1, route, 'READY with args')
-        return self.on_ready(route)
+        self.validate(len(msg) == 2, route, 'READY without exactly one peer id')
+        peer = msg[1]
+        return self.on_ready(route, peer)
 
     @event.on('SUBMIT')
     def _on_submit(self, route, msg):

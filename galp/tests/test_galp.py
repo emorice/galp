@@ -749,7 +749,6 @@ async def test_step_error(client):
     with pytest.raises(galp.TaskFailedError):
        await asyncio.wait_for(client.collect(gts.raises_error()), 3)
 
-@pytest.mark.xfail
 async def test_suicide(client):
     """
     Test running a task triggering a signal

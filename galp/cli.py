@@ -64,7 +64,28 @@ def create_terminate():
 
     return terminate
 
+async def wait(tasks):
+    """
+    Waits until all tasks are done, or one raises.
+
+    If a task raises, cancels and await all the others, then re-raises
+    """
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        for task in done:
+            await task
+    except:
+        logging.error("Aborting")
+        await cleanup_tasks(pending)
+        raise
+    else:
+        logging.info("Terminating normally")
+
 async def cleanup_tasks(tasks):
+    """Cancels all tasks and wait for them.
+
+    You should only need to call that on abnormal termination.
+    """
     for task in tasks:
         task.cancel()
 

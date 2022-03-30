@@ -8,6 +8,7 @@ we may want to hook a progress notification, through a function callable from
 within the job and easy to patch if the code has to be run somewhere else.
 """
 
+import os
 import sys
 import asyncio
 import signal
@@ -89,9 +90,11 @@ async def main(args):
 
     tasks.append(asyncio.create_task(worker.listen(args.endpoint)))
 
-    await terminate.wait()
+    #await terminate.wait()
+    await galp.cli.wait(tasks)
 
-    await galp.cli.cleanup_tasks(tasks + worker.tasks)
+    # FIXME: this should have been done before
+    await galp.cli.cleanup_tasks(worker.tasks)
 
     logging.info("Worker terminating normally")
 
@@ -133,7 +136,7 @@ class Worker(Protocol):
 
         terminate = False
         try:
-            await self.ready([])
+            await self.ready([], str(os.getpid()).encode('ascii'))
             while not terminate:
                 msg = await socket.recv_multipart()
                 try:

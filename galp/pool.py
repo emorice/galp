@@ -9,8 +9,10 @@ import os
 import signal
 import sys
 import time
+import zmq
 
 import galp.worker
+from galp.zmq_async_protocol import ZmqAsyncProtocol
 
 class Pool:
     def __init__(self, args):
@@ -18,6 +20,8 @@ class Pool:
         self.tasks = []
         self.pending_signal = asyncio.Event()
         self.last_start_time = time.time()
+
+        self.broker = ZmqAsyncProtocol('BK', args.endpoint, zmq.DEALER)
 
     def set_signal(self, sig):
         self.signal = sig
@@ -74,6 +78,7 @@ class Pool:
                         "scheduling restart in at least %d seconds",
                         process.pid, ret, delay
                     )
+                    await self.notify_exit(process.pid)
                     while delay > 0:
                         wait_delay = asyncio.create_task(asyncio.sleep(delay))
                         done, pending = await asyncio.wait(
@@ -94,6 +99,9 @@ class Pool:
                 else:
                     logging.info('Child %d exited normally, not restarting',
                         process.pid)
+
+    async def notify_exit(self, pid):
+        await self.broker.exited([], str(pid).encode('ascii'))
 
 def on_signal(sig, pool):
     logging.error("Caught signal %d (%s)", sig, signal.strsignal(sig))
