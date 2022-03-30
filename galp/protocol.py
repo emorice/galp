@@ -264,7 +264,7 @@ class Protocol:
     @event.on('EXIT')
     def _on_exit(self, route, msg):
         self.validate(len(msg) == 1, route, 'EXIT with args')
-        return self.on_exit()
+        return self.on_exit(route)
 
     @event.on('EXITED')
     def _on_exited(self, route, msg):
@@ -275,7 +275,7 @@ class Protocol:
     @event.on('ILLEGAL')
     def _on_illegal(self, route, msg):
         self.validate(len(msg) == 1, route, 'ILLEGAL with args')
-        return self.on_illegal()
+        return self.on_illegal(route)
 
     @event.on('GET')
     def _on_get(self, route, msg):

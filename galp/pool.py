@@ -34,7 +34,15 @@ class Pool:
             )
             for i in range(self.args.pool_size)
         ]
+        listener = asyncio.create_task(self.broker.listen())
+
         await asyncio.gather(*self.tasks)
+
+        listener.cancel()
+        try:
+            await listener
+        except asyncio.CancelledError:
+            pass
         
     async def start_worker(self):
         args = self.args

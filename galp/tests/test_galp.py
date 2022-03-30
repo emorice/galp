@@ -28,234 +28,19 @@ import galp.synclient
 import galp.tests.steps as gts
 
 
-# Fixtures
+# Is there a cleaner way ?
+from galp.tests.fixtures_sockets import *
+from galp.tests.fixtures_processes import *
+from galp.tests.fixtures_clients import *
+
+# Other fixtures
 # ========
-
-@pytest.fixture
-def make_worker(tmp_path):
-    """Worker fixture, starts a worker pool in background.
-
-    Returns:
-        (endpoint, Popen) tuple
-    """
-    # todo: safer port picking
-    port = itertools.count(48652)
-    phandles = []
-
-    def _make(endpoint=None, pool_size=1):
-        if endpoint is None:
-            endpoint = f"tcp://127.0.0.1:{next(port)}"
-
-        phandle = subprocess.Popen([
-            sys.executable,
-            '-m', 'galp.pool',
-            str(pool_size),
-            '-c', 'galp/tests/config.toml',
-            #'--debug',
-            endpoint, str(tmp_path)
-            ])
-        phandles.append(phandle)
-
-        return endpoint, phandle
-
-    yield _make
-
-    # If it's a kill test it's already done, later with remote worker we'll rely
-    # on messages here
-    # Note: terminate should be safe to call no matter how dead the child
-    # already is, but we still run into errors sometimes
-    for phandle in phandles:
-        try:
-            phandle.terminate()
-            phandle.wait()
-        except ProcessLookupError:
-            pass
-
-@pytest.fixture
-def make_broker():
-    """Broker fixture, starts a broker in background.
-
-    Returns:
-        (endpoint, Popen) tuple
-    """
-    # todo: safer port picking
-    port = itertools.count(48652)
-    phandles = []
-
-    def _make():
-        client_endpoint = f"tcp://127.0.0.1:{next(port)}"
-        worker_endpoint = f"tcp://127.0.0.1:{next(port)}"
-
-        phandle = subprocess.Popen([
-            sys.executable,
-            '-m', 'galp.broker',
-            #'--debug',
-            client_endpoint,
-            worker_endpoint,
-            ])
-        phandles.append(phandle)
-
-        return client_endpoint, worker_endpoint, phandle
-
-    yield _make
-
-    for phandle in phandles:
-        phandle.terminate()
-        phandle.wait()
-
-@pytest.fixture
-def worker(make_worker):
-    return make_worker()
-
-@pytest.fixture
-def broker(make_broker):
-    return make_broker()
-
-@pytest.fixture
-def make_worker_pool(broker, make_worker):
-    """
-    A pool of n workers
-    """
-    def _make(n):
-        cl_ep, w_ep, _ = broker
-        _, phandle = make_worker(w_ep, n)
-        return cl_ep, [phandle]
-
-    return _make
-
-@pytest.fixture
-def worker_pool(make_worker_pool):
-    """
-    A pool of 10 workers
-    """
-    return make_worker_pool(10)
-
-@pytest.fixture
-def broker_worker(broker, make_worker_pool):
-    """
-    A "pool" with a single worker
-    """
-    return make_worker_pool(1)
-
-@pytest.fixture
-def ctx():
-    """The ØMQ context"""
-    ctx =  zmq.Context()
-    yield ctx
-    # During testing we do a lot of fancy stuff such as trying to talk to the
-    # dead and aborting a lot, so don't panic if there's still stuff in the
-    # pipes -> linger.
-    logging.warning('Now destroying context...')
-    ctx.destroy(linger=1)
-    logging.warning('Done')
-
-@pytest.fixture
-def async_ctx():
-    """The ØMQ context, asyncio flavor"""
-    ctx =  zmq.asyncio.Context()
-    yield ctx
-    # During testing we do a lot of fancy stuff such as trying to talk to the
-    # dead and aborting a lot, so don't panic if there's still stuff in the
-    # pipes -> linger.
-    logging.warning('Now destroying context...')
-    ctx.destroy(linger=1)
-    logging.warning('Done')
-
-@pytest.fixture
-def worker_socket(ctx, make_worker):
-    """Dealer socket connected to some worker"""
-
-    socket = ctx.socket(zmq.DEALER)
-    socket.bind('tcp://127.0.0.1:*')
-    endpoint = socket.getsockopt(zmq.LAST_ENDPOINT)
-
-    endpoint, handle = make_worker(endpoint)
-
-    yield socket, endpoint, handle
-
-    # Closing with linger since we do not know if the test has failed or left
-    # pending messages for whatever reason.
-    socket.close(linger=1)
-
-@pytest.fixture
-def make_async_socket(async_ctx):
-    """Factory feature to create several sockets to a set of workers.
-
-    The return factory takes an endpoint as sole argument.
-
-    Note that youbroker_r endpoint must be able to deal with several clients !"""
-
-    """
-    Helper to create both sync and async sockets
-    """
-    sockets = []
-    def _make(endpoint):
-        socket = async_ctx.socket(zmq.DEALER)
-        sockets.append(socket)
-        socket.bind(endpoint)
-        return socket
-
-    yield _make
-
-    while sockets:
-        # Closing with linger since we do not know if the test has failed or left
-        # pending messages for whatever reason.
-        sockets.pop().close(linger=1)
-
-@pytest.fixture
-def async_worker_socket(make_async_socket, worker):
-    """Dealer socket connected to some worker, asyncio flavor"""
-    endpoint, _ = worker
-    yield make_async_socket(endpoint)
 
 @pytest.fixture(params=[b'EXIT', b'ILLEGAL'])
 def fatal_order(request):
     """All messages that should make the worker quit"""
     return request.param
 
-@pytest.fixture
-def make_client():
-    """Factory fixture for client managing its own sockets"""
-    def _make(endpoint):
-        return galp.client.Client(endpoint)
-    return _make
-
-@pytest.fixture
-def client(make_client, broker_worker):
-    """A client connected to a pool with one worker"""
-    endpoint, _ = broker_worker
-    return make_client(endpoint)
-
-@pytest.fixture
-def client_pool(make_client, worker_pool):
-    """A client connected to a pool of 10 workers"""
-    endpoint, _ = worker_pool
-    return make_client(endpoint)
-
-@pytest.fixture
-def client_pair(broker_worker):
-    """A pair of clients connected to one worker.
-
-    This is now implemented with two incoming connections to the same broker/worker,
-    routing on worker-side should disantangle things.
-    """
-    endpoint, _ = broker_worker
-    c1 = galp.client.Client(endpoint=endpoint)
-    c2 = galp.client.Client(endpoint=endpoint)
-    return c1, c2
-
-@pytest.fixture
-def disjoined_client_pair(make_worker_pool, make_client):
-    """A pair of client connected to two different workers"""
-    e1, _ = make_worker_pool(1)
-    e2, _ = make_worker_pool(1)
-    return make_client(e1), make_client(e2)
-
-@pytest.fixture
-def async_sync_client_pair(make_worker_pool):
-    e1, _ = make_worker_pool(1)
-    e2, _ = make_worker_pool(1)
-    yield galp.client.Client(endpoint=e1), galp.synclient.SynClient(endpoint=e2)
 
 @pytest.fixture
 def poisoned_cache(tmpdir):
@@ -445,7 +230,7 @@ def test_reference(worker_socket):
 
 @pytest.mark.asyncio
 async def test_async_socket(async_worker_socket):
-    sock = async_worker_socket
+    sock, _, _ = async_worker_socket
 
     await asyncio.wait_for(sock.send_multipart([b'', b'RABBIT']), 3)
 
@@ -829,9 +614,14 @@ async def test_variadic(client):
     assert ans == sum(args)
 
 @pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
-async def test_signals_busyloop(client, broker_worker, sig):
+async def test_signals_busyloop(client, galp_set_one, sig):
     """Tests that worker terminate on signal when stuck in busy loop"""
-    client_endoint, handles = broker_worker
+    client_endoint, all_handles = galp_set_one
+    broker_handle, pool_handle = all_handles
+
+    # This is only supposed to kill the pool and its one child
+    handles = [pool_handle]
+
     task = gts.busy_loop()
 
     bg = asyncio.create_task(client.collect(task))

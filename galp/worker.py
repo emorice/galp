@@ -81,7 +81,6 @@ async def main(args):
     tasks = []
 
     worker = Worker(terminate)
-    tasks.append(asyncio.create_task(worker.log_heartbeat()))
 
     worker.cache = galp.cache.CacheStack(args.cachedir, Serializer())
     worker.step_dir = step_dir
@@ -90,7 +89,6 @@ async def main(args):
 
     tasks.append(asyncio.create_task(worker.listen(args.endpoint)))
 
-    #await terminate.wait()
     await galp.cli.wait(tasks)
 
     # FIXME: this should have been done before
@@ -104,6 +102,8 @@ class Worker(Protocol):
         self.terminate = terminate
         self.socket = None
         self.tasks = []
+        self.heartbeat = None
+        self.start_heartbeat()
 
     @property
     def cache(self):
@@ -121,6 +121,18 @@ class Worker(Protocol):
             logging.info("Worker heartbeat %d", i)
             await asyncio.sleep(10)
             i += 1
+
+    def start_heartbeat(self):
+        if self.heartbeat is not None:
+            self.heartbeat = asyncio.create_task(worker.log_heartbeat())
+
+    async def stop_heartbeat(self):
+        if self.heartbeat is not None:
+            self.heartbeat.cancel()
+            await self.heartbeat
+
+    async def on_terminate(self):
+        await self.stop_heartbeat()
 
     async def listen(self, endpoint):
         """Main message processing loop of the worker.
@@ -149,6 +161,7 @@ class Worker(Protocol):
             ctx.destroy()
             self.socket = None
 
+        await self.on_terminate()
         self.terminate.set()
 
     # Protocol handlers
@@ -159,11 +172,11 @@ class Worker(Protocol):
     def on_invalid(self, route, reason):
         raise IllegalRequestError(route, reason)
 
-    async def on_illegal(self):
+    async def on_illegal(self, route):
         logging.error('Received ILLEGAL, terminating')
         return True
 
-    async def on_exit(self):
+    async def on_exit(self, route):
         logging.warning('Received EXIT, terminating')
         return True
 

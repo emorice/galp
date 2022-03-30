@@ -39,3 +39,13 @@ class ZmqAsyncProtocol(Protocol):
         Async wrapper around sync default, logs and return False (non-fatal)
         """
         return super().on_unhandled(verb)
+
+    async def listen(self):
+        """Default processing loop
+
+        Invokes callback on each received message until one returns True
+        """
+        terminate = False
+        while not terminate:
+            msg = await self.socket.recv_multipart()
+            terminate = await self.on_message(msg)
