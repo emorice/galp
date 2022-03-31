@@ -184,7 +184,7 @@ class Client(Protocol):
             pass
         logging.info('Message processing stopping')
 
-    async def collect(self, *tasks, return_exceptions=False):
+    async def collect(self, *tasks, return_exceptions=False, timeout=None):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
         and returns the actual results.
@@ -228,14 +228,23 @@ class Client(Protocol):
                 raise TaskFailedError
 
 
-        # Note that we need to go the handle since this is where we deserialize.
-        try:
-            results =  await asyncio.gather(*(
+        collectables = [
                 _raise_failed_on_errors(
                     self._store.get_native(task.handle)
                     )
                 for task in tasks
-                ), return_exceptions=return_exceptions)
+                ]
+
+        collection = asyncio.gather(
+                        *collectables,
+                        return_exceptions=return_exceptions)
+
+        if timeout is not None:
+            collection = asyncio.wait_for(collection, timeout=timeout)
+
+        # Note that we need to go the handle since this is where we deserialize.
+        try:
+            results = await collection
         finally:
             self._collections -= 1
             if not self._collections:

@@ -49,6 +49,8 @@ class Pool:
         arg_list = ['-m', 'galp.worker']
         if args.config:
             arg_list.extend(['-c', args.config])
+        if args.vm:
+            arg_list.extend(['--vm', args.vm])
         if args.debug:
             arg_list.extend(['--debug'])
         arg_list.extend([args.endpoint, args.cachedir])

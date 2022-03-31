@@ -728,3 +728,26 @@ async def test_refcount(client):
         3)
 
     assert ok == 1
+
+async def test_timeout(client):
+    task = gts.busy_loop()
+
+    async def _collect():
+        with pytest.raises(asyncio.TimeoutError):
+            await client.collect(task, timeout=1)
+
+    await asyncio.wait_for(_collect(), 4)
+
+async def test_vmlimit(make_galp_set, make_client):
+    unlimited_ep, _ = make_galp_set(1)
+    limited_ep, _ = make_galp_set(1, extra_pool_args=['--vm', '1G'])
+
+    unlimited_client = make_client(unlimited_ep)
+    limited_client = make_client(limited_ep)
+
+    task_a, task_b = [gts.alloc_mem(2**30, x) for x in 'ab']
+
+    ans = await unlimited_client.collect(task_a, timeout=3)
+
+    with pytest.raises(galp.TaskFailedError):
+        ans = await limited_client.collect(task_b, timeout=3)

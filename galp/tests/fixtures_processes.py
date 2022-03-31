@@ -44,7 +44,6 @@ def make_process():
         except ProcessLookupError:
             pass
 
-
 @pytest.fixture
 def make_worker(make_process, port, tmp_path):
     """Worker fixture, starts a worker in background.
@@ -74,7 +73,7 @@ def make_pool(make_process, port, tmp_path):
     Returns:
         (endpoint, Popen) tuple
     """
-    def _make(endpoint=None, pool_size=1):
+    def _make(endpoint=None, pool_size=1, extra_args=[]):
         if endpoint is None:
             endpoint = f"tcp://127.0.0.1:{port()}"
 
@@ -83,7 +82,8 @@ def make_pool(make_process, port, tmp_path):
             str(pool_size),
             '-c', 'galp/tests/config.toml',
             #'--debug',
-            endpoint, str(tmp_path)
+            endpoint, str(tmp_path),
+            *extra_args
             )
 
         return endpoint, phandle
@@ -119,9 +119,9 @@ def make_galp_set(make_broker, make_pool):
     Returns:
         (client_endpoint, (broker_handle, pool_handle))
     """
-    def _make(n):
+    def _make(n, extra_pool_args=[]):
         cl_ep, w_ep, broker_handle = make_broker()
-        w_ep2, pool_handle = make_pool(w_ep, n)
+        w_ep2, pool_handle = make_pool(w_ep, n, extra_args=extra_pool_args)
         assert w_ep == w_ep2
         return cl_ep, (broker_handle, pool_handle)
 

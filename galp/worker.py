@@ -14,6 +14,7 @@ import asyncio
 import signal
 import logging
 import argparse
+import resource
 import time
 import json
 import importlib
@@ -56,6 +57,33 @@ def load_steps(plugin_names):
             raise ConfigError(('Bad plugin', name))
     return step_dir
 
+
+def limit_resources(args):
+    """
+    Set resource limits from command line, for now only virtual memory.
+
+    We use base-10 prefixes: when in doubt, it's safer to
+    set a stricter limit.
+    """
+    suffixes = {
+        'K': 3,
+        'M': 6,
+        'G': 9
+        }
+    if args.vm:
+        opt_suffix = args.vm[-1]
+        exp = suffixes.get(opt_suffix)
+        if exp is not None:
+            mult = 10**exp
+            size = int(args.vm[:-1]) * mult
+        else:
+            size = int(args.vm)
+
+        logging.info('Setting virtual memory limit to %d bytes', size)
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        resource.setrlimit(resource.RLIMIT_AS, (size, hard))
+
 async def main(args):
     """Entry point for the worker program
 
@@ -72,6 +100,8 @@ async def main(args):
         logging.info("Loading config file %s", args.config)
         with open(args.config) as fd:
             config = toml.load(fd)
+
+    limit_resources(args)
 
     step_dir = load_steps(config['steps'] if 'steps' in config else [])
 
@@ -321,6 +351,8 @@ def add_parser_arguments(parser):
     parser.add_argument('cachedir')
     parser.add_argument('-c', '--config',
         help='Path to optional TOML configuration file')
+    parser.add_argument('--vm',
+        help='Limit on process virtual memory size, e.g. "2M" or "1G"')
 
     galp.cli.add_parser_arguments(parser)
 

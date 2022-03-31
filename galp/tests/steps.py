@@ -5,8 +5,11 @@ import logging
 import os
 import time
 
+import psutil
 import numpy as np
 import pyarrow as pa
+
+import psutil
 
 from typing import Tuple
 
@@ -104,7 +107,7 @@ def raises_error_multiple():
 def sleeps(secs, some_arg):
     time.sleep(secs)
     return some_arg
-    
+
 @export
 def sum_variadic(*args):
     return sum(args)
@@ -140,3 +143,11 @@ def refcount(dummy, fail=True):
         raise ValueError
     else:
         return obj.count
+
+@export
+def alloc_mem(N, dummy):
+    p = psutil.Process()
+    logging.info('VM: %d', p.memory_info().vms)
+    x = np.zeros(N // 8)
+    logging.info('VM: %d', p.memory_info().vms)
+    return True
