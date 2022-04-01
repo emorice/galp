@@ -62,8 +62,9 @@ class Client(Protocol):
         socket.connect(endpoint)
         self.socket = socket
 
-        # With a DEALER socket, we send all messages with no routing information
-        self.route = []
+        # With a DEALER socket, we send messages with no routing information by
+        # default.
+        self.route = self.default_route()
 
         # Public attributes: counters for the number of SUBMITs sent and DOING
         # received for each task

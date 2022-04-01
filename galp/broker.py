@@ -51,19 +51,6 @@ class Broker:
             except IllegalRequestError as err:
                 logging.error('Bad client request: %s', err.reason)
                 await self.client.send_illegal(err.route)
-            # Forward to worker if needed
-            msg_body, route = self.worker.get_routing_parts(msg)
-            incoming_route, forward_route = self.forward.split_route(route)
-            if forward_route:
-                logging.debug('Forwarding %s', msg_body[:1])
-                await self.worker.send_message_to(
-                    forward_route + incoming_route,
-                    msg_body)
-            else:
-                logging.debug('Queuing %s', msg_body[:1])
-                await self.tasks_push.send_multipart(
-                    incoming_route + [b''] + msg_body
-                    )
 
         self.terminate.set()
 
@@ -82,16 +69,6 @@ class Broker:
             except IllegalRequestError as err:
                 logging.error('Bad worker request: %s', err.reason)
                 await self.worker.send_illegal(err.route)
-            # Forward to client if needed
-            msg_body, route = self.worker.get_routing_parts(msg)
-            incoming_route, forward_route = self.worker.split_route(route)
-            if forward_route:
-                logging.debug('Forwarding %s', msg_body[:1])
-                await self.client.send_message_to(
-                    forward_route + incoming_route,
-                    msg_body)
-            else:
-                logging.debug('Not forwarding %s', msg_body[:1])
 
         self.terminate.set()
 
@@ -102,18 +79,8 @@ class Broker:
         logging.debug('Starting to process task queue')
         while True:
             task = await self.tasks_pull.recv_multipart()
-            task_body, task_route = self.client.get_routing_parts(task)
-            logging.debug('Task pending')
-            worker = await self.workers.get()
-            logging.debug('Worker available, forwarding')
 
-            new_msg = self.forward.build_message(
-                worker + task_route, task_body
-                )
-
-            await self.forward.on_message(new_msg)
-
-            await self.worker.send_message(new_msg)
+            await self.forward.on_message(task)
 
 
 class BrokerProtocol(ZmqAsyncProtocol):
@@ -138,18 +105,55 @@ class ClientProtocol(BrokerProtocol):
     """
     Handler for messages received from clients.
     """
+    async def on_verb(self, route, msg_body):
+        """
+        Args:
+            route: a tuple (incoming_route, forwarding route)
+            msg_body: all the message parts starting with the galp verb
+        """
+        # Call upper protocol callbacks
+        ret = await super().on_verb(route, msg_body)
+
+        # Forward to worker if needed
+        incoming_route, forward_route = route
+        if forward_route:
+            logging.debug('Forwarding %s', msg_body[:1])
+            await self.broker.worker.send_message_to(
+                route,
+                msg_body)
+        else:
+            logging.debug('Queuing %s', msg_body[:1])
+            await self.broker.tasks_push.send_multipart(
+                incoming_route + [b''] + msg_body
+                )
+        return ret
 
 class WorkerProtocol(BrokerProtocol):
     """
-    Handler for messages received from clients.
+    Handler for messages received from workers.
     """
-    async def on_ready(self, route, peer):
-        self.broker.route_from_peer[peer] = route
-        await self.broker.workers.put(route[:1])
+    async def on_verb(self, route, msg_body):
+        ret = await super().on_verb(route, msg_body)
 
+        # Forward to client if needed
+        incoming_route, forward_route = route
+        if forward_route:
+            logging.debug('Forwarding %s', msg_body[:1])
+            await self.broker.client.send_message_to(
+                route, msg_body)
+        else:
+            logging.debug('Not forwarding %s', msg_body[:1])
+
+        return ret
+
+    async def on_ready(self, route, peer):
+        incoming, forward = route
+        assert not forward
+        self.broker.route_from_peer[peer] = incoming
+        await self.broker.workers.put(incoming)
 
     async def mark_worker_available(self, route):
-        worker_route, client_route = self.split_route(route)
+        worker_route, client_route = route
         key = tuple(worker_route)
         if key in self.broker.task_from_route:
             del self.broker.task_from_route[key]
@@ -178,7 +182,12 @@ class WorkerProtocol(BrokerProtocol):
             return
 
         task_name, client_route = task
-        await self.broker.client.failed(client_route, task_name)
+        # Normally the other route part is the worker route, but here the
+        # worker died so we set it to empty to make sure the client cannot
+        # accidentally try to re-use it.
+        incoming_route = []
+
+        await self.broker.client.failed((incoming_route, client_route), task_name)
 
 class ForwardProtocol(Protocol):
     """
@@ -191,8 +200,27 @@ class ForwardProtocol(Protocol):
     async def on_unhandled(self, verb):
         return super().on_unhandled(verb)
 
+    async def on_verb(self, task_route, task_body):
+        logging.debug('Task pending')
+
+        worker = await self.broker.workers.get()
+        logging.debug('Worker available, forwarding')
+
+        client_route, empty = task_route
+        # At this point we should not already know who to forward to
+        assert not empty
+
+        # We fill in the forwarding route
+        new_route = (client_route, worker)
+
+        # We pass the full route to upper
+        await super().on_verb(new_route, task_body)
+
+        await self.broker.worker.send_message_to(new_route, task_body)
+
     async def on_submit(self, route, name, step_name, vtags, arg_names, kwarg_names):
-        worker_route, client_route = self.split_route(route)
+        # client = incoming, worker = forward
+        client_route, worker_route = route
         self.broker.task_from_route[tuple(worker_route)] = (name, client_route)
 
 async def main(args):

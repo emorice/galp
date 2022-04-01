@@ -16,7 +16,8 @@ class ZmqAsyncProtocol(Protocol):
         bind: whether to bind or connect, default False (connect)
     """
     def __init__(self, name, endpoint, socket_type, bind=False):
-        super().__init__(name)
+        router = (socket_type == zmq.ROUTER)
+        super().__init__(name, router=router)
 
         self.endpoint = endpoint
 

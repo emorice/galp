@@ -19,7 +19,7 @@ class SynClient(Protocol):
        self.socket = zmq.Context.instance().socket(zmq.DEALER)
        self.socket.connect(endpoint)
        self.serializer = Serializer()
-       self.route = []
+       self.route = self.default_route()
 
 
     def __delete__(self):

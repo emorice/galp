@@ -57,7 +57,6 @@ def load_steps(plugin_names):
             raise ConfigError(('Bad plugin', name))
     return step_dir
 
-
 def limit_resources(args):
     """
     Set resource limits from command line, for now only virtual memory.
@@ -185,7 +184,7 @@ class Worker(Protocol):
 
         terminate = False
         try:
-            await self.ready([], str(os.getpid()).encode('ascii'))
+            await self.ready(self.default_route(), str(os.getpid()).encode('ascii'))
             while not terminate:
                 msg = await socket.recv_multipart()
                 try:

@@ -111,7 +111,7 @@ class Pool:
                         process.pid)
 
     async def notify_exit(self, pid):
-        await self.broker.exited([], str(pid).encode('ascii'))
+        await self.broker.exited(self.broker.default_route(), str(pid).encode('ascii'))
 
 def on_signal(sig, pool):
     logging.error("Caught signal %d (%s)", sig, signal.strsignal(sig))

@@ -5,22 +5,19 @@ GALP protocol implementation
 import logging
 
 import galp.graph
+from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
-class Protocol:
+class Protocol(LowerProtocol):
     """
     Helper class gathering methods solely concerned with parsing and building
     messages, but not with what to do with them.
 
     Methods named after a verb (`get`) build and send a message.
     Methods starting with `on_` and a verb (`on_get`) are called when such a
-    message is recevived, and should usually be overriden unless the verb is to
+    message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
-
-    def __init__(self, name=None):
-        self.proto_name = name
-
     # Callback methods
     # ================
     # The methods below are just placeholders that double as documentation.
@@ -166,7 +163,7 @@ class Protocol:
 
     # Main logic methods
     # ==================
-    def on_message(self, msg):
+    def on_verb(self, route, msg_body):
         """Parse given message, calling callbacks as needed.
 
         Returns:
@@ -184,60 +181,12 @@ class Protocol:
             condition on a 'ILLEGAL' message works, since it is a regular
             message that signals a previous error.
         """
-        self.validate(len(msg) > 0, 'Empty message')
-        msg, route = self.get_routing_parts(msg)
-        logging.info('<- %s[%s] %s',
-            self.proto_name +" " if self.proto_name else "",
-            route[0].hex() if route else "",
-            msg[0].decode('ascii'))
-        logging.debug("%d routing part(s)", len(route))
         try:
-            return self.handler(str(msg[0], 'ascii'))(route, msg)
+            return self.handler(str(msg_body[0], 'ascii'))(route, msg_body)
         except NoHandlerError:
             self.validate(False, route, 'No such verb')
         return False
 
-    def get_routing_parts(self, msg):
-        """
-        Parses and returns the routing part of `msg`, and the rest.
-
-        Can be overloaded to handle different routing strategies.
-        """
-        route = []
-        while msg and msg[0]:
-            route.append(msg[0])
-            msg = msg[1:]
-        # Discard empty frame
-        msg = msg[1:]
-        self.validate(len(msg) > 0, route, 'Empty message with only routing information')
-        return msg, route
-
-    def split_route(self, route):
-        incoming_route = route[:1]
-        forward_route = route[1:]
-        return incoming_route, forward_route
-
-    def send_message(self, msg):
-        """Callback method to send a message just built.
-
-        This is the only callback that is required to be implemented.
-        """
-        raise NotImplementedError("You must override the send_message method "
-            "when subclassing a Protocol object.")
-
-    def send_message_to(self, route, msg_body):
-        """Callback method to send a message just built.
-
-        Wrapper around send_message that concats route and message.
-        """
-        logging.info('-> %s[%s] %s',
-            self.proto_name +" " if self.proto_name else "",
-            route[0].hex() if route else "",
-            msg_body[0].decode('ascii'))
-        return self.send_message(self.build_message(route, msg_body))
-
-    def build_message(self, route, msg_body):
-        return route + [b''] + msg_body
 
     # Internal message handling methods
     event = EventNamespace()
