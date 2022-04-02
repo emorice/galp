@@ -18,7 +18,7 @@ from collections import defaultdict
 
 from galp.cache import CacheStack
 from galp.serializer import Serializer, DeserializeError
-from galp.protocol import Protocol
+from galp.zmq_async_protocol import ZmqAsyncProtocol
 from galp.store import Store
 from galp.graph import Handle
 
@@ -40,7 +40,7 @@ class TaskStatus(IntEnum):
 class TaskFailedError(RuntimeError):
     pass
 
-class Client(Protocol):
+class Client(ZmqAsyncProtocol):
     """
     A client that communicate with a worker.
 
@@ -56,11 +56,8 @@ class Client(Protocol):
     # 'tasks' public argument itself. The tasks themselves are called 'details'
 
     def __init__(self, endpoint):
-        super().__init__()
-
-        socket = zmq.asyncio.Context.instance().socket(zmq.DEALER)
-        socket.connect(endpoint)
-        self.socket = socket
+    #def __init__(self, name, endpoint, socket_type, bind=False, **kwargs):
+        super().__init__('BK', endpoint, zmq.DEALER)
 
         # With a DEALER socket, we send messages with no routing information by
         # default.
@@ -92,9 +89,6 @@ class Client(Protocol):
         # Start only one processing loop
         self._processor = None
         self._collections = 0
-
-    def __delete__(self):
-        self.socket.close()
 
     def add(self, tasks):
         """
@@ -179,8 +173,7 @@ class Client(Protocol):
         try:
             while not terminate:
                 msg = await self.socket.recv_multipart()
-                #terminate = await self.on_message(msg)
-                asyncio.create_task(self.on_message(msg))
+                terminate = await self.on_message(msg)
         except asyncio.CancelledError:
             pass
         logging.info('Message processing stopping')
@@ -300,9 +293,6 @@ class Client(Protocol):
 
     # Protocol callbacks
     # ==================
-    async def send_message(self, msg):
-        await self.socket.send_multipart(msg)
-
     async def on_get(self, route, name):
         # Note: we purposely do not use store here, since we could be receiving
         # GETs for resources we do not have and store blocks in these cases.
@@ -330,12 +320,12 @@ class Client(Protocol):
         for i in range(children):
             await self.get_once(handle[i].name)
 
-        # Wait for all subs to be resolved
-        for i in range(children):
-            await self._store.available(handle[i].name)
-
-        # Put the last part, thus releasing waiters.
+        # Put the parent part, thus releasing waiters.
+        # Not that the children may not be here yet, the store has the
+        # responsibilty to wait for them
         await self._store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
+
+        # A bit misleading, the parts may not be available
         self._status[name] = TaskStatus.AVAILABLE
 
     async def on_done(self, route, done_task):

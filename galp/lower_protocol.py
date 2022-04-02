@@ -106,7 +106,7 @@ class LowerProtocol:
             incoming_route = [next_hop, *incoming_route]
         route_parts = incoming_route + forward_route
         msg_log_str, meta_log_str = self._log_str(
-            route, msg_body,
+            (incoming_route, forward_route), msg_body,
             self._next_send_idx, self._next_peer_block_idx)
         logging.info('-> %s', msg_log_str)
         logging.debug('-> %s', meta_log_str)

@@ -3,6 +3,7 @@ Distributed store
 """
 import asyncio
 from collections import defaultdict
+import logging
 
 class Store:
     """
@@ -20,14 +21,43 @@ class Store:
         Note that a handle is necessary to perform a get, not just a resource
         name.
         """
+        # Maybe send a request to fetch the resource first
         if not self._resources.contains(handle.name):
             await self.on_nonlocal(handle.name)
-            await self._availability[handle.name].wait()
+
+        # Maybe send requests to fetch the sub-resources if any too
+        if handle.has_items:
+            for part in handle:
+                if not self._resources.contains(part.name):
+                    await self.on_nonlocal(part.name)
+
+        # Await for all fragments to be locally available
+        await self.wait_full_resource(handle)
+
+        # Deserialize everything and return
         return self._resources.get_native(handle)
+
+    async def wait_resource(self, handle):
+        """
+        Awaits availability marker for (and only for) resources not already
+        available.
+        """
+        if not self._resources.contains(handle.name):
+            await self._availability[handle.name].wait()
+
+    async def wait_full_resource(self, handle):
+        """
+        Same as wait_resource but also includes sub-resources for iterable
+        hanldes.
+        """
+        await self.wait_resource(handle)
+        if handle.has_items:
+            for part in handle:
+                await self.wait_resource(part)
 
     async def put_serial(self, name, proto, data, children):
         """Put serialized object in the store, releasing all callers of
-        corresponding get calls if any. 
+        corresponding get calls if any.
 
         The underlying caching system will handle deserialization when the gets
         are resolved.
@@ -37,7 +67,7 @@ class Store:
 
     async def put_native(self, handle, native):
         """Put native object in the store, releasing all callers of
-        corresponding get calls if any. 
+        corresponding get calls if any.
 
         Whether the object will be serialized in the process depends on the
         underlying cache backend.

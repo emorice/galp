@@ -396,7 +396,8 @@ async def test_parallel_tasks(client_pool):
 
     # Run a first task to warm the pool
     # FIXME: this is a hack, not a reliable way to ensure workers are online
-    pre_ans = await asyncio.wait_for(client_pool.collect(pre_task), 5)
+    # pre_ans = await asyncio.wait_for(client_pool.collect(pre_task), 5)
+    await asyncio.sleep(3)
 
     tasks = [
         gts.sleeps(1, i)
