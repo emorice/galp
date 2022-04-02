@@ -15,13 +15,13 @@ class ZmqAsyncProtocol(Protocol):
         socket_type: zmq socket type
         bind: whether to bind or connect, default False (connect)
     """
-    def __init__(self, name, endpoint, socket_type, bind=False):
+    def __init__(self, name, endpoint, socket_type, bind=False, **kwargs):
         router = (socket_type == zmq.ROUTER)
-        super().__init__(name, router=router)
+        super().__init__(name, router=router, **kwargs)
 
         self.endpoint = endpoint
 
-        ctx = zmq.asyncio.Context()
+        ctx = zmq.asyncio.Context.instance()
 
         self.socket = ctx.socket(socket_type)
         if bind:
@@ -41,12 +41,27 @@ class ZmqAsyncProtocol(Protocol):
         """
         return super().on_unhandled(verb)
 
+    async def on_ping(self, route):
+        """
+        Async wrapper around sync default.
+        """
+        return super().on_ping(route)
+
+    async def process_one(self):
+        """
+        Waits for one message, then call handlers when it arrives.
+
+        Convention for return code: True is a hint to stop, False (including
+        None, the default) is a hint to continue.
+        """
+        msg = await self.socket.recv_multipart()
+        return await self.on_message(msg)
+
     async def listen(self):
         """Default processing loop
 
         Invokes callback on each received message until one returns True
         """
         terminate = False
-        while not terminate:
-            msg = await self.socket.recv_multipart()
-            terminate = await self.on_message(msg)
+        while not await self.process_one():
+            pass

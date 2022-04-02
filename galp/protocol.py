@@ -181,10 +181,11 @@ class Protocol(LowerProtocol):
             condition on a 'ILLEGAL' message works, since it is a regular
             message that signals a previous error.
         """
+        str_verb = str(msg_body[0], 'ascii')
         try:
-            return self.handler(str(msg_body[0], 'ascii'))(route, msg_body)
+            return self.handler(str_verb)(route, msg_body)
         except NoHandlerError:
-            self.validate(False, route, 'No such verb')
+            self.validate(False, route, f'No such verb "{str_verb}"')
         return False
 
 

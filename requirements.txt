@@ -1,9 +1,10 @@
 pytest
+pytest-asyncio
+async-timeout
 zmq
 numpy
 pyarrow
 diskcache
-pytest-asyncio
 dill
 toml
 psutil

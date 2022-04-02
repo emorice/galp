@@ -21,15 +21,10 @@ class Broker:
         self.client = ClientProtocol(self, 'CL', client_endpoint, zmq.ROUTER, bind=True)
         self.worker = WorkerProtocol(self, 'WK', worker_endpoint, zmq.ROUTER, bind=True)
 
-        self.forward = ForwardProtocol(self, 'FW')
+        self.tasks_push = ZmqAsyncProtocol('TQ', 'inproc://tasks', zmq.PUSH, bind=True)
+        self.tasks_pull = ForwardProtocol(self, 'FW', 'inproc://tasks', zmq.PULL)
 
         self.workers = asyncio.Queue()
-
-        ctx = zmq.asyncio.Context()
-        self.tasks_push = ctx.socket(zmq.PUSH)
-        self.tasks_pull = ctx.socket(zmq.PULL)
-        self.tasks_push.bind('inproc://tasks')
-        self.tasks_pull.connect('inproc://tasks')
 
         # Internal routing id indexed by self-identifiers
         self.route_from_peer = {}
@@ -78,10 +73,7 @@ class Broker:
         """
         logging.debug('Starting to process task queue')
         while True:
-            task = await self.tasks_pull.recv_multipart()
-
-            await self.forward.on_message(task)
-
+            await self.tasks_pull.process_one()
 
 class BrokerProtocol(ZmqAsyncProtocol):
     """
@@ -123,8 +115,8 @@ class ClientProtocol(BrokerProtocol):
                 msg_body)
         else:
             logging.debug('Queuing %s', msg_body[:1])
-            await self.broker.tasks_push.send_multipart(
-                incoming_route + [b''] + msg_body
+            await self.broker.tasks_push.send_message_to(
+                route, msg_body
                 )
         return ret
 
@@ -189,14 +181,10 @@ class WorkerProtocol(BrokerProtocol):
 
         await self.broker.client.failed((incoming_route, client_route), task_name)
 
-class ForwardProtocol(Protocol):
+class ForwardProtocol(BrokerProtocol):
     """
     To perform additional actions on messages about to be forwarded to a new worker
     """
-    def __init__(self, broker, name):
-        super().__init__(name)
-        self.broker = broker
-
     async def on_unhandled(self, verb):
         return super().on_unhandled(verb)
 
