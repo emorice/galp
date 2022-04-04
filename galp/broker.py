@@ -185,9 +185,6 @@ class ForwardProtocol(BrokerProtocol):
     """
     To perform additional actions on messages about to be forwarded to a new worker
     """
-    async def on_unhandled(self, verb):
-        return super().on_unhandled(verb)
-
     async def on_verb(self, task_route, task_body):
         logging.debug('Task pending')
 

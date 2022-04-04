@@ -56,7 +56,6 @@ class Client(ZmqAsyncProtocol):
     # 'tasks' public argument itself. The tasks themselves are called 'details'
 
     def __init__(self, endpoint):
-    #def __init__(self, name, endpoint, socket_type, bind=False, **kwargs):
         super().__init__('BK', endpoint, zmq.DEALER)
 
         # With a DEALER socket, we send messages with no routing information by
@@ -77,6 +76,9 @@ class Client(ZmqAsyncProtocol):
         ## Richer alternative
         self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
 
+        # Request queue
+        self._scheduled = asyncio.Queue()
+
         # Tasks whose result is to be fetched
         self._finals = set()
 
@@ -89,6 +91,53 @@ class Client(ZmqAsyncProtocol):
         # Start only one processing loop
         self._processor = None
         self._collections = 0
+
+    async def process_scheduled(self):
+        """
+        Send submit/get requests from the queue.
+        """
+
+        while True:
+            name = await self._scheduled.get()
+
+            # tasks never seen before or failed are [re]submitted
+            if self._status[name] < TaskStatus.SUBMITTED:
+                await self.submit_task(name)
+                continue
+
+            # Tasks already submitted but still pending or running.
+            # These should not have been scheduled. Later we could send tracking
+            # requests for these.
+            if self._status[name]  < TaskStatus.COMPLETED:
+                logging.error(
+                    "Task %s was scheduled but is still pending or running.",
+                    name.hex()
+                    )
+                continue
+
+            # completed tasks for which we want to obtain the result
+            if self._status[name] < TaskStatus.TRANSFER:
+                await self.get_once(name)
+                continue
+
+            # else: tasks already finished and collected
+            logging.error(
+                "Task %s was scheduled but has already been requested",
+                name.hex()
+                )
+
+    async def schedule(self, task_name):
+        """
+        Add a task to the scheduling queue.
+
+        This asks the processing queue to consider the task at a later point to
+        submit or collect it depending on its state.
+
+        This is a coroutine but will not actually block as long as the internal
+        client queue is unlimited.
+        """
+
+        await self._scheduled.put(task_name)
 
     def add(self, tasks):
         """
@@ -148,8 +197,8 @@ class Client(ZmqAsyncProtocol):
 
     async def add_finals(self, tasks):
         """
-        Add tasks to the set of finals (= to be collected) tasks, and send a GET
-        for any new one that was already done.
+        Add tasks to the set of finals (= to be collected) tasks, and schedule
+        for collection any new one that was already done.
         """
 
         for task_details in tasks:
@@ -158,15 +207,18 @@ class Client(ZmqAsyncProtocol):
                 and
                 self._status[task_details.name] is TaskStatus.COMPLETED
                 ):
-                logging.debug("Sending extra GET for upgraded %s",
+                logging.debug("Scheduling extra GET for upgraded %s",
                     task_details.name.hex())
-                await self.get(task_details.name)
+                await self.schedule(task_details.name)
             self._finals.add(task_details.name)
 
     async def process(self):
         """
         Reacts to messages.
         """
+        # Start processing scheduled tasks
+        scheduler = asyncio.create_task(self.process_scheduled())
+
         # Todo: timeouts
         logging.info('Now reacting to completion events')
         terminate = False
@@ -176,6 +228,12 @@ class Client(ZmqAsyncProtocol):
                 terminate = await self.on_message(msg)
         except asyncio.CancelledError:
             pass
+        finally:
+            scheduler.cancel()
+            try:
+                await scheduler
+            except asyncio.CancelledError:
+                pass
         logging.info('Message processing stopping')
 
     async def collect(self, *tasks, return_exceptions=False, timeout=None):
@@ -198,15 +256,16 @@ class Client(ZmqAsyncProtocol):
         # Update our state
         new_inputs = self.add(tasks)
 
-        # Send SUBMITs for all possibly new and ready downstream tasks
+        # Schedule SUBMITs for all possibly new and ready downstream tasks
         for task in new_inputs:
-            await self.submit_task(task)
+            await self.schedule(task)
 
         # Update the list of final tasks and send GETs for the already done
         # Note: comes after submit as derived task need to be submitted first to
         # be marked as completed before.
+        # Note 2: the above note do not work with async scheduling and should not
+        # be relied on
         await self.add_finals(tasks)
-
 
         if self._processor is None:
             self._processor = asyncio.create_task(self.process())
@@ -220,7 +279,6 @@ class Client(ZmqAsyncProtocol):
                 # KeyError: we could not fetch the data
                 # DeserializeError: we could fetch it but not deserialize it
                 raise TaskFailedError
-
 
         collectables = [
                 _raise_failed_on_errors(
@@ -296,6 +354,7 @@ class Client(ZmqAsyncProtocol):
     async def on_get(self, route, name):
         # Note: we purposely do not use store here, since we could be receiving
         # GETs for resources we do not have and store blocks in these cases.
+        # Note: this handler blocks until PUT/NOT FOUND has been sent back
         try:
             await self.put(route, name, *self._cache.get_serial(name))
             logging.debug('Client GET on %s', name.hex())
@@ -316,21 +375,26 @@ class Client(ZmqAsyncProtocol):
             else Handle(name)
             )
 
-        # Send sub-gets if necessary
+        # Schedule sub-gets if necessary
         for i in range(children):
-            await self.get_once(handle[i].name)
+            children_name = handle[i].name
+            # We do not send explicit DONEs for subtasks, so we mark them as
+            # done when we receive the parent data.
+            self._status[children_name] = TaskStatus.COMPLETED
+            await self.schedule(children_name)
 
         # Put the parent part, thus releasing waiters.
         # Not that the children may not be here yet, the store has the
         # responsibilty to wait for them
         await self._store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
 
-        # A bit misleading, the parts may not be available
+        # Mark the task as available, not that this do not imply the
+        # availability of the sub-tasks
         self._status[name] = TaskStatus.AVAILABLE
 
     async def on_done(self, route, done_task):
-        """Given that done_task just finished, mark it as done, submit any
-        dependent ready to be submitted, and send GETs for final tasks.
+        """Given that done_task just finished, mark it as done, schedule any
+        dependent ready to be submitted, and schedule GETs for final tasks.
 
         """
 
@@ -339,11 +403,11 @@ class Client(ZmqAsyncProtocol):
         # FIXME: we should skip that for here-is tasks, but that's a convoluted,
         # unsupported case for now
         if done_task in self._finals:
-            await self.get(done_task)
+            await self.schedule(done_task)
 
         for dept in self._dependents[done_task]:
             if all(self._status[sister_dep] >= TaskStatus.COMPLETED for sister_dep in self._dependencies[dept]):
-                await self.submit_task(dept)
+                await self.schedule(dept)
 
     async def on_doing(self, route, task):
         """Just updates statistics"""

@@ -67,7 +67,6 @@ async def test_fill_queue(blocked_client):
         async with timeout(1):
             await super(galp.Client, client).submit_task(route, task)
 
-@pytest.mark.xfail
 async def test_blocked_done(blocked_client):
     """Tests that a blocked client can still process messages without blocking"""
 
