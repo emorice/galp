@@ -6,24 +6,26 @@ object that can be created and used as part of a larger program.
 """
 
 import logging
-import json
 import asyncio
+
+from enum import IntEnum, auto
+from collections import defaultdict
 
 import zmq
 import zmq.asyncio
 
-from enum import IntEnum, auto
-
-from collections import defaultdict
-
 from galp.cache import CacheStack
 from galp.serializer import Serializer, DeserializeError
-from galp.zmq_async_protocol import ZmqAsyncProtocol
+from galp.protocol import Protocol
+from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.store import Store
 from galp.graph import Handle
 
 
 class TaskStatus(IntEnum):
+    """
+    A sorted enum representing the status of a task
+    """
     UNKNOWN = auto()
     FAILED = auto()
     DEPEND = auto()
@@ -38,9 +40,13 @@ class TaskStatus(IntEnum):
     AVAILABLE = auto()
 
 class TaskFailedError(RuntimeError):
-    pass
+    """
+    Error thrown in the client if a task failed for any reason.
 
-class Client(ZmqAsyncProtocol):
+    Does not contain propagated error information yet.
+    """
+
+class Client:
     """
     A client that communicate with a worker.
 
@@ -56,11 +62,116 @@ class Client(ZmqAsyncProtocol):
     # 'tasks' public argument itself. The tasks themselves are called 'details'
 
     def __init__(self, endpoint):
-        super().__init__('BK', endpoint, zmq.DEALER)
+
+        self.proto = BrokerProtocol(
+            'BK',
+            schedule=self.schedule # callback to add tasks to the scheduling queue
+            )
+
+        self.transport = ZmqAsyncTransport(
+            protocol=self.proto,
+            # pylint: disable=no-member # False positive
+            endpoint=endpoint, socket_type=zmq.DEALER
+            )
+
+        # Request queue
+        self._scheduled = asyncio.Queue()
+
+    async def process_scheduled(self):
+        """
+        Send submit/get requests from the queue.
+
+        Receives information from nowhere but the queue, so has to be cancelled
+        externally.
+        """
+
+        while True:
+            name = await self._scheduled.get()
+            next_msg = self.proto.write_next(name)
+            await self.transport.send_message(next_msg)
+
+    def schedule(self, task_name):
+        """
+        Add a task to the scheduling queue.
+
+        This asks the processing queue to consider the task at a later point to
+        submit or collect it depending on its state.
+
+        This uses an asyncio queue but we assume it's unbounded and putting is
+        synchronous.
+        """
+
+        self._scheduled.put_nowait(task_name)
+
+    async def collect(self, *tasks, return_exceptions=False, timeout=None):
+        """
+        Recursively submit the tasks, wait for completion, fetches, deserialize
+        and returns the actual results.
+
+        Written as a coroutine, so that it can be called inside an asynchronous
+        application, such as a worker or proxy or whatever: the caller is in
+        charge of the event loop.
+
+        Args:
+            return_exceptions: if False, the collection is interrupted and an
+                exception is raised as soon as we know any result will not be
+                obtained due to failures. If True, keep running until all
+                required tasks are either done or failed.
+        """
+
+
+        # Update our state
+        new_inputs = self.proto.add(tasks)
+
+        # Schedule SUBMITs for all possibly new and ready downstream tasks
+        for task in new_inputs:
+            self.schedule(task)
+
+        # Update the list of final tasks and schedule GETs for the already done
+        # Note: comes after submit as derived task need to be submitted first to
+        # be marked as completed before.
+        # Note 2: the above note do not work with async scheduling and should not
+        # be relied on
+        self.proto.add_finals(tasks)
+
+        scheduler = asyncio.create_task(self.process_scheduled)
+
+        await self.transport.listen_reply_loop()
+
+        scheduler.cancel()
+
+        try:
+            await scheduler
+        except asyncio.CancelledError:
+            pass
+
+class BrokerProtocol(Protocol):
+    """
+    Main logic of the interaction of a client with a broker
+    """
+    def __init__(self, name, router, schedule):
+        super().__init__(name, router)
+
+        self.schedule = schedule
 
         # With a DEALER socket, we send messages with no routing information by
         # default.
         self.route = self.default_route()
+
+        ## Current task status
+        self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
+
+        # Tasks whose result is to be fetched
+        self._finals = set()
+
+        self._details = {}
+        self._dependents = defaultdict(set)
+        self._dependencies = defaultdict(set)
+
+        # Memory only native+serial cache
+        self._cache = CacheStack(
+            dirpath=None,
+            serializer=Serializer())
 
         # Public attributes: counters for the number of SUBMITs sent and DOING
         # received for each task
@@ -68,76 +179,6 @@ class Client(ZmqAsyncProtocol):
         self.submitted_count = defaultdict(int)
         self.run_count = defaultdict(int)
 
-        self._details = dict()
-        self._dependents = defaultdict(set)
-        self._dependencies = defaultdict(set)
-
-        #self._done = defaultdict(bool) # def to False
-        ## Richer alternative
-        self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
-
-        # Request queue
-        self._scheduled = asyncio.Queue()
-
-        # Tasks whose result is to be fetched
-        self._finals = set()
-
-        # Memory only native+serial cache
-        self._cache = CacheStack(
-            dirpath=None,
-            serializer=Serializer())
-        self._store = Store(self._cache)
-
-        # Start only one processing loop
-        self._processor = None
-        self._collections = 0
-
-    async def process_scheduled(self):
-        """
-        Send submit/get requests from the queue.
-        """
-
-        while True:
-            name = await self._scheduled.get()
-
-            # tasks never seen before or failed are [re]submitted
-            if self._status[name] < TaskStatus.SUBMITTED:
-                await self.submit_task(name)
-                continue
-
-            # Tasks already submitted but still pending or running.
-            # These should not have been scheduled. Later we could send tracking
-            # requests for these.
-            if self._status[name]  < TaskStatus.COMPLETED:
-                logging.error(
-                    "Task %s was scheduled but is still pending or running.",
-                    name.hex()
-                    )
-                continue
-
-            # completed tasks for which we want to obtain the result
-            if self._status[name] < TaskStatus.TRANSFER:
-                await self.get_once(name)
-                continue
-
-            # else: tasks already finished and collected
-            logging.error(
-                "Task %s was scheduled but has already been requested",
-                name.hex()
-                )
-
-    async def schedule(self, task_name):
-        """
-        Add a task to the scheduling queue.
-
-        This asks the processing queue to consider the task at a later point to
-        submit or collect it depending on its state.
-
-        This is a coroutine but will not actually block as long as the internal
-        client queue is unlimited.
-        """
-
-        await self._scheduled.put(task_name)
 
     def add(self, tasks):
         """
@@ -156,12 +197,10 @@ class Client(ZmqAsyncProtocol):
         sync function.
         """
 
-        # Build the inverse dependencies lookup table, i.e the 'children' task.
+        # Also build the inverse dependencies lookup table, i.e the 'children' task.
         # child/parent can be ambiguous here (what is the direction of the
         # arcs ?) so we call them "dependents" as opposed to "dependencies"
 
-        # Todo: Optimisation: sets and defaultdicts make most operations safely
-        # idempotent, but we could skip tasks added in a previous call
         oset, cset = set(tasks), set()
 
         new_top_level = set()
@@ -171,27 +210,29 @@ class Client(ZmqAsyncProtocol):
             task = task_details.name
             cset.add(task)
 
-            # Add the links
-            for dep_details in task_details.dependencies:
-                dep = dep_details.name
-                self._dependencies[task].add(dep)
-                self._dependents[dep].add(task)
-                if dep not in cset:
-                    oset.add(dep_details)
+            # Check if already added by a previous call to `add`
+            task_is_new = task not in self._details
 
-            # Check unseen input tasks
-            if (
+            # If already added, the deps cannot have changed
+            if task_is_new:
+                # Add the links
+                for dep_details in task_details.dependencies:
+                    dep = dep_details.name
+                    self._dependencies[task].add(dep)
+                    self._dependents[dep].add(task)
+                    if dep not in cset:
+                        oset.add(dep_details)
+
+                # Check unseen input tasks
                 # Note: True if no dependencies at all
-                all(
-                    self._status[dep] >= TaskStatus.COMPLETED
-                    for dep in self._dependencies[task]
-                    )
-                and task not in self._details
-                ):
-                new_top_level.add(task)
-
-            # Save details, and mark as seen
-            self._details[task] = task_details
+                if all(
+                        self._status[dep] >= TaskStatus.COMPLETED
+                        for dep in self._dependencies[task]
+                    ):
+                    new_top_level.add(task)
+            else:
+                # Save details, and mark as seen
+                self._details[task] = task_details
 
         return new_top_level
 
@@ -212,161 +253,57 @@ class Client(ZmqAsyncProtocol):
                 await self.schedule(task_details.name)
             self._finals.add(task_details.name)
 
-    async def process(self):
+    def write_next(self, name):
         """
-        Reacts to messages.
+        Returns the next nessage to be sent for a task given the information we
+        have about it
         """
-        # Start processing scheduled tasks
-        scheduler = asyncio.create_task(self.process_scheduled())
+        if self._status[name] < TaskStatus.COMPLETED:
+            return self.submit_task_by_name(name)
 
-        # Todo: timeouts
-        logging.info('Now reacting to completion events')
-        terminate = False
-        try:
-            while not terminate:
-                msg = await self.socket.recv_multipart()
-                terminate = await self.on_message(msg)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            scheduler.cancel()
-            try:
-                await scheduler
-            except asyncio.CancelledError:
-                pass
-        logging.info('Message processing stopping')
+        if name in self._finals:
+            return self.get(self.route, name)
 
-    async def collect(self, *tasks, return_exceptions=False, timeout=None):
-        """
-        Recursively submit the tasks, wait for completion, fetches, deserialize
-        and returns the actual results.
-
-        Written as a coroutine, so that it can be called inside an asynchronous
-        application, such as a worker or proxy or whatever: the caller is in
-        charge of the event loop.
-
-        Args:
-            return_exceptions: if False, the collection is interrupted and an
-                exception is raised as soon as we know any result will not be
-                obtained due to failures. If True, keep running until all
-                required tasks are either done or failed.
-        """
-
-
-        # Update our state
-        new_inputs = self.add(tasks)
-
-        # Schedule SUBMITs for all possibly new and ready downstream tasks
-        for task in new_inputs:
-            await self.schedule(task)
-
-        # Update the list of final tasks and send GETs for the already done
-        # Note: comes after submit as derived task need to be submitted first to
-        # be marked as completed before.
-        # Note 2: the above note do not work with async scheduling and should not
-        # be relied on
-        await self.add_finals(tasks)
-
-        if self._processor is None:
-            self._processor = asyncio.create_task(self.process())
-        # Not thread-safe but ok in coop mt
-        self._collections += 1
-
-        async def _raise_failed_on_errors(aw):
-            try:
-                return await aw
-            except (KeyError, DeserializeError):
-                # KeyError: we could not fetch the data
-                # DeserializeError: we could fetch it but not deserialize it
-                raise TaskFailedError
-
-        collectables = [
-                _raise_failed_on_errors(
-                    self._store.get_native(task.handle)
-                    )
-                for task in tasks
-                ]
-
-        collection = asyncio.gather(
-                        *collectables,
-                        return_exceptions=return_exceptions)
-
-        if timeout is not None:
-            collection = asyncio.wait_for(collection, timeout=timeout)
-
-        # Note that we need to go the handle since this is where we deserialize.
-        try:
-            results = await collection
-        finally:
-            self._collections -= 1
-            if not self._collections:
-                proc = self._processor
-                # Note: here the processor could still be running and a new collect
-                # start, thus starting a new processor, hence the processor has to
-                # be reentrant
-                self._processor = None
-                proc.cancel()
-                await proc
-
-        return results
+        return []
 
     # Custom protocol sender
     # ======================
     # For simplicity these set the route inside them
 
-    async def submit_task(self, task_name):
+    def submit_task_by_name(self, task_name):
         """Loads details, handles hereis and subtasks, and manage stats"""
         details = self._details[task_name]
 
-        # Reentrance check
-        if self._status[task_name] >= TaskStatus.SUBMITTED:
-            return False
         self._status[task_name] = TaskStatus.SUBMITTED
 
-        # Hereis could be put in cache or store, store handles the weird edge
-        # case where a hereis is collected
         if hasattr(details, 'hereis'):
-            await self._store.put_native(details.handle, details.hereis)
-            await self.on_done(None, task_name)
-            return
+            self._cache.put_native(details.handle, details.hereis)
+            return self.on_done(None, task_name)
+
         # Sub-tasks are automatically satisfied when their parent and unique
         # dependency is
         if hasattr(details, 'parent'):
-            await self.on_done(None, task_name)
-            return
+            return self.on_done(None, task_name)
 
-        r = await super().submit_task(self.route, details)
         self.submitted_count[task_name] += 1
-        return r
-
-    async def get_once(self, task_name):
-        # Reentrance check
-        if self._status[task_name] >= TaskStatus.TRANSFER:
-            return False
-        self._status[task_name] = TaskStatus.TRANSFER
-        return await super().get(self.route, task_name)
-
-    def get(self, task_name):
-        return self.get_once(task_name)
+        return self.submit_task(self.route, details)
 
     # Protocol callbacks
     # ==================
-    async def on_get(self, route, name):
-        # Note: we purposely do not use store here, since we could be receiving
-        # GETs for resources we do not have and store blocks in these cases.
-        # Note: this handler blocks until PUT/NOT FOUND has been sent back
+    def on_get(self, route, name):
         try:
-            await self.put(route, name, *self._cache.get_serial(name))
+            reply = self.put(route, name, self._cache.get_serial(name))
             logging.debug('Client GET on %s', name.hex())
         except KeyError:
-            await self.not_found(route, name)
+            reply = self.not_found(route, name)
             logging.warning('Client missed GET on %s', name.hex())
 
-    async def on_put(self, route, name, proto: bytes, data: bytes, children: int):
-        """
-        Cannot actually block but async anyway for consistency.
+        return reply
 
-        Not that store will release the corresponding collects if needed.
+    def on_put(self, route, name, serialized):
+        """
+        Receive data, and schedule sub-gets if necessary and check for
+        termination
         """
 
         handle = (
@@ -375,65 +312,67 @@ class Client(ZmqAsyncProtocol):
             else Handle(name)
             )
 
+        proto, data, children = serialized
+
         # Schedule sub-gets if necessary
         for i in range(children):
             children_name = handle[i].name
             # We do not send explicit DONEs for subtasks, so we mark them as
             # done when we receive the parent data.
             self._status[children_name] = TaskStatus.COMPLETED
-            await self.schedule(children_name)
+            # The scheduler needs to know that this task wants to be fetched
+            self._finals.add(children_name)
+            # Schedule it for GET to be sent in the future
+            self.schedule(children_name)
 
-        # Put the parent part, thus releasing waiters.
-        # Not that the children may not be here yet, the store has the
-        # responsibilty to wait for them
-        await self._store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
+        # Put the parent part
+        self._cache.put_serial(name, proto, data, children.to_bytes(1, 'big'))
 
         # Mark the task as available, not that this do not imply the
         # availability of the sub-tasks
         self._status[name] = TaskStatus.AVAILABLE
 
-    async def on_done(self, route, done_task):
+    def on_done(self, route, name):
         """Given that done_task just finished, mark it as done, schedule any
         dependent ready to be submitted, and schedule GETs for final tasks.
 
         """
 
-        self._status[done_task] = TaskStatus.COMPLETED
+        self._status[name] = TaskStatus.COMPLETED
 
-        # FIXME: we should skip that for here-is tasks, but that's a convoluted,
-        # unsupported case for now
-        if done_task in self._finals:
-            await self.schedule(done_task)
+        if name in self._finals:
+            self.schedule(name)
 
-        for dept in self._dependents[done_task]:
-            if all(self._status[sister_dep] >= TaskStatus.COMPLETED for sister_dep in self._dependencies[dept]):
-                await self.schedule(dept)
+        for dept in self._dependents[name]:
+            if all(
+                self._status[sister_dep] >= TaskStatus.COMPLETED
+                for sister_dep in self._dependencies[dept]
+                ):
+                self.schedule(dept)
 
-    async def on_doing(self, route, task):
+    def on_doing(self, route, name):
         """Just updates statistics"""
-        self.run_count[task] += 1
-        self._status[task] = TaskStatus.RUNNING
+        self.run_count[name] += 1
+        self._status[name] = TaskStatus.RUNNING
 
-    async def on_failed(self, route, failed_task):
+    def on_failed(self, route, name):
         """
-        Mark a task and all its dependents as failed, and unblock any watcher.
+        Mark a task and all its dependents as failed.
         """
 
-        tasks = set([failed_task])
+        tasks = set([name])
 
         while tasks:
             task = tasks.pop()
             task_desc = self._details[task].description
 
-            if task == failed_task:
+            if task == name:
                 logging.error('TASK FAILED: %s [%s]', task_desc, task.hex())
             else:
                 logging.error('Propagating failure: %s [%s]', task_desc, task.hex())
 
             # Mark as failed
             self._status[task] = TaskStatus.FAILED
-            # Unblocks watchers
-            await self._store.not_found(task)
 
             # Fails the dependents
             # Note: this can visit a task several time, not a problem
@@ -442,24 +381,7 @@ class Client(ZmqAsyncProtocol):
 
         # This is not a fatal error to the client, by default processing of
         # messages for other ongoing tasks is still permitted.
-        return
 
-    async def on_not_found(self, route, task):
-        """
-        Unblocks watchers on NOTFOUND
-
-        The difference with FAIL is that we do not presume that dependents will
-        fail. It could happen that a task has been completed normally but the
-        result cannot be transfered to the client. In this case, further taks
-        may still run succesfully. Also, FAIL replaces a DONE message, while
-        NOTFOUND follows a DONE message, so NOTFOUND does not interfere with
-        task scheduling as FAIL does.
-        """
-        await self._store.not_found(task)
-
-        # Non fatal error, message processing must go on
-        return
-
-    async def on_illegal(self):
+    def on_illegal(self, route):
         """Should never happen"""
         assert False

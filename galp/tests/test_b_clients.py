@@ -7,12 +7,11 @@ import logging
 import zmq
 
 import pytest
+from async_timeout import timeout
 
 import galp
 import galp.tests.steps as gts
 from galp.zmq_async_protocol import ZmqAsyncProtocol
-
-from async_timeout import timeout
 
 @pytest.fixture
 async def blocked_client(async_ctx):
@@ -45,7 +44,7 @@ async def blocked_client(async_ctx):
     logging.warning('Queue filled after %d fillers', fillers[0])
 
     # Check that we can reliably not send anything more
-    for i in range(100):
+    for _ in range(100):
         with pytest.raises(zmq.ZMQError):
             await _fill()
 
@@ -58,7 +57,7 @@ async def test_fill_queue(blocked_client):
     """
     Tests that we can saturate the client outgoing queue at will
     """
-    peer, client = blocked_client
+    _, client = blocked_client
     task = gts.plugin_hello()
     route = client.default_route()
 
@@ -70,7 +69,7 @@ async def test_fill_queue(blocked_client):
 async def test_blocked_done(blocked_client):
     """Tests that a blocked client can still process messages without blocking"""
 
-    peer, client = blocked_client
+    _, client = blocked_client
 
     # Set up two tasks such that marking the first as done should trigger
     # scheduling the second
@@ -79,7 +78,7 @@ async def test_blocked_done(blocked_client):
 
     # This should schedule the first task,
     # then wait forever for the submit to get through.
-    bg = asyncio.create_task(client.collect(downstream_task))
+    bg_collect = asyncio.create_task(client.collect(downstream_task))
 
     # Wait until the client graph is built
     async with timeout(1):
@@ -90,6 +89,6 @@ async def test_blocked_done(blocked_client):
     async with timeout(1):
         await client.on_done(client.default_route(), upstream_task.name)
 
-    bg.cancel()
+    bg_collect.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await bg
+        await bg_collect

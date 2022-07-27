@@ -5,12 +5,12 @@ Common CLI features used by several cli endpoints.
 import asyncio
 import logging
 import signal
-import sys
 
 class IllegalRequestError(Exception):
     """Base class for all badly formed requests, triggers sending an ILLEGAL
     message back"""
     def __init__(self, route, reason):
+        super().__init__()
         self.route = route
         self.reason = reason
 
@@ -36,15 +36,21 @@ def setup(args, name):
         logging.basicConfig(level=logging.INFO, format=log_format)
 
 def log_signal(sig, context, orig_handler):
+    """
+    Logs the signal received and re-raises it
+    """
     logging.error("Caught signal %s", signal.strsignal(sig))
     if callable(orig_handler):
         return orig_handler(sig, context)
-    else:
-        logging.error('Re-raising signal', stack_info=context)
-        signal.signal(sig, orig_handler)
-        signal.raise_signal(sig)
+
+    logging.error('Re-raising signal', stack_info=context)
+    signal.signal(sig, orig_handler)
+    return signal.raise_signal(sig)
 
 def set_sync_handlers():
+    """
+    Add our logging hook to signal handlers
+    """
     for sig in (signal.SIGINT, signal.SIGTERM):
         orig_handler = signal.getsignal(sig)
         signal.signal(sig,

@@ -50,4 +50,3 @@ async def test_counters():
     # We have a queue of size queue_size, and we send one extra message per loop, so we
     # should run the loop exactly queue_size times
     assert i == queue_size
-

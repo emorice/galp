@@ -4,7 +4,6 @@ General routines to build and operate on graphs of tasks.
 import json
 import logging
 import hashlib
-import inspect
 from itertools import chain
 
 from typing import get_type_hints, get_args
@@ -12,7 +11,7 @@ from dataclasses import dataclass
 
 from galp.eventnamespace import EventNamespace
 
-class Step():
+class Step:
     """Object wrapping a function that can be called as a pipeline step
 
     'Step' refer to the function itself, 'Task' to the function with its
@@ -61,7 +60,7 @@ class Step():
 
         return handle, arg_handles, kwarg_handles
 
-class Task():
+class Task:
     """
     Object wrapping a step invocation with its arguments
 
@@ -73,19 +72,19 @@ class Task():
           included as a vtag, causing unique names to be generated
           and the step to be rerun for each python client session.
     """
-    def __init__(self, step, args, kwargs, rerun=False, vtag=None, items=None):
+    def __init__(self, step, args, kwargs, vtag=None):
         self.step = step
         self.args = [self.ensure_task(arg) for arg in args]
         self.kwargs = { kw.encode('ascii'): self.ensure_task(arg) for kw, arg in kwargs.items() }
         self.vtags = (
             [ self.hash_one(ascii(vtag).encode('ascii')) ]
             if vtag is not None else [])
-        self.name = self.gen_name(
-            step.key,
-            [ arg.name for arg in self.args ],
-            { k : v.name for k, v in self.kwargs.items() },
-            [ tag for tag in self.vtags ]
-            )
+        self.name = self.gen_name(dict(
+            step_name=step.key,
+            arg_names=[ arg.name for arg in self.args ],
+            kwarg_names={ k : v.name for k, v in self.kwargs.items() },
+            vtags=self.vtags
+            ))
         self.handle, self.arg_handles, self.kwarg_handles = self.step.make_handles(
             self.name,
             [ arg.name for arg in self.args ],
@@ -121,15 +120,18 @@ class Task():
 
     @staticmethod
     def hash_one(payload):
+        """
+        Hash argument with sha256
+        """
         return hashlib.sha256(payload).digest()
 
     @staticmethod
-    def _san(bts):
+    def san(bts):
         """This constrains the range of values of the resulting bytes"""
         return bts.hex().encode('ascii')
 
     @staticmethod
-    def gen_name(step_name, arg_names, kwarg_names, vtags):
+    def gen_name(task_dict):
         """Create a resource name.
 
         Args:
@@ -148,27 +150,27 @@ class Task():
         it.
 
         """
-        sortedkw = sorted(list(kwarg_names.items()))
 
         # Step name
-        m = Task._san(step_name)
+        payload = Task.san(task_dict['step_name'])
         # Version tags
-        m += b'['
-        m += b','.join(
-            [ Task._san(n) for n in vtags]
+        payload += b'['
+        payload += b','.join(
+            [ Task.san(n) for n in task_dict['vtags'] ]
             )
-        m += b']'
+        payload += b']'
         # Inputs
-        m += b'('
-        m += b','.join(
-            [ Task._san(n) for n in arg_names]
+        sortedkw = sorted(list(task_dict['kwarg_names'].items()))
+        payload+= b'('
+        payload += b','.join(
+            [ Task.san(n) for n in task_dict['arg_names'] ]
             +
-            [ Task._san(kw) + b'=' + Task._san(n) for kw, n in sortedkw ]
+            [ Task.san(kw) + b'=' + Task.san(n) for kw, n in sortedkw ]
             )
-        m += b')'
-        logging.debug("Hashed value is %s:", m)
+        payload += b')'
+        logging.debug("Hashed value is %s:", payload)
 
-        return Task.hash_one(m)
+        return Task.hash_one(payload)
 
     def __iter__(self):
         """
@@ -187,7 +189,7 @@ class Task():
         """Return a readable description of task"""
         return str(self.step.key, 'ascii')
 
-class SubTask(Task):
+class SubTask:
     """
     A Task refering to an item of a Task representing a collection.
 
@@ -208,15 +210,20 @@ class SubTask(Task):
         Create a resource name.
         """
 
-        m = Task._san(parent_name)
-        m += b'['
-        m += Task._san(index_name)
-        m += b']'
+        payload = Task.san(parent_name)
+        payload += b'['
+        payload += Task.san(index_name)
+        payload += b']'
 
-        return Task.hash_one(m)
+        return Task.hash_one(payload)
 
     @property
     def dependencies(self):
+        """
+        List of tasks this task depends on.
+
+        In this case this case it is the actual task we are derived from
+        """
         return [self.parent]
 
     @property
@@ -234,10 +241,16 @@ class Handle():
 
     @property
     def has_items(self):
+        """
+        Whether the resource is known to be iterable
+        """
         return bool(self.items)
 
     @property
     def n_items(self):
+        """
+        How many sub-resources this resource consists of, if known, else 0.
+        """
         if self.items:
             return self.items
         return 0
@@ -245,14 +258,13 @@ class Handle():
     def __iter__(self):
         if not self.has_items:
             raise NonIterableHandleError
-        else:
-            return (
-                Handle(
-                    SubTask.gen_name(self.name, str(i).encode('ascii')),
-                    0
-                    )
-                for i in range(self.items)
+        return (
+            Handle(
+                SubTask.gen_name(self.name, str(i).encode('ascii')),
+                0
                 )
+            for i in range(self.items)
+            )
 
     def __getitem__(self, index):
         if not self.has_items:
@@ -261,7 +273,7 @@ class Handle():
                 SubTask.gen_name(self.name, str(index).encode('ascii')),
                 0)
 
-class HereisTask(Task):
+class HereisTask:
     """
     Task wrapper for data provided direclty as arguments in graph building.
 
@@ -276,10 +288,13 @@ class HereisTask(Task):
         # Todo: more robust hashing, but this is enough for most case where
         # hereis resources are a good fit (more complex objects would tend to be
         # actual step outputs)
-        self.name = self.hash_one(json.dumps(obj).encode('ascii'))
+        self.name = Task.hash_one(json.dumps(obj).encode('ascii'))
 
     @property
     def dependencies(self):
+        """
+        Empty list of other tasks we depend on.
+        """
         return []
 
     @property
@@ -326,13 +341,12 @@ class StepSet(EventNamespace):
                 )
             self.on(step.key)(step)
             def _task_maker(*args, **kwargs):
-               return Task(step, args, kwargs, **options)
+                return Task(step, args, kwargs, **options)
             return _task_maker
 
         if decorated:
             return _step_maker(*decorated)
-        else:
-            return _step_maker
+        return _step_maker
 
     def __call__(self, *decorated, **options):
         """
@@ -348,4 +362,3 @@ class NonIterableHandleError(TypeError):
     """
     Specific sub-exception raised when trying to iterate an atomic handle.
     """
-    pass

@@ -12,147 +12,95 @@ import galp.cli
 
 from galp.cli import IllegalRequestError
 from galp.protocol import Protocol
-from galp.zmq_async_protocol import ZmqAsyncProtocol
+from galp.zmq_async_transport import ZmqAsyncTransport
 
 class Broker:
     def __init__(self, terminate, client_endpoint, worker_endpoint):
         self.terminate = terminate
 
-        self.client = ClientProtocol(self, 'CL', client_endpoint, zmq.ROUTER, bind=True)
-        self.worker = WorkerProtocol(self, 'WK', worker_endpoint, zmq.ROUTER, bind=True)
+        # pylint: disable=no-member # False positive
+        self.client_proto = BrokerProtocol(self, 'CL')
+        self.client_transport = ZmqAsyncTransport(
+            self.client_proto,
+            client_endpoint, zmq.ROUTER, bind=True)
 
-        self.tasks_push = ZmqAsyncProtocol('TQ', 'inproc://tasks', zmq.PUSH, bind=True)
-        self.tasks_pull = ForwardProtocol(self, 'FW', 'inproc://tasks', zmq.PULL)
+        self.worker_proto = WorkerProtocol(self, 'WK')
+        self.worker_transport = ZmqAsyncTransport(
+            self.worker_proto,
+            worker_endpoint, zmq.ROUTER, bind=True)
 
-        self.workers = asyncio.Queue()
-
-        # Internal routing id indexed by self-identifiers
-        self.route_from_peer = {}
-        # Current task from internal routing id
-        self.task_from_route = {}
-
-    async def listen_clients(self):
+    async def listen_forward_loop(self, source_transport, dest_transport):
         """Client-side message processing loop of the broker"""
 
-        terminate = False
-        logging.info("Broker listening for clients on %s", self.client.endpoint)
+        proto_name = source_transport.proto.name
+        logging.info("Broker listening for %s on %s", proto_name,
+            source_transport.endpoint
+            )
 
-        while not terminate:
-            # Receive message
-            msg = await self.client.socket.recv_multipart()
-            # Parse it and handle broker-side actions
-            try:
-                terminate = await self.client.on_message(msg)
-            except IllegalRequestError as err:
-                logging.error('Bad client request: %s', err.reason)
-                await self.client.send_illegal(err.route)
-
-        self.terminate.set()
-
-    async def listen_workers(self):
-        """Worker-side message processing loop of the broker"""
-
-        terminate = False
-        logging.info("Broker listening for workers on %s", self.worker.endpoint)
-
-        while not terminate:
-            # Reveive message
-            msg = await self.worker.socket.recv_multipart()
-            # Parse it and handle broker-side actions
-            try:
-                terminate = await self.worker.on_message(msg)
-            except IllegalRequestError as err:
-                logging.error('Bad worker request: %s', err.reason)
-                await self.worker.send_illegal(err.route)
-
-        self.terminate.set()
-
-    async def process_tasks(self):
-        """
-        This event loop needs to be cancelled.
-        """
-        logging.debug('Starting to process task queue')
         while True:
-            await self.tasks_pull.process_one()
+            try:
+                replies = await source_transport.recv_message()
+            except IllegalRequestError as err:
+                logging.error('Bad %s request: %s', proto_name, err.reason)
+                await source_transport.send_message(
+                    source_transport.proto.illegal(err.route)
+                    )
+            await dest_transport.send_messages(replies)
 
-class BrokerProtocol(ZmqAsyncProtocol):
+        # FIXME: termination condition ?
+        self.terminate.set()
+
+class BrokerProtocol(Protocol):
     """
     Common behavior for both sides
     """
-    def __init__(self, broker, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.broker = broker
-
     def on_invalid(self, route, reason):
         raise IllegalRequestError(route, reason)
 
-    async def on_unhandled(self, verb):
+    def on_unhandled(self, verb):
         """
         For the broker, many messages will just be forwarded and no handler is
         needed.
         """
         logging.debug("No broker action for %s", verb.decode('ascii'))
 
-class ClientProtocol(BrokerProtocol):
-    """
-    Handler for messages received from clients.
-    """
-    async def on_verb(self, route, msg_body):
-        """
-        Args:
-            route: a tuple (incoming_route, forwarding route)
-            msg_body: all the message parts starting with the galp verb
-        """
-        # Call upper protocol callbacks
-        ret = await super().on_verb(route, msg_body)
-
-        # Forward to worker if needed
-        incoming_route, forward_route = route
-        if forward_route:
-            logging.debug('Forwarding %s', msg_body[:1])
-            await self.broker.worker.send_message_to(
-                route,
-                msg_body)
-        else:
-            logging.debug('Queuing %s', msg_body[:1])
-            await self.broker.tasks_push.send_message_to(
-                route, msg_body
-                )
-        return ret
-
 class WorkerProtocol(BrokerProtocol):
     """
     Handler for messages received from workers.
     """
-    async def on_verb(self, route, msg_body):
-        ret = await super().on_verb(route, msg_body)
+    def __init__(self, name, router):
+        super().__init__(name, router)
 
-        # Forward to client if needed
-        incoming_route, forward_route = route
-        if forward_route:
-            logging.debug('Forwarding %s', msg_body[:1])
-            await self.broker.client.send_message_to(
-                route, msg_body)
-        else:
-            logging.debug('Not forwarding %s', msg_body[:1])
+        # List of idle workers
+        self.idle_workers = []
 
-        return ret
+        # Internal routing id indexed by self-identifiers
+        self.route_from_peer = {}
+        # Current task from internal routing id
+        self.task_from_route = {}
 
-    async def on_ready(self, route, peer):
+
+    def on_ready(self, route, peer):
         incoming, forward = route
         assert not forward
-        self.broker.route_from_peer[peer] = incoming
-        await self.broker.workers.put(incoming)
 
-    async def mark_worker_available(self, route):
-        worker_route, client_route = route
+        self.route_from_peer[peer] = incoming
+        self.idle_workers.append(incoming)
+
+    def mark_worker_available(self, worker_route):
+        """
+        Add a worker to the idle list after clearing the current task
+        information
+        """
+        # route need to be converted from list to tuple to be used as key
         key = tuple(worker_route)
-        if key in self.broker.task_from_route:
-            del self.broker.task_from_route[key]
-        await self.broker.workers.put(worker_route)
+        if key in self.task_from_route:
+            del self.task_from_route[key]
+        self.idle_workers.append(worker_route)
 
-    async def on_done(self, route, name):
-        await self.mark_worker_available(route)
+    def on_done(self, route, name):
+        worker_route, _ = route
+        self.mark_worker_available(worker_route)
 
     async def on_failed(self, route, name):
         await self.mark_worker_available(route)

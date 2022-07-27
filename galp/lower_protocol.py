@@ -5,8 +5,64 @@ counters.
 
 import logging
 
-class LowerProtocol:
-    def __init__(self, name=None, router=False, capacity=1000):
+class BaseProtocol:
+    """
+    Abstract class defining the interface expected by the transport
+    """
+    def write_message(self, msg):
+        """
+        Takes an application-specific message description, and returns the
+        sequence of bytes to send.
+        """
+        raise NotImplementedError
+
+    def on_message(self, msg_parts):
+        """
+        Handler called when a message is received.
+
+        Args:
+            msg_parts: a list of message parts, each part being a bytes object
+        Returns:
+            A collection of high level message objects as accepted by write_message to
+            be sent. Can also be None, treated as an empty list.
+        """
+        raise NotImplementedError
+
+class BaseSplitProtocol(BaseProtocol):
+    """
+    Abstract class defining how a protocol is split into an Upper and LowerPart
+    """
+    def on_verb(self, route, msg_body):
+        """
+        High-level message handler.
+
+        Args:
+            route: a tuple (incoming_route, forwarding route)
+            msg_body: all the message parts starting with the galp verb
+
+        Returns:
+            A tuple (terminate, replies), see on_message. For convenience, any
+            expression that evalutes to False, including None, is expanded as
+            (False, []), meaning "Nothing to reply, please proceed".
+        """
+        raise NotImplementedError
+
+    def on_invalid(self, route, reason):
+        """
+        Callback for malformed messages that still contained a well-formed
+        route.
+        """
+        raise NotImplementedError
+
+class LowerProtocol(BaseSplitProtocol):
+    """
+    Lower half of a galp protocol handler.
+
+    Handles routing and co, exposes only the pre-split message to the upper
+    protocol.
+    """
+
+    def __init__(self, name, router, capacity=1000):
         """
         Args:
             name: short string to include in log messages.
@@ -17,7 +73,7 @@ class LowerProtocol:
                 the peer.
         """
         self.proto_name = name
-        self.router=router
+        self.router = router
 
         # Internal message counters
         self.capacity = capacity
@@ -28,44 +84,20 @@ class LowerProtocol:
         ## Index of the first message that we want the peer to block
         self._next_peer_block_idx = self.capacity
 
-        # Internal constants
-        self._counter_size = 4
-        self._counter_endianness = 'big'
+    # Internal constants
+    _counter_size = 4
+    _counter_endianness = 'big'
 
-    def on_ping(self, route):
-        pass
-
-    # Callbacks
-    # =========
-
-    def send_message(self, msg):
-        """Callback method to send a message just built.
-
-        This is the only callback that is required to be implemented.
-
-        Args:
-            msg: the fully assembled message to pass to the transport.
-        """
-        raise NotImplementedError("You must override the send_message method "
-            "when subclassing a Protocol object.")
-
-    def on_verb(self, route, msg_body):
-        """
-        Args:
-            route: a tuple (incoming_route, forwarding route)
-            msg_body: all the message parts starting with the galp verb
-        """
-        logging.warning("No upper protocol callback.")
 
     # Main public methods
     # ===================
 
-    def on_message(self, msg):
+    def on_message(self, msg_parts):
         """
         Parses the lower part of a GALP message,
         then calls the upper protocol with the parsed message.
         """
-        msg_body, counters, route = self._parse_lower(msg)
+        msg_body, counters, route = self._parse_lower(msg_parts)
 
         sent, block = counters
         self._next_block_idx = block
@@ -87,15 +119,13 @@ class LowerProtocol:
         # an empty verb.
         if msg_body:
             return self.on_verb(route, msg_body)
-        else:
-            return self.on_ping(route)
+        return None
 
-    def send_message_to(self, route, msg_body):
-        """Callback method to send a message just built.
-
-        Wrapper around send_message that concats route and message.
+    def write_message(self, msg):
         """
-
+        Concats route and message.
+        """
+        route, msg_body = msg
         incoming_route, forward_route = route
         if not forward_route:
             # Assuming we want to reply
@@ -113,19 +143,19 @@ class LowerProtocol:
 
         # Note: this part is synchronous, so we can never build two messages
         # with the same index
-        msg = self._build_message(route_parts, msg_body)
+        msg_parts = self._build_message(route_parts, msg_body)
         self._next_send_idx += 1
 
         # Sending is not. So on the other hand a message with a given index
         # could never be actually sent, logically this is the same as dropped.
-        return self.send_message(msg)
+        return msg_parts
 
     def ping(self, route):
         """
         Send a ping.
         """
         # Really just an empty message
-        return self.send_message_to(route, [])
+        return self.write_message((route, []))
 
     def default_route(self):
         """
@@ -138,6 +168,13 @@ class LowerProtocol:
 
     # Internal parsing utilities
     # ==========================
+
+    def _validate(self, condition, route, reason='Unknown error'):
+        """
+        Calls invalid message callback
+        """
+        if not condition:
+            self.on_invalid(route, reason)
 
     def _parse_lower(self, msg):
         """
@@ -154,17 +191,17 @@ class LowerProtocol:
         route = self._split_route(route_parts)
 
         # Discard empty frame
-        self.validate(msg and not msg[0], route, 'Missing empty delimiter frame')
+        self._validate(msg and not msg[0], route, 'Missing empty delimiter frame')
         msg = msg[1:]
 
         # Counters
-        self.validate(len(msg) >= 2, route, 'Missing message counters')
+        self._validate(len(msg) >= 2, route, 'Missing message counters')
         b_sent = msg[0]
         b_block = msg[1]
         msg = msg[2:]
 
-        self.validate(len(b_sent) == self._counter_size, 'Bad send counter size')
-        self.validate(len(b_block) == self._counter_size, 'Bad block counter size')
+        self._validate(len(b_sent) == self._counter_size, 'Bad send counter size')
+        self._validate(len(b_block) == self._counter_size, 'Bad block counter size')
         sent = int.from_bytes(b_sent, self._counter_endianness)
         block = int.from_bytes(b_block, self._counter_endianness)
 
@@ -193,14 +230,29 @@ class LowerProtocol:
 
     # Logging utils
     def _log_str(self, route, msg_body, send, block):
-        msg_str = '%s[%s] %s' % (
-            self.proto_name +" " if self.proto_name else "",
-            route[0][0].hex() if route[0] else "",
-            msg_body[0].decode('ascii') if msg_body else 'PING'
+        msg_str = (
+            f"{self.proto_name +' ' if self.proto_name else ''}"
+            f"[{route[0][0].hex() if route[0] else ''}]"
+            f" {msg_body[0].decode('ascii') if msg_body else 'PING'}"
             )
-        meta_log_str = "hops %d | last sent %d | next block %d" % (
-            len(route[0] + route[1]), send, block
+        meta_log_str = (
+            f"hops {len(route[0] + route[1])}"
+            f" | last sent {send}"
+            f"| next block {block}"
             )
 
         return msg_str, meta_log_str
 
+    def on_verb(self, route, msg_body):
+        """
+        Default action, simply log the message
+        """
+        logging.info("No upper-level handler for verb %s", msg_body[:1])
+
+    def on_invalid(self, route, reason):
+        """
+        Default action, simply log the error
+        """
+        logging.error(
+            "Received malformed msg (%s), sent from: %s",
+            reason, route)
