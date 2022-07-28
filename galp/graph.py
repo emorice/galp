@@ -168,9 +168,11 @@ class Task:
             [ Task.san(kw) + b'=' + Task.san(n) for kw, n in sortedkw ]
             )
         payload += b')'
-        logging.debug("Hashed value is %s:", payload)
 
-        return Task.hash_one(payload)
+        hashed = Task.hash_one(payload)
+        logging.debug("HASH %s <- %s", hashed.hex(), payload.decode())
+
+        return hashed
 
     def __iter__(self):
         """

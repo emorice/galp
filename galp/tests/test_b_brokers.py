@@ -9,7 +9,10 @@ from galp.broker import WorkerProtocol
 
 @pytest.fixture
 def worker_protocol():
-    return WorkerProtocol()
+    """
+    The part of a Broker that filters messages passing through the worker side
+    """
+    return WorkerProtocol('WK', router=True)
 
 async def test_worker_protocol_drops_unaddressed(worker_protocol):
     """
@@ -21,7 +24,7 @@ async def test_worker_protocol_drops_unaddressed(worker_protocol):
     # The message should not even get parsed
     body = [b'DO', b'something']
 
-    with timeout(3):
-        out_messages = worker_protocol.write_message_to(route, body)
+    async with timeout(3):
+        out_messages = worker_protocol.write_message((route, body))
 
-    assert len(out_messages) == 0
+    assert out_messages is None

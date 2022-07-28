@@ -54,7 +54,7 @@ class Protocol(LowerProtocol):
         """A `GET` request was received for resource `name`"""
         return self.on_unhandled(b'GET')
 
-    def on_illegal(self, route):
+    def on_illegal(self, route, reason):
         """An `ILLEGAL` message was received"""
         return self.on_unhandled(b'ILLEGAL')
 
@@ -86,7 +86,6 @@ class Protocol(LowerProtocol):
         A message without an overriden callback was received.
         """
         logging.error("Unhandled GALP verb %s", verb.decode('ascii'))
-        return False # Not fatal by default
 
 
     # Send methods
@@ -98,7 +97,7 @@ class Protocol(LowerProtocol):
         Args:
             name: the name of the task
         """
-        return self.write_message((route, [b'DOING', name]))
+        return route, [b'DOING', name]
 
     def done(self, route, name):
         """
@@ -107,12 +106,12 @@ class Protocol(LowerProtocol):
         Args:
             name: the name of the task
         """
-        return self.write_message((route, [b'DONE', name]))
+        return route, [b'DONE', name]
 
     def exited(self, route, peer):
         """Signal the given peer has exited"""
         msg = [b'EXITED', peer]
-        return self.write_message((route, msg))
+        return route, msg
 
     def failed(self, route, name):
         """
@@ -121,7 +120,7 @@ class Protocol(LowerProtocol):
         Args:
             name: the name of the task
         """
-        return self.write_message((route, [b'FAILED', name]))
+        return route, [b'FAILED', name]
 
     def get(self, route, name):
         """
@@ -131,9 +130,9 @@ class Protocol(LowerProtocol):
             name: the name of the task
         """
         msg = [b'GET', name]
-        return self.write_message((route, msg))
+        return route, msg
 
-    def illegal(self, route):
+    def illegal(self, route, reason=""):
         """
         Builds an ILLEGAL message.
 
@@ -142,7 +141,7 @@ class Protocol(LowerProtocol):
         useful to trace back errors to the original sender but should not be
         needed in normal operation.
         """
-        return self.write_message((route, [b'ILLEGAL']))
+        return route, [b'ILLEGAL', reason.encode('ascii')]
 
     def not_found(self, route, name):
         """
@@ -151,7 +150,7 @@ class Protocol(LowerProtocol):
         Args:
             name: the name of the task
         """
-        return self.write_message((route, [b'NOTFOUND', name]))
+        return route, [b'NOTFOUND', name]
 
     def put(self, route, name, serialized):
         """
@@ -162,11 +161,12 @@ class Protocol(LowerProtocol):
             serialized: a triple of bytes objects (proto, data, children)
 
         """
+        proto, data, children = serialized
         if data is None:
             data = b''
         logging.debug('-> putting %d bytes', len(data))
-        msg_body = [b'PUT', name] + serialized
-        return self.write_message((route, msg_body))
+        msg_body = [b'PUT', name, proto, data, children]
+        return route, msg_body
 
     def ready(self, route, peer):
         """
@@ -177,7 +177,7 @@ class Protocol(LowerProtocol):
                it's unique to the sender, and is usually chosen in a transparent
                way.
         """
-        return self.write_message((route, [b'READY', peer]))
+        return route, [b'READY', peer]
 
     def submit_task(self, route, task):
         """Sends SUBMIT for given task object.
@@ -227,7 +227,7 @@ class Protocol(LowerProtocol):
         # Kw args
         for keyword, kwarg_name in task_dict['kwarg_names'].items():
             msg += [ keyword , kwarg_name ]
-        return self.write_message((route, msg))
+        return route, msg
 
     # Main logic methods
     # ==================
@@ -235,26 +235,14 @@ class Protocol(LowerProtocol):
         """Parse given message, calling callbacks as needed.
 
         Returns:
-            Whatever the final handler for this message returned. Most
-            importantly, if you use asynchronous handlers, this will return the
-            coroutine to await. Also note that by default it return 'False' for
-            unhandled messages (not None, since this would not allow to
-            distinguish a message that was not handled from one that was handled
-            without a return value).
-
-        Note: handler for invalid incoming messages does not follow this scheme,
-            as an invalid incoming message is never interpreted as a normal end of
-            communication. Raise exceptions from the handler if you want to
-            e.g. abort on invalid messages. On the other hand, returning a stop
-            condition on a 'ILLEGAL' message works, since it is a regular
-            message that signals a previous error.
+            Whatever the final handler for this message returned.
         """
         str_verb = str(msg_body[0], 'ascii')
         try:
             return self.handler(str_verb)(route, msg_body)
         except NoHandlerError:
             self._validate(False, route, f'No such verb "{str_verb}"')
-        return False
+        return None
 
 
     # Internal message handling methods
@@ -288,8 +276,12 @@ class Protocol(LowerProtocol):
 
     @event.on('ILLEGAL')
     def _on_illegal(self, route, msg):
-        self._validate(len(msg) == 1, route, 'ILLEGAL with args')
-        return self.on_illegal(route)
+        self._validate(len(msg) >= 2, route, 'ILLEGAL without a reason')
+        self._validate(len(msg) <= 2, route, 'ILLEGAL with too many reasons')
+
+        reason = msg[1]
+
+        return self.on_illegal(route, reason)
 
     @event.on('GET')
     def _on_get(self, route, msg):

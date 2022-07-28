@@ -9,14 +9,10 @@ within the job and easy to patch if the code has to be run somewhere else.
 """
 
 import os
-import sys
 import asyncio
-import signal
 import logging
 import argparse
 import resource
-import time
-import json
 import importlib
 
 import zmq
@@ -30,10 +26,12 @@ from galp.cli import IllegalRequestError
 from galp.config import ConfigError
 from galp.store import NetStore
 from galp.resolver import Resolver
-from galp.protocol import Protocol
+from galp.protocol import Protocol, ProtocolEndException
+from galp.zmq_async_transport import ZmqAsyncTransport
+
 from galp.profiler import Profiler
 from galp.serializer import Serializer, DeserializeError
-from galp.eventnamespace import EventNamespace, NoHandlerError
+from galp.eventnamespace import NoHandlerError
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -123,9 +121,63 @@ async def main(args):
 
     logging.info("Worker terminating normally")
 
-class Worker(Protocol):
+class WorkerProtocol(Protocol):
+    """
+    Handler for messages from the broker
+    """
+    def on_invalid(self, route, reason):
+        logging.error('Bad request: %s', reason)
+        return self.illegal(route, reason)
+
+    def on_illegal(self, route, reason):
+        logging.error('Received ILLEGAL, terminating: %s', reason)
+        raise ProtocolEndException('Incoming ILLEGAL')
+
+    def on_exit(self, route):
+        logging.info('Received EXIT, terminating')
+        raise ProtocolEndException('Incoming EXIT')
+
+    def on_get(self, route, name):
+        logging.debug('Received GET for %s', name.hex())
+        try:
+            serialized = self.cache.get_serial(name)
+            reply = self.put(route, name, serialized)
+            logging.info('GET: Cache HIT: %s', name.hex())
+            return reply
+        except KeyError:
+            logging.info('GET: Cache MISS: %s', name.hex())
+            return self.not_found(route, name)
+
+    def on_submit(self, route, name, step_key, vtags, arg_names, kwarg_names):
+        """Start processing the submission asynchronously.
+
+        This means returning immediately to the event loop, which allows
+        processing further messages needed for the task execution (resource
+        exchange, sub-tasks, ...).
+
+        This the only asynchronous handler, all others are semantically blocking.
+        """
+        del vtags
+
+        task = asyncio.create_task(
+            self.run_submission(route, name, step_key, arg_names, kwarg_names)
+            )
+
+        await self.galp_jobs.put(task)
+
+    def on_put(self, route, name, proto, data, children):
+        """
+        Put object in store, thus releasing tasks waiting for data.
+        """
+        await self.store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
+
+class Worker:
     def __init__(self, endpoint):
-        super().__init__()
+        self.protocol = WorkerProtocol('BK', router=False)
+        self.transport = ZmqAsyncTransport(
+            self.protocol,
+            endpoint, zmq.DEALER # pylint: disable=no-member
+            )
         self.endpoint = endpoint
         self.socket = None
 
@@ -166,89 +218,24 @@ class Worker(Protocol):
             task = await self.galp_jobs.get()
             route, name, ok = await task
             if ok:
-                await self.done(route, name)
+                reply = self.protocol.done(route, name)
             else:
-                await self.failed(route, name)
+                reply = self.protocol.failed(route, name)
+            await self.transport.send_message(reply)
 
     async def listen(self):
-        """Main message processing loop of the worker.
-
-        Only supports one socket at once for now."""
-        assert self.socket is None
-
-        ctx = zmq.asyncio.Context()
-        socket = ctx.socket(zmq.DEALER)
-        socket.connect(self.endpoint)
-
-        self.socket = socket
-
-        terminate = False
-        try:
-            await self.ready(self.default_route(), str(os.getpid()).encode('ascii'))
-            while not terminate:
-                msg = await socket.recv_multipart()
-                try:
-                    terminate = await self.on_message(msg)
-                except IllegalRequestError as err:
-                    logging.error('Bad request: %s', err.reason)
-                    await self.send_illegal(err.route)
-        finally:
-            socket.close(linger=1)
-            ctx.destroy()
-            self.socket = None
-
-        # Returning from a main task should stop the app
-        return
-
-
-    # Protocol handlers
-    # =================
-    async def send_message(self, msg):
-        await self.socket.send_multipart(msg)
-
-    def on_invalid(self, route, reason):
-        raise IllegalRequestError(route, reason)
-
-    async def on_illegal(self, route):
-        logging.error('Received ILLEGAL, terminating')
-        return True
-
-    async def on_exit(self, route):
-        logging.info('Received EXIT, terminating')
-        return True
-
-    async def on_get(self, route, name):
-        logging.debug('Received GET for %s', name.hex())
-        try:
-            proto, data, children = self.cache.get_serial(name)
-            await self.put(route, name, proto, data, children)
-            logging.info('GET: Cache HIT: %s', name.hex())
-        except KeyError:
-            logging.info('GET: Cache MISS: %s', name.hex())
-            await self.not_found(route, name)
-
-    async def on_submit(self, route, name, step_key, vtags, arg_names, kwarg_names):
-        """Start processing the submission asynchronously.
-
-        This means returning immediately to the event loop, which allows
-        processing further messages needed for the task execution (resource
-        exchange, sub-tasks, ...).
-
-        This the only asynchronous handler, all others are semantically blocking.
         """
-        del vtags
-
-        task = asyncio.create_task(
-            self.run_submission(route, name, step_key, arg_names, kwarg_names)
+        Main message processing loop of the worker.
+        """
+        ready = self.protocol.ready(
+            self.protocol.default_route(),
+            str(os.getpid()).encode('ascii')
             )
+        await self.transport.send_message(ready)
 
-        await self.galp_jobs.put(task)
+        await self.transport.listen_reply_loop()
 
-    async def on_put(self, route, name, proto, data, children):
-        """
-        Put object in store, thus releasing tasks waiting for data.
-        """
-        await self.store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
+
 
     # Task execution logic
     # ====================

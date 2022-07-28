@@ -3,11 +3,11 @@ Tests direct communication with a worker, with no broker or client involved.
 """
 
 import asyncio
-import dill
 import logging
 import signal
 import psutil
 import zmq
+import dill
 
 import pytest
 
@@ -72,12 +72,6 @@ def test_shutdown(worker_socket, fatal_order):
     # Note: we only close on normal termination, else we rely on the fixture
     # finalization to set the linger before closing.
     socket.close()
-
-def test_nothing():
-    """Do not assert anything, just check modules are importable and the
-    functionning of the harness itself"""
-    pass
-
 
 @pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
 def test_signals(worker_socket, sig):

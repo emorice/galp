@@ -7,7 +7,8 @@ import zmq
 
 from galp.tests.with_timeout import with_timeout
 
-from galp.zmq_async_protocol import ZmqAsyncProtocol
+from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.protocol import Protocol
 
 @with_timeout()
 async def test_counters():
@@ -17,33 +18,42 @@ async def test_counters():
     """
 
     endpoint = 'inproc://test'
-    socket_type = zmq.DEALER
+    socket_type = zmq.DEALER # pylint: disable=no-member
 
     queue_size = 10
 
-    peer_a = ZmqAsyncProtocol('A', endpoint, socket_type, bind=True)
-    peer_b = ZmqAsyncProtocol('B', endpoint, socket_type, capacity=queue_size)
+    peer_a = ZmqAsyncTransport(
+        Protocol('A', router=False),
+        endpoint, socket_type, bind=True)
+
+    peer_b = ZmqAsyncTransport(
+        Protocol('B', router=False, capacity=queue_size),
+        endpoint, socket_type)
 
     name = b'1234'
-    route = peer_a.default_route()
+    route = peer_a.protocol.default_route()
 
     i = 0
 
     # We need at least one message for B to tell A its capacity
 
-    await peer_b.ping(route)
-    await peer_a.process_one()
+    await peer_b.send_message(peer_b.protocol.ping(route))
+    await peer_a.recv_message()
 
-    while peer_a._next_send_idx < peer_a._next_block_idx and i <= queue_size + 100:
+    while (peer_a.protocol._next_send_idx < peer_a.protocol._next_block_idx
+        and i <= queue_size + 100):
         # In each iterations, send two messages from a for one from b
-        await peer_a.get(route, name)
-        await peer_b.process_one()
+        await peer_a.send_message(peer_a.protocol.get(route, name))
+        await peer_b.recv_message()
 
-        await peer_a.get(route, name)
+        await peer_a.send_message(peer_a.protocol.get(route, name))
         # We do not process this one, simulating b being slow
 
-        await peer_b.put(route, name, b'some_proto', b'some_data', b'\0')
-        await peer_a.process_one()
+        await peer_b.send_message(
+            peer_b.protocol.put(route, name,
+                (b'some_proto', b'some_data', b'\0'))
+            )
+        await peer_a.recv_message()
 
         i += 1
 

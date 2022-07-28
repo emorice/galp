@@ -11,7 +11,7 @@ import zmq
 import galp.cli
 
 from galp.cli import IllegalRequestError
-from galp.protocol import Protocol
+from galp.forward_protocol import ForwardProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 
 class Broker:
@@ -50,7 +50,19 @@ class Broker:
         # FIXME: termination condition ?
         self.terminate.set()
 
-class BrokerProtocol(Protocol):
+    async def listen_clients(self):
+        """Listen client-side, forward to workers"""
+        return await self.listen_forward_loop(
+            self.client_transport,
+            self.worker_transport)
+
+    async def listen_workers(self):
+        """Listen worker-side, forward to clients"""
+        return await self.listen_forward_loop(
+            self.worker_transport,
+            self.client_transport)
+
+class BrokerProtocol(ForwardProtocol):
     """
     Common behavior for both sides
     """
@@ -102,24 +114,24 @@ class WorkerProtocol(BrokerProtocol):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
-    async def on_failed(self, route, name):
-        await self.mark_worker_available(route)
+    def on_failed(self, route, name):
+        self.mark_worker_available(route)
 
-    async def on_put(self, route, name, proto, data, children):
-        await self.mark_worker_available(route)
+    def on_put(self, route, name, serialized):
+        self.mark_worker_available(route)
 
-    async def on_exited(self, route, peer):
+    def on_exited(self, route, peer):
         logging.error("Worker %s exited", peer)
 
-        route = self.broker.route_from_peer.get(peer)
+        route = self.route_from_peer.get(peer)
         if route is None:
             logging.error("Worker %s is unknown, ignoring exit", peer)
-            return
+            return None
 
-        task = self.broker.task_from_route.get(tuple(route))
+        task = self.task_from_route.get(tuple(route))
         if task is None:
             logging.error("Worker %s was not assigned a task, ignoring exit", peer)
-            return
+            return None
 
         task_name, client_route = task
         # Normally the other route part is the worker route, but here the
@@ -127,34 +139,37 @@ class WorkerProtocol(BrokerProtocol):
         # accidentally try to re-use it.
         incoming_route = []
 
-        await self.broker.client.failed((incoming_route, client_route), task_name)
+        return self.failed((incoming_route, client_route), task_name)
 
-class ForwardProtocol(BrokerProtocol):
-    """
-    To perform additional actions on messages about to be forwarded to a new worker
-    """
-    async def on_verb(self, task_route, task_body):
-        logging.debug('Task pending')
+    def write_message(self, msg):
+        route, msg_body = msg
+        incoming_route, forward_route = route
+        verb = msg_body[:1]
 
-        worker = await self.broker.workers.get()
-        logging.debug('Worker available, forwarding')
+        # If a forward route is already present, the message is addressed at one
+        # specific worker, forward as-is
+        if forward_route:
+            logging.debug('Forwarding %s', verb)
+            return super().write_message(msg)
 
-        client_route, empty = task_route
-        # At this point we should not already know who to forward to
-        assert not empty
+        # Else, it is addressed to any worker, we pick one if available
+        if self.idle_workers:
+            worker_route = self.idle_workers.pop()
+            logging.debug('Worker available, forwarding %s', verb)
 
-        # We fill in the forwarding route
-        new_route = (client_route, worker)
+            # We save the up to two components of the message body for forensics
+            # if the worker dies, along with the client route
+            self.task_from_route[tuple(worker_route)] = (msg_body[:2], incoming_route)
 
-        # We pass the full route to upper
-        await super().on_verb(new_route, task_body)
+            # We fill in the forwarding route
+            new_route = (incoming_route, worker_route)
 
-        await self.broker.worker.send_message_to(new_route, task_body)
+            # We build the message and return it to transport
+            return super().write_message((new_route, msg_body))
 
-    async def on_submit(self, route, name, step_name, vtags, arg_names, kwarg_names):
-        # client = incoming, worker = forward
-        client_route, worker_route = route
-        self.broker.task_from_route[tuple(worker_route)] = (name, client_route)
+        # Finally, with no route and no worker available, we drop the message
+        logging.info('Dropping %s', verb)
+        return None
 
 async def main(args):
     """Entry point for the broker program
@@ -177,7 +192,6 @@ async def main(args):
     for coro in [
         broker.listen_clients(),
         broker.listen_workers(),
-        broker.process_tasks()
         ]:
         tasks.append(asyncio.create_task(coro))
 
@@ -202,7 +216,7 @@ def add_parser_arguments(parser):
     galp.cli.add_parser_arguments(parser)
 
 if __name__ == '__main__':
-    """Convenience hook to start a broker from CLI""" 
-    parser = argparse.ArgumentParser()
-    add_parser_arguments(parser)
-    asyncio.run(main(parser.parse_args()))
+    # Convenience hook to start a broker from CLI
+    _parser = argparse.ArgumentParser()
+    add_parser_arguments(_parser)
+    asyncio.run(main(_parser.parse_args()))

@@ -12,7 +12,7 @@ class BaseProtocol:
     def write_message(self, msg):
         """
         Takes an application-specific message description, and returns the
-        sequence of bytes to send.
+        sequence of bytes to send. Return None to suppress the message instead.
         """
         raise NotImplementedError
 
@@ -23,8 +23,8 @@ class BaseProtocol:
         Args:
             msg_parts: a list of message parts, each part being a bytes object
         Returns:
-            A collection of high level message objects as accepted by write_message to
-            be sent. Can also be None, treated as an empty list.
+            A high level message object as accepted by write_message to
+            be sent back, or None.
         """
         raise NotImplementedError
 
@@ -41,9 +41,7 @@ class BaseSplitProtocol(BaseProtocol):
             msg_body: all the message parts starting with the galp verb
 
         Returns:
-            A tuple (terminate, replies), see on_message. For convenience, any
-            expression that evalutes to False, including None, is expanded as
-            (False, []), meaning "Nothing to reply, please proceed".
+            A reply, see on_message.
         """
         raise NotImplementedError
 
@@ -155,7 +153,7 @@ class LowerProtocol(BaseSplitProtocol):
         Send a ping.
         """
         # Really just an empty message
-        return self.write_message((route, []))
+        return route, []
 
     def default_route(self):
         """
@@ -238,7 +236,7 @@ class LowerProtocol(BaseSplitProtocol):
         meta_log_str = (
             f"hops {len(route[0] + route[1])}"
             f" | last sent {send}"
-            f"| next block {block}"
+            f" | next block {block}"
             )
 
         return msg_str, meta_log_str

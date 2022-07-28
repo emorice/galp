@@ -64,7 +64,7 @@ class Client:
     def __init__(self, endpoint):
 
         self.proto = BrokerProtocol(
-            'BK',
+            'BK', router=False,
             schedule=self.schedule # callback to add tasks to the scheduling queue
             )
 
@@ -88,7 +88,8 @@ class Client:
         while True:
             name = await self._scheduled.get()
             next_msg = self.proto.write_next(name)
-            await self.transport.send_message(next_msg)
+            if next_msg is not None:
+                await self.transport.send_message(next_msg)
 
     def schedule(self, task_name):
         """
@@ -101,6 +102,7 @@ class Client:
         synchronous.
         """
 
+        logging.debug("Scheduling %s", task_name.hex())
         self._scheduled.put_nowait(task_name)
 
     async def collect(self, *tasks, return_exceptions=False, timeout=None):
@@ -134,7 +136,7 @@ class Client:
         # be relied on
         self.proto.add_finals(tasks)
 
-        scheduler = asyncio.create_task(self.process_scheduled)
+        scheduler = asyncio.create_task(self.process_scheduled())
 
         await self.transport.listen_reply_loop()
 
@@ -211,32 +213,31 @@ class BrokerProtocol(Protocol):
             cset.add(task)
 
             # Check if already added by a previous call to `add`
-            task_is_new = task not in self._details
+            if task in self._details:
+                continue
 
-            # If already added, the deps cannot have changed
-            if task_is_new:
-                # Add the links
-                for dep_details in task_details.dependencies:
-                    dep = dep_details.name
-                    self._dependencies[task].add(dep)
-                    self._dependents[dep].add(task)
-                    if dep not in cset:
-                        oset.add(dep_details)
+            # Add the links
+            for dep_details in task_details.dependencies:
+                dep = dep_details.name
+                self._dependencies[task].add(dep)
+                self._dependents[dep].add(task)
+                if dep not in cset:
+                    oset.add(dep_details)
 
-                # Check unseen input tasks
-                # Note: True if no dependencies at all
-                if all(
-                        self._status[dep] >= TaskStatus.COMPLETED
-                        for dep in self._dependencies[task]
-                    ):
-                    new_top_level.add(task)
-            else:
-                # Save details, and mark as seen
-                self._details[task] = task_details
+            # Save details, and mark as seen
+            self._details[task] = task_details
+
+            # Check unseen input tasks
+            # Note: True if no dependencies at all
+            if all(
+                    self._status[dep] >= TaskStatus.COMPLETED
+                    for dep in self._dependencies[task]
+                ):
+                new_top_level.add(task)
 
         return new_top_level
 
-    async def add_finals(self, tasks):
+    def add_finals(self, tasks):
         """
         Add tasks to the set of finals (= to be collected) tasks, and schedule
         for collection any new one that was already done.
@@ -250,7 +251,7 @@ class BrokerProtocol(Protocol):
                 ):
                 logging.debug("Scheduling extra GET for upgraded %s",
                     task_details.name.hex())
-                await self.schedule(task_details.name)
+                self.schedule(task_details.name)
             self._finals.add(task_details.name)
 
     def write_next(self, name):
@@ -264,7 +265,7 @@ class BrokerProtocol(Protocol):
         if name in self._finals:
             return self.get(self.route, name)
 
-        return []
+        return None
 
     # Custom protocol sender
     # ======================
@@ -272,6 +273,8 @@ class BrokerProtocol(Protocol):
 
     def submit_task_by_name(self, task_name):
         """Loads details, handles hereis and subtasks, and manage stats"""
+        if task_name not in self._details:
+            raise ValueError(f"Task {task_name.hex()} is unknown")
         details = self._details[task_name]
 
         self._status[task_name] = TaskStatus.SUBMITTED
