@@ -22,15 +22,14 @@ import toml
 import galp.steps
 import galp.cache
 import galp.cli
-from galp.cli import IllegalRequestError
 from galp.config import ConfigError
-from galp.store import NetStore
-from galp.resolver import Resolver
-from galp.protocol import Protocol, ProtocolEndException
+from galp.lower_protocol import MessageList
+from galp.protocol import ProtocolEndException, IllegalRequestError
+from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 
 from galp.profiler import Profiler
-from galp.serializer import Serializer, DeserializeError
+from galp.serializer import Serializer
 from galp.eventnamespace import NoHandlerError
 
 class NonFatalTaskError(RuntimeError):
@@ -38,21 +37,24 @@ class NonFatalTaskError(RuntimeError):
     An error has occured when running a step, but the worker should keep
     running.
     """
-    pass
 
 def load_steps(plugin_names):
+    """
+    Attempts to import the given modules, and add their `export` attribute to
+    the list of currently known steps
+    """
     step_dir = galp.steps.export
     for name in plugin_names:
         try:
             plugin = importlib.import_module(name)
             step_dir += plugin.export
             logging.info('Loaded plug-in %s', name)
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
             logging.error('No such plug-in: %s', name)
-            raise ConfigError(('No such plugin', name))
-        except AttributeError:
+            raise ConfigError(('No such plugin', name)) from exc
+        except AttributeError as exc:
             logging.error('Plug-in %s do not expose "export"', name)
-            raise ConfigError(('Bad plugin', name))
+            raise ConfigError(('Bad plugin', name)) from exc
     return step_dir
 
 def limit_resources(args):
@@ -78,7 +80,7 @@ def limit_resources(args):
 
         logging.info('Setting virtual memory limit to %d bytes', size)
 
-        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         resource.setrlimit(resource.RLIMIT_AS, (size, hard))
 
 async def main(args):
@@ -95,24 +97,22 @@ async def main(args):
     config = {}
     if args.config:
         logging.info("Loading config file %s", args.config)
-        with open(args.config) as fd:
-            config = toml.load(fd)
+        # TOML is utf-8 by spec
+        with open(args.config, encoding='utf-8') as fstream:
+            config = toml.load(fstream)
 
     limit_resources(args)
 
     step_dir = load_steps(config['steps'] if 'steps' in config else [])
 
     logging.info("Worker connecting to %s", args.endpoint)
-    logging.info("Caching to %s", args.cachedir)
+    logging.info("Storing in %s", args.storedir)
 
-    tasks = []
-
-    worker = Worker(args.endpoint)
-
-    worker.cache = galp.cache.CacheStack(args.cachedir, Serializer())
-    worker.step_dir = step_dir
-
-    worker.profiler = Profiler(config.get('profile'))
+    worker = Worker(
+        args.endpoint, args.storedir,
+        step_dir,
+        Profiler(config.get('profile'))
+        )
 
     await galp.cli.wait(worker.run())
 
@@ -121,13 +121,18 @@ async def main(args):
 
     logging.info("Worker terminating normally")
 
-class WorkerProtocol(Protocol):
+class WorkerProtocol(ReplyProtocol):
     """
     Handler for messages from the broker
     """
+    def __init__(self, worker, store_dir, name, router):
+        super().__init__(name, router)
+        self.worker = worker
+        self.store = galp.cache.CacheStack(store_dir, Serializer())
+
     def on_invalid(self, route, reason):
         logging.error('Bad request: %s', reason)
-        return self.illegal(route, reason)
+        return super().on_invalid(route, reason)
 
     def on_illegal(self, route, reason):
         logging.error('Received ILLEGAL, terminating: %s', reason)
@@ -140,7 +145,7 @@ class WorkerProtocol(Protocol):
     def on_get(self, route, name):
         logging.debug('Received GET for %s', name.hex())
         try:
-            serialized = self.cache.get_serial(name)
+            serialized = self.store.get_serial(name)
             reply = self.put(route, name, serialized)
             logging.info('GET: Cache HIT: %s', name.hex())
             return reply
@@ -148,7 +153,7 @@ class WorkerProtocol(Protocol):
             logging.info('GET: Cache MISS: %s', name.hex())
             return self.not_found(route, name)
 
-    def on_submit(self, route, name, step_key, vtags, arg_names, kwarg_names):
+    def on_submit(self, route, name, task_dict):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -157,42 +162,56 @@ class WorkerProtocol(Protocol):
 
         This the only asynchronous handler, all others are semantically blocking.
         """
-        del vtags
+        logging.info('SUBMIT: %s', task_dict['step_name'])
 
-        task = asyncio.create_task(
-            self.run_submission(route, name, step_key, arg_names, kwarg_names)
-            )
+        # Store hook. For now we just check the local cache, later we'll have a
+        # central locking mechanism
+        # FIXME: that's probably not correct for multi-output tasks !
+        if self.store.contains(name):
+            logging.info('SUBMIT: Cache HIT: %s', name.hex())
+            return self.done(route, name)
 
-        await self.galp_jobs.put(task)
+        # If not in cache, resolve metadata and run the task
+        replies = MessageList([self.doing(route, name)])
 
-    def on_put(self, route, name, proto, data, children):
+        # If any resource is missing, send GETs back to the sender of the
+        # SUBMIT.
+        for dep_name in [
+            *task_dict['arg_names'],
+            *task_dict['kwarg_names'].values()
+            ]:
+            if not self.store.contains(dep_name):
+                replies.append(self.get(route, dep_name))
+
+        self.worker.schedule_task(route, name, task_dict)
+
+        return replies
+
+    def on_put(self, route, name, serialized):
         """
         Put object in store, thus releasing tasks waiting for data.
         """
-        await self.store.put_serial(name, proto, data, children.to_bytes(1, 'big'))
+        self.store.put_serial(name, serialized)
 
 class Worker:
-    def __init__(self, endpoint):
-        self.protocol = WorkerProtocol('BK', router=False)
+    """
+    Class representing an an async worker, wrapping transport, protocol and task
+    execution logic.
+    """
+    def __init__(self, endpoint, storedir, step_dir, profiler):
+        self.protocol = WorkerProtocol(
+            self, storedir,
+            'BK', router=False)
         self.transport = ZmqAsyncTransport(
             self.protocol,
             endpoint, zmq.DEALER # pylint: disable=no-member
             )
         self.endpoint = endpoint
-        self.socket = None
+        self.step_dir = step_dir
+        self.profiler = profiler
 
         # Submitted jobs
         self.galp_jobs = asyncio.Queue()
-
-    @property
-    def cache(self):
-        return self._cache
-
-    @cache.setter
-    def cache(self, cache):
-        self._cache = cache
-        self.resolver = Resolver()
-        self.store = NetStore(cache, self, self.resolver)
 
     def run(self):
         """
@@ -207,6 +226,9 @@ class Worker:
         return tasks
 
     async def log_heartbeat(self):
+        """
+        Simple loop that periodically logs a message
+        """
         i = 0
         while True:
             logging.info("Worker heartbeat %d", i)
@@ -214,14 +236,27 @@ class Worker:
             i += 1
 
     async def monitor_jobs(self):
+        """
+        Loops that waits for tasks to finsish to send back done/failed messages
+        """
         while True:
             task = await self.galp_jobs.get()
-            route, name, ok = await task
-            if ok:
+            route, name, success = await task
+            if success:
                 reply = self.protocol.done(route, name)
             else:
                 reply = self.protocol.failed(route, name)
             await self.transport.send_message(reply)
+
+    def schedule_task(self, client_route, name, task_dict):
+        """
+        Callback to schedule a task for execution
+        """
+        task = asyncio.create_task(
+            self.run_submission(client_route, name, task_dict)
+            )
+
+        self.galp_jobs.put_nowait(task)
 
     async def listen(self):
         """
@@ -240,92 +275,73 @@ class Worker:
     # Task execution logic
     # ====================
 
-    async def load(self, name):
-        """Get native resource object from any available source
-
-        Synchronous, either returns the object or raises.
+    def _get_native(self, name):
         """
+        Get native resource object from any available source
+        """
+        return self.protocol.store.get_native(name)
 
     async def resolve(self, step, name, arg_names, kwarg_names):
         """
         Recover handes from a step specification, the task and argument names.
         """
-    async def run_submission(self, route, name, step_key, arg_names, kwarg_names):
+    async def run_submission(self, route, name, task_dict):
         """
         Actually run the task if not cached.
         """
+        step_name = task_dict['step_name']
+        arg_names = task_dict['arg_names']
+        kwarg_names = task_dict['kwarg_names']
+
         try:
-
-            logging.info('SUBMIT: %s', step_key)
-
-            # Cache hook. For now we just check the local cache, later we'll have a
-            # central locking mechanism (replacing cache with store is not enough
-            # for that)
-            # FIXME: that's probably not correct for multi-output tasks !
-            if self.cache.contains(name):
-                logging.info('SUBMIT: Cache HIT: %s', name.hex())
-                return route, name, True
-
-            # If not in cache, resolve metadata and run the task
-            await self.doing(route, name)
             try:
-                step = self.step_dir.get(step_key)
-            except NoHandlerError:
-                logging.exception('No such step known to worker: %s', step_key.decode('ascii'))
-                raise NonFatalTaskError
+                step = self.step_dir.get(step_name)
+            except NoHandlerError as exc:
+                logging.exception('No such step known to worker: %s', step_name.decode('ascii'))
+                raise NonFatalTaskError from exc
 
-            handle, arg_handles, kwarg_handles = step.make_handles(name, arg_names, kwarg_names)
+            handle, _arg_handles, _kwarg_handles = step.make_handles(name, arg_names, kwarg_names)
 
-            # Load args from store, i.e. either memory, disk, or network
+            # Load args from store, usually from disk.
             try:
-                keywords = kwarg_handles.keys()
-                kwhandles = [ kwarg_handles[kw] for kw in keywords ]
-
-                # Register all resources named as routable to the sender. This means
-                # that resources not available to the worker will be assumed to be
-                # available on the original client.
-                for in_handle in (arg_handles + kwhandles):
-                    self.resolver.set_route(in_handle.name, route)
-
-                try:
-                    all_args = await asyncio.gather(*[
-                        self.store.get_native(in_handle) for in_handle in (arg_handles + kwhandles)
-                        ])
-                except DeserializeError:
-                    raise NonFatalTaskError
-
-                args = all_args[:len(arg_handles)]
+                args = map(self._get_native, arg_names)
                 kwargs = {
-                    kw.decode('ascii'): v
-                    for kw, v in zip(keywords, all_args[len(arg_handles):])
+                    kw.decode('ascii'): self._get_native(kwarg_name)
+                    for kw, kwarg_name in kwarg_names.items()
                     }
-            except KeyError:
+            except KeyError as exc:
                 # Could not find argument
-                raise IllegalRequestError
-            except UnicodeDecodeError:
+                raise IllegalRequestError(route,
+                    f'Missing dependency: {exc.args[0]}'
+                    f' for step {name} ({step_name})'
+                    ) from exc
+            except UnicodeDecodeError as exc:
                 # Either you tried to use python's non-ascii keywords feature,
                 # or more likely you messed up the encoding on the caller side.
-                raise IllegalRequestError
-
+                raise IllegalRequestError(route,
+                    f'Cannot decode keyword {exc.object}'
+                    f' for step {name} ({step_name})'
+                    ) from exc
             # This may block for a long time, by design
-            # the **kwargs syntax works even for invalid identifiers it seems ?
             try:
                 result = self.profiler.wrap(name, step)(*args, **kwargs)
-            except Exception as e:
-                raise NonFatalTaskError
+            except Exception as exc:
+                raise NonFatalTaskError from exc
 
-            # Caching
-            self.cache.put_native(handle, result)
+            # Store the result back
+            self.protocol.store.put_native(handle, result)
 
             return route, name, True
 
         except NonFatalTaskError:
-            logging.exception('Submitted task step failed: %s', step_key.decode('ascii'))
+            logging.exception('Submitted task step failed: %s', step_name.decode('ascii'))
             return route, name, False
-        except Exception as e:
+        except Exception as exc:
+            # Ensures we log as soon as the error happens. The exception may be
+            # re-logged afterwards.
             logging.exception('An unhandled error has occured within a step-'
                 'running asynchronous task. This signals a bug in GALP itself.')
-            return route, name, False
+            raise
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""
@@ -334,7 +350,7 @@ def add_parser_arguments(parser):
         help="Endpoint to bind to, in ZMQ format, e.g. tcp://127.0.0.2:12345 "
             "or ipc://path/to/socket ; see also man zmq_bind."
         )
-    parser.add_argument('cachedir')
+    parser.add_argument('storedir')
     parser.add_argument('-c', '--config',
         help='Path to optional TOML configuration file')
     parser.add_argument('--vm',
@@ -343,7 +359,7 @@ def add_parser_arguments(parser):
     galp.cli.add_parser_arguments(parser)
 
 if __name__ == '__main__':
-    """Convenience hook to start a worker from CLI"""
-    parser = argparse.ArgumentParser()
-    add_parser_arguments(parser)
-    asyncio.run(main(parser.parse_args()))
+    # Convenience hook to start a worker from CLI
+    _parser = argparse.ArgumentParser()
+    add_parser_arguments(_parser)
+    asyncio.run(main(_parser.parse_args()))

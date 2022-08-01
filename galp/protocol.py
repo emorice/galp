@@ -5,16 +5,26 @@ GALP protocol implementation
 import logging
 
 import galp.graph
-from galp.cli import IllegalRequestError
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
+# Errors and exceptions
+# =====================
 class ProtocolEndException(Exception):
     """
     Exception thrown by a handler to signal that no more messages are expected
     and the transport should be closed
     """
+class IllegalRequestError(Exception):
+    """Base class for all badly formed requests, triggers sending an ILLEGAL
+    message back"""
+    def __init__(self, route, reason):
+        super().__init__()
+        self.route = route
+        self.reason = reason
 
+# High-level protocol
+# ===================
 class Protocol(LowerProtocol):
     """
     Helper class gathering methods solely concerned with parsing and building
@@ -58,12 +68,6 @@ class Protocol(LowerProtocol):
         """An `ILLEGAL` message was received"""
         return self.on_unhandled(b'ILLEGAL')
 
-    def on_invalid(self, route, reason):
-        """
-        An invalid message was received.
-        """
-        logging.warning("Invalid message but no handler: %s", reason)
-
     def on_not_found(self, route, name):
         """A `NOTFOUND` message was received"""
         return self.on_unhandled(b'NOTFOUND')
@@ -87,6 +91,13 @@ class Protocol(LowerProtocol):
         """
         logging.error("Unhandled GALP verb %s", verb.decode('ascii'))
 
+    # Default handlers
+    # ================
+    def on_invalid(self, route, reason):
+        """
+        An invalid message was received.
+        """
+        raise IllegalRequestError(route, reason)
 
     # Send methods
     # ============
@@ -132,7 +143,7 @@ class Protocol(LowerProtocol):
         msg = [b'GET', name]
         return route, msg
 
-    def illegal(self, route, reason=""):
+    def illegal(self, route, reason):
         """
         Builds an ILLEGAL message.
 
@@ -158,14 +169,15 @@ class Protocol(LowerProtocol):
 
         Args:
             name: the name of the task
-            serialized: a triple of bytes objects (proto, data, children)
+            serialized: a triple of two bytes objects and an int (proto, data,
+                children)
 
         """
         proto, data, children = serialized
         if data is None:
             data = b''
         logging.debug('-> putting %d bytes', len(data))
-        msg_body = [b'PUT', name, proto, data, children]
+        msg_body = [b'PUT', name, proto, data, children.to_bytes(1, 'big')]
         return route, msg_body
 
     def ready(self, route, peer):
@@ -213,7 +225,9 @@ class Protocol(LowerProtocol):
 
         Args:
             task_dict: dictionary containing all the serializable part of the
-                task object to transmit.
+                task object to transmit. Contains the `step_name`, a list of
+                `vtags`, a list of positional `arg_names` and a dictionary of
+                `kwarg_names`.
         """
         msg = [b'SUBMIT', task_dict['step_name']]
         # Vtags

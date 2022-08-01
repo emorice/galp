@@ -11,29 +11,48 @@ import time
 import zmq
 
 import galp.worker
-from galp.zmq_async_protocol import ZmqAsyncProtocol
+from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.reply_protocol import ReplyProtocol
 
 class Pool:
+    """
+    A pool of worker processes.
+    """
     def __init__(self, args):
         self.args = args
         self.tasks = []
+        self.signal = None
         self.pending_signal = asyncio.Event()
         self.last_start_time = time.time()
 
-        self.broker = ZmqAsyncProtocol('BK', args.endpoint, zmq.DEALER)
+        self.broker_protocol = ReplyProtocol('BK', router=False)
+        self.broker_transport = ZmqAsyncTransport(
+            self.broker_protocol,
+            args.endpoint, zmq.DEALER # pylint: disable=no-member
+            )
 
     def set_signal(self, sig):
+        """
+        Synchronously marks that a signal is pending
+        """
         self.signal = sig
         self.pending_signal.set()
 
     async def run(self):
+        """
+        Start one task to create and monitor each worker, along with the
+        listening loop
+        """
+
         self.tasks = [
             asyncio.create_task(
                 self.start_worker()
             )
             for i in range(self.args.pool_size)
         ]
-        listener = asyncio.create_task(self.broker.listen())
+        listener = asyncio.create_task(
+            self.broker_transport.listen_reply_loop()
+            )
 
         await asyncio.gather(*self.tasks)
 
@@ -52,7 +71,7 @@ class Pool:
             arg_list.extend(['--vm', args.vm])
         if args.debug:
             arg_list.extend(['--debug'])
-        arg_list.extend([args.endpoint, args.cachedir])
+        arg_list.extend([args.endpoint, args.storedir])
 
         ret = True
         while ret and not self.pending_signal.is_set():
@@ -109,13 +128,26 @@ class Pool:
                         process.pid)
 
     async def notify_exit(self, pid):
-        await self.broker.exited(self.broker.default_route(), str(pid).encode('ascii'))
+        """
+        Sends a message back to broker to signal a worker died
+        """
+        await self.broker_transport.send_message(
+            self.broker_protocol.exited(
+                self.broker_protocol.default_route(), str(pid).encode('ascii')
+                )
+            )
 
 def on_signal(sig, pool):
+    """
+    Signal handler, propagates it to the pool
+    """
     logging.error("Caught signal %d (%s)", sig, signal.strsignal(sig))
     pool.set_signal(sig)
 
 async def main(args):
+    """
+    Main CLI entry point
+    """
     galp.cli.setup(args, " pool ")
     logging.info("Starting worker pool")
 
@@ -132,6 +164,9 @@ async def main(args):
     logging.info("Pool manager exiting")
 
 def add_parser_arguments(parser):
+    """
+    Pool-specific arguments
+    """
     parser.add_argument('pool_size', type=int,
         help='Number of workers to start')
     parser.add_argument('--restart_delay', type=int,
@@ -147,6 +182,6 @@ def add_parser_arguments(parser):
 
 if __name__ == '__main__':
     # Convenience hook to start a pool from CLI
-    parser = argparse.ArgumentParser()
-    add_parser_arguments(parser)
-    asyncio.run(main(parser.parse_args()))
+    _parser = argparse.ArgumentParser()
+    add_parser_arguments(_parser)
+    asyncio.run(main(_parser.parse_args()))

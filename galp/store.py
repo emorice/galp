@@ -3,7 +3,6 @@ Distributed store
 """
 import asyncio
 from collections import defaultdict
-import logging
 
 class Store:
     """

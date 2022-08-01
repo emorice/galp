@@ -15,7 +15,10 @@ import galp.tests
 
 # Custom fixtures
 # ===============
-@pytest.fixture(params=[b'EXIT', b'ILLEGAL'])
+@pytest.fixture(params=[
+    [b'EXIT'],
+    [b'ILLEGAL', b'You didnt say please']
+    ])
 def fatal_order(request):
     """All messages that should make the worker quit"""
     return request.param
@@ -36,7 +39,18 @@ def is_body(msg, body):
     assert len(msg) >= 3
     return msg[3:] == body
 
+def body_startswith(msg, body_start):
+    """
+    Remove route and counter before comparing a message to a body
+    """
+    assert len(msg) >= 3
+    return msg[3:3+len(body_start)] == body_start
+
 def asserted_zmq_recv_multipart(socket):
+    """
+    Asserts that the socket received a message in a given time, and returns said
+    message
+    """
     selectable = [socket], [], []
     assert zmq.select(*selectable, timeout=4) == selectable
     return socket.recv_multipart()
@@ -60,12 +74,12 @@ def test_shutdown(worker_socket, fatal_order):
     """Manually send a exit message to a local worker and wait a bit for it to
     terminate."""
 
-    socket, endpoint, worker_handle = worker_socket
+    socket, _endpoint, worker_handle = worker_socket
 
     assert worker_handle.poll() is None
 
     # Mind the empty frame
-    socket.send_multipart(make_msg(fatal_order))
+    socket.send_multipart(make_msg(*fatal_order))
 
     assert worker_handle.wait(timeout=4) == 0
 
@@ -114,32 +128,36 @@ def test_illegals(worker_socket, msg_body):
     assert_ready(socket)
 
     ans2 = asserted_zmq_recv_multipart(socket)
-    assert is_body(ans2, [b'ILLEGAL'])
+    assert body_startswith(ans2, [b'ILLEGAL'])
 
 def test_task(worker_socket):
+    """
+    Tests running a task by manually sending and receiving messages
+    """
     socket, *_ = worker_socket
 
     task = galp.steps.galp_hello()
     step_name = task.step.key
 
-    logging.warning('Calling task %s', step_name)
-
-    handle = galp.graph.Task.gen_name(step_name, [], {}, [])
+    name = galp.graph.Task.gen_name(dict(
+        step_name=step_name,
+        arg_names=[], kwarg_names={}, vtags=[]
+        ))
 
     socket.send_multipart(make_msg(b'SUBMIT', step_name, b'\x00'))
 
     assert_ready(socket)
 
     ans = asserted_zmq_recv_multipart(socket)
-    assert is_body(ans, [b'DOING', handle])
+    assert is_body(ans, [b'DOING', name])
 
     ans = asserted_zmq_recv_multipart(socket)
-    assert is_body(ans, [b'DONE', handle])
+    assert is_body(ans, [b'DONE', name])
 
-    socket.send_multipart(make_msg(b'GET', handle))
+    socket.send_multipart(make_msg(b'GET', name))
 
     ans = asserted_zmq_recv_multipart(socket)
-    assert ans[3:6] == [b'PUT', handle, b'dill']
+    assert ans[3:6] == [b'PUT', name, b'dill']
     assert dill.loads(ans[6]) == 42
 
 def test_notfound(worker_socket):
@@ -200,6 +218,9 @@ def test_reference(worker_socket):
 
 @pytest.mark.asyncio
 async def test_async_socket(async_worker_socket):
+    """
+    Tests simple message exchange with the asyncio flavor of pyzmq
+    """
     sock, _, _ = async_worker_socket
 
     await asyncio.wait_for(sock.send_multipart(make_msg(b'RABBIT')), 3)
@@ -208,4 +229,4 @@ async def test_async_socket(async_worker_socket):
     assert ready[3] == b'READY'
 
     ans = await asyncio.wait_for(sock.recv_multipart(), 3)
-    assert is_body(ans, [b'ILLEGAL'])
+    assert body_startswith(ans, [b'ILLEGAL'])

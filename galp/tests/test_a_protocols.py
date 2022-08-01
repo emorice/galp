@@ -51,7 +51,7 @@ async def test_counters():
 
         await peer_b.send_message(
             peer_b.protocol.put(route, name,
-                (b'some_proto', b'some_data', b'\0'))
+                (b'some_proto', b'some_data', 0))
             )
         await peer_a.recv_message()
 

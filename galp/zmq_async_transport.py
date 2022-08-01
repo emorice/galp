@@ -35,7 +35,9 @@ class ZmqAsyncTransport:
         Passes msg to the protocol to be rewritten, then sends it
         """
         zmq_msg = self.protocol.write_message(msg)
-        return await self.socket.send_multipart(zmq_msg)
+        # write_message is allowed to supress messages, so check for it
+        if zmq_msg:
+            await self.socket.send_multipart(zmq_msg)
 
     async def send_messages(self, messages):
         """

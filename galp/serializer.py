@@ -2,36 +2,33 @@
 Serialization utils
 """
 
-import json
-import time
-import logging
+from typing import Any, Tuple, List
 
 import dill
-import numpy as np
-import pyarrow as pa
-
-from typing import Any, Tuple, List
-from galp.typing import ArrayLike, Table
 
 class DeserializeError(ValueError):
-    def __init__(self, name):
-        self.name = name
-        super().__init__(
-            f'cache entry {name.hex()} may be corrupted'
-            )
+    """
+    Exception raised to wrap any error encountered by the deserialization
+    backends
+    """
+    def __init__(self):
+        super().__init__('Failed to deserialize')
 
 class Serializer:
     """
     Abstraction for a serialization strategy
     """
 
-    def get_backend(self, handle, proto=None):
+    def get_backend(self, proto=None):
+        """
+        Returns the deserializer to use based on the given protocol.
+        """
         if proto == b'tuple':
             return TupleSerializer
 
         return DillSerializer
 
-    def loads(self, handle, proto: bytes, data: bytes, native_children: List[Any]) -> Any:
+    def loads(self, proto: bytes, data: bytes, native_children: List[Any]) -> Any:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.
@@ -39,103 +36,65 @@ class Serializer:
         Re-raises DeserializeError on any exception.
         """
         try:
-            return self.get_backend(handle, proto).loads(data, native_children)
-        except:
-            raise DeserializeError(handle.name)
+            return self.get_backend(proto).loads(data, native_children)
+        except Exception as exc:
+            raise DeserializeError from exc
 
-    def dumps(self, handle, obj: Any) -> Tuple[bytes, bytes]:
+    def dumps(self, obj: Any) -> Tuple[bytes, bytes]:
         """
         Serialize the data.
+
+        Note that this always uses the default serializer. This is because
+        higher-level galp resources like lists of resources are normally
+        serialized one by one, so the higher-level object is never directly
+        passed down to the serializer.
         """
-        backend = self.get_backend(handle)
+        backend = self.get_backend()
         return backend.proto_id, backend.dumps(obj)
 
-class TupleSerializer(Serializer):
+class BackendSerializer:
+    """
+    Common interface of concrete serializers
+    """
+    @staticmethod
+    def loads(payload, native_children):
+        """
+        Takes a payload and already deserialized sub-resources, and returns a
+        native object
+        """
+        raise NotImplementedError
+
+    @staticmethod
+    def dumps(obj):
+        """
+        Takes an object and returns a serialized payload
+        """
+        raise NotImplementedError
+
+class TupleSerializer(BackendSerializer):
+    """
+    Serializer for high-level tuples of resources
+    """
     proto_id = b'tuple'
 
     @staticmethod
     def loads(payload, native_children):
+        if payload:
+            raise ValueError("Extra payload with tuple of resources")
         return tuple(native_children)
-
-class JsonSerializer(Serializer):
-    """Trivial wrapper around json to always return bytes"""
-    proto_id = b'json'
-
-    @staticmethod
-    def loads(payload, _):
-        return json.loads(payload)
 
     @staticmethod
     def dumps(obj):
-        return json.dumps(obj).encode('ascii')
+        raise NotImplementedError
 
-class DillSerializer(Serializer):
+class DillSerializer(BackendSerializer):
     """Trivial wrapper around dill"""
     proto_id = b'dill'
 
     @staticmethod
-    def loads(payload, _):
+    def loads(payload, native_children):
         return dill.loads(payload)
 
     @staticmethod
     def dumps(obj):
         return dill.dumps(obj, byref=True)
-
-class ArrowTensorSerializer(Serializer):
-    """Uses Arrow ipc as a tensor serialization method.
-
-    Note that arrow allows to do serialization-free sharing, which is planned to
-    be integrated in the future.
-    """
-    proto_id = b'arrow.tensor'
-
-    @staticmethod
-    def dumps(obj):
-        bos = pa.BufferOutputStream()
-
-        # np.asarray should handle array-like types and not create too many
-        # copies
-        tensor = pa.Tensor.from_numpy(np.asarray(obj))
-        pa.ipc.write_tensor(tensor, bos)
-
-        return bos.getvalue().to_pybytes()
-
-    @staticmethod
-    def loads(buf, _):
-        """
-        Todo: handle errors more nicely since buffer is user input and could
-        contain anything
-        """
-
-        reader = pa.BufferReader(buf)
-        tensor = pa.ipc.read_tensor(reader)
-        return tensor.to_numpy()
-
-class ArrowTableSerializer(Serializer):
-    """Uses Arrow ipc as a serialization method.
-
-    Note that arrow allows to do serialization-free sharing, which is planned to
-    be integrated in the future.
-    """
-    proto_id = b'arrow.table'
-
-    @staticmethod
-    def dumps(obj):
-        bos = pa.BufferOutputStream()
-
-        # Table-like
-        writer = pa.ipc.new_file(bos, obj.schema)
-        writer.write(obj)
-        writer.close()
-
-        return bos.getvalue().to_pybytes()
-
-    @staticmethod
-    def loads(buf, _):
-        """
-        Todo: handle errors more nicely since buffer is user input and could
-        contain anything
-        """
-
-        reader = pa.ipc.open_file(buf)
-        return reader.read_all()

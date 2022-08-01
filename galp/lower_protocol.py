@@ -5,6 +5,29 @@ counters.
 
 import logging
 
+class MessageList(list):
+    """
+    Litterally just a list of message objects.
+
+    Allows to distinguish messages from list of messages by type
+    """
+    @classmethod
+    def from_any(cls, messages):
+        """
+        Wraps messages in a MessageList if not already one
+
+        Also recognizes None, False, etc as empty lists of messages.
+        """
+        if not messages:
+            return cls()
+        if isinstance(messages, cls):
+            return messages
+        message = messages
+        return cls([message])
+
+    def __repr__(self):
+        return f'MessageList({super().__repr__()})'
+
 class BaseProtocol:
     """
     Abstract class defining the interface expected by the transport
@@ -23,8 +46,8 @@ class BaseProtocol:
         Args:
             msg_parts: a list of message parts, each part being a bytes object
         Returns:
-            A high level message object as accepted by write_message to
-            be sent back, or None.
+            A MessageList, a collection of messages that can be iterated and
+            given one by one to `write_message`
         """
         raise NotImplementedError
 
@@ -41,7 +64,8 @@ class BaseSplitProtocol(BaseProtocol):
             msg_body: all the message parts starting with the galp verb
 
         Returns:
-            A reply, see on_message.
+            Either a single message, a MessageList, or any object that evaluates
+            to False to mean no messages.
         """
         raise NotImplementedError
 
@@ -116,8 +140,11 @@ class LowerProtocol(BaseSplitProtocol):
         # Note: we do not call on_verb for ping, even if it could be treated as
         # an empty verb.
         if msg_body:
-            return self.on_verb(route, msg_body)
-        return None
+            return MessageList.from_any(
+                self.on_verb(route, msg_body)
+                )
+
+        return MessageList()
 
     def write_message(self, msg):
         """

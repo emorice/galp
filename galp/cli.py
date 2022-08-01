@@ -6,14 +6,6 @@ import asyncio
 import logging
 import signal
 
-class IllegalRequestError(Exception):
-    """Base class for all badly formed requests, triggers sending an ILLEGAL
-    message back"""
-    def __init__(self, route, reason):
-        super().__init__()
-        self.route = route
-        self.reason = reason
-
 def add_parser_arguments(parser):
     """Add generic arguments to the given parser"""
     parser.add_argument('-d', '--debug', action='store_true',

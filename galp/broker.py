@@ -10,7 +10,7 @@ import zmq
 
 import galp.cli
 
-from galp.cli import IllegalRequestError
+from galp.protocol import IllegalRequestError
 from galp.forward_protocol import ForwardProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 
@@ -19,12 +19,12 @@ class Broker:
         self.terminate = terminate
 
         # pylint: disable=no-member # False positive
-        self.client_proto = BrokerProtocol(self, 'CL')
+        self.client_proto = BrokerProtocol('CL', router=True)
         self.client_transport = ZmqAsyncTransport(
             self.client_proto,
             client_endpoint, zmq.ROUTER, bind=True)
 
-        self.worker_proto = WorkerProtocol(self, 'WK')
+        self.worker_proto = WorkerProtocol('WK', router=True)
         self.worker_transport = ZmqAsyncTransport(
             self.worker_proto,
             worker_endpoint, zmq.ROUTER, bind=True)
@@ -32,7 +32,7 @@ class Broker:
     async def listen_forward_loop(self, source_transport, dest_transport):
         """Client-side message processing loop of the broker"""
 
-        proto_name = source_transport.proto.name
+        proto_name = source_transport.protocol.proto_name
         logging.info("Broker listening for %s on %s", proto_name,
             source_transport.endpoint
             )
@@ -115,10 +115,12 @@ class WorkerProtocol(BrokerProtocol):
         self.mark_worker_available(worker_route)
 
     def on_failed(self, route, name):
-        self.mark_worker_available(route)
+        worker_route, _ = route
+        self.mark_worker_available(worker_route)
 
     def on_put(self, route, name, serialized):
-        self.mark_worker_available(route)
+        worker_route, _ = route
+        self.mark_worker_available(worker_route)
 
     def on_exited(self, route, peer):
         logging.error("Worker %s exited", peer)
@@ -144,7 +146,7 @@ class WorkerProtocol(BrokerProtocol):
     def write_message(self, msg):
         route, msg_body = msg
         incoming_route, forward_route = route
-        verb = msg_body[:1]
+        verb = msg_body[0].decode('ascii')
 
         # If a forward route is already present, the message is addressed at one
         # specific worker, forward as-is

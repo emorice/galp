@@ -7,6 +7,7 @@ object that can be created and used as part of a larger program.
 
 import logging
 import asyncio
+import time
 
 from enum import IntEnum, auto
 from collections import defaultdict
@@ -15,11 +16,12 @@ import zmq
 import zmq.asyncio
 
 from galp.cache import CacheStack
-from galp.serializer import Serializer, DeserializeError
-from galp.protocol import Protocol
+from galp.serializer import Serializer
+from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.store import Store
 from galp.graph import Handle
+from galp.command_queue import CommandQueue
+from galp.script import Script
 
 
 class TaskStatus(IntEnum):
@@ -27,17 +29,15 @@ class TaskStatus(IntEnum):
     A sorted enum representing the status of a task
     """
     UNKNOWN = auto()
-    FAILED = auto()
     DEPEND = auto()
 
     SUBMITTED = auto()
     RUNNING = auto()
 
-    # Note: everything that compares greater or equal to completed implies
-    # completed
     COMPLETED = auto()
     TRANSFER = auto()
     AVAILABLE = auto()
+    FAILED = auto()
 
 class TaskFailedError(RuntimeError):
     """
@@ -62,20 +62,20 @@ class Client:
     # 'tasks' public argument itself. The tasks themselves are called 'details'
 
     def __init__(self, endpoint):
-
-        self.proto = BrokerProtocol(
+        self.protocol = BrokerProtocol(
             'BK', router=False,
             schedule=self.schedule # callback to add tasks to the scheduling queue
             )
 
         self.transport = ZmqAsyncTransport(
-            protocol=self.proto,
+            protocol=self.protocol,
             # pylint: disable=no-member # False positive
             endpoint=endpoint, socket_type=zmq.DEALER
             )
 
         # Request queue
-        self._scheduled = asyncio.Queue()
+        self.command_queue = CommandQueue()
+        self.new_command = asyncio.Event()
 
     async def process_scheduled(self):
         """
@@ -86,10 +86,29 @@ class Client:
         """
 
         while True:
-            name = await self._scheduled.get()
-            next_msg = self.proto.write_next(name)
-            if next_msg is not None:
-                await self.transport.send_message(next_msg)
+            next_command, next_time = self.command_queue.pop()
+            if next_command:
+                logging.info('SCHED: Ready command %s', next_command.hex())
+                next_msg = self.protocol.write_next(next_command)
+                if next_msg:
+                    await self.transport.send_message(next_msg)
+                    self.command_queue.requeue(next_command)
+                else:
+                    logging.info('SCHED: No message for %s', next_command.hex())
+
+            elif next_time:
+                # Wait for either a new command or the end of timeout
+                logging.info('SCHED: No ready command, waiting %s', next_time - time.time())
+                try:
+                    await asyncio.wait_for(
+                        self.new_command.wait(),
+                        timeout=next_time - time.time())
+                    self.new_command.clear()
+                except asyncio.TimeoutError:
+                    pass
+            else:
+                logging.info('SCHED: No ready command, waiting forever')
+                await self.new_command.wait()
 
     def schedule(self, task_name):
         """
@@ -97,13 +116,11 @@ class Client:
 
         This asks the processing queue to consider the task at a later point to
         submit or collect it depending on its state.
-
-        This uses an asyncio queue but we assume it's unbounded and putting is
-        synchronous.
         """
 
         logging.debug("Scheduling %s", task_name.hex())
-        self._scheduled.put_nowait(task_name)
+        self.command_queue.enqueue(task_name)
+        self.new_command.set()
 
     async def collect(self, *tasks, return_exceptions=False, timeout=None):
         """
@@ -123,7 +140,7 @@ class Client:
 
 
         # Update our state
-        new_inputs = self.proto.add(tasks)
+        new_inputs = self.protocol.add(tasks)
 
         # Schedule SUBMITs for all possibly new and ready downstream tasks
         for task in new_inputs:
@@ -134,7 +151,7 @@ class Client:
         # be marked as completed before.
         # Note 2: the above note do not work with async scheduling and should not
         # be relied on
-        self.proto.add_finals(tasks)
+        self.protocol.add_finals(tasks)
 
         scheduler = asyncio.create_task(self.process_scheduled())
 
@@ -147,7 +164,7 @@ class Client:
         except asyncio.CancelledError:
             pass
 
-class BrokerProtocol(Protocol):
+class BrokerProtocol(ReplyProtocol):
     """
     Main logic of the interaction of a client with a broker
     """
@@ -159,6 +176,10 @@ class BrokerProtocol(Protocol):
         # With a DEALER socket, we send messages with no routing information by
         # default.
         self.route = self.default_route()
+
+
+        ## Replacement for status tracker
+        self.script = Script()
 
         ## Current task status
         self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
@@ -263,7 +284,8 @@ class BrokerProtocol(Protocol):
             return self.submit_task_by_name(name)
 
         if name in self._finals:
-            return self.get(self.route, name)
+            if self._status[name] < TaskStatus.AVAILABLE:
+                return self.get(self.route, name)
 
         return None
 
@@ -318,6 +340,8 @@ class BrokerProtocol(Protocol):
         proto, data, children = serialized
 
         # Schedule sub-gets if necessary
+        # To be moved to the script engine eventually
+        # Also we should get rid of the handle
         for i in range(children):
             children_name = handle[i].name
             # We do not send explicit DONEs for subtasks, so we mark them as
@@ -329,11 +353,15 @@ class BrokerProtocol(Protocol):
             self.schedule(children_name)
 
         # Put the parent part
-        self._cache.put_serial(name, proto, data, children.to_bytes(1, 'big'))
+        self._cache.put_serial(name, (proto, data, children))
 
         # Mark the task as available, not that this do not imply the
         # availability of the sub-tasks
+        # This also should become useless as the _status gets phased out
         self._status[name] = TaskStatus.AVAILABLE
+
+        # Mark the corresponding command as done and run callbacks
+        self.script.done(('GET', name))
 
     def on_done(self, route, name):
         """Given that done_task just finished, mark it as done, schedule any
@@ -385,6 +413,6 @@ class BrokerProtocol(Protocol):
         # This is not a fatal error to the client, by default processing of
         # messages for other ongoing tasks is still permitted.
 
-    def on_illegal(self, route):
+    def on_illegal(self, route, reason):
         """Should never happen"""
-        assert False
+        raise RuntimeError(f'ILLEGAL recevived: {reason}')
