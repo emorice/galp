@@ -9,8 +9,6 @@ import psutil
 import numpy as np
 import pyarrow as pa
 
-import psutil
-
 from typing import Tuple
 
 from galp.graph import StepSet

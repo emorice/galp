@@ -38,6 +38,9 @@ class CacheStack():
         """
         return name + b'.proto' in self.serialcache
 
+    def __contains__(self, name):
+        return self.contains(name)
+
     def get_native(self, name):
         """
         Get a native object form the cache.
@@ -86,6 +89,8 @@ class CacheStack():
         For now this eagerly serializes it and commits it to persistent cache.
         Recursive call if handle is iterable.
         """
+        import logging
+        logging.error('Storing %s', handle.name.hex())
         try:
             # Logical composite handle
             ## Recursively store the children

@@ -78,6 +78,9 @@ class Client:
         self.command_queue = CommandQueue()
         self.new_command = asyncio.Event()
 
+        # Collection counter to generate unique commands
+        self._collections = 0
+
     async def process_scheduled(self):
         """
         Send submit/get requests from the queue.
@@ -100,13 +103,11 @@ class Client:
             elif next_time:
                 # Wait for either a new command or the end of timeout
                 logging.info('SCHED: No ready command, waiting %s', next_time - time.time())
-                try:
-                    await asyncio.wait_for(
-                        self.new_command.wait(),
-                        timeout=next_time - time.time())
+                done, _pending = await asyncio.wait(
+                    [self.new_command.wait()],
+                    timeout=next_time - time.time())
+                if done:
                     self.new_command.clear()
-                except asyncio.TimeoutError:
-                    pass
             else:
                 logging.info('SCHED: No ready command, waiting forever')
                 await self.new_command.wait()
@@ -140,17 +141,34 @@ class Client:
         """
 
 
-        # Update our state
+        # Update the task graph
         new_inputs = self.protocol.add(tasks)
 
         # Schedule SUBMITs for all possibly new and ready downstream tasks
+        # This should be handled by the Script
         for task in new_inputs:
             self.schedule(task)
+
+        # Run message processing until fulfillment (may be not at all !)
+        try:
+            await self.run_collection(tasks)
+        except ProtocolEndException:
+            pass
+
+        return [
+            self.protocol.store.get_native(task.name)
+            for task in tasks
+            ]
+
+    async def run_collection(self, tasks):
+        """
+        Processes messages until the collection target is achieved
+        """
 
         # Update the list of final tasks and schedule GETs for the already done
         # Note: comes after submit as derived task need to be submitted first to
         # be marked as completed before.
-        # Note 2: the above note do not work with async scheduling and should not
+        # Note 2: the above note does not work with async scheduling and should not
         # be relied on
         self.protocol.add_finals(tasks)
 
@@ -158,8 +176,11 @@ class Client:
         def _end():
             raise ProtocolEndException
 
+        collection_id = self._collections
+        self._collections += 1
+
         self.protocol.script.add_command(
-            'END',
+            ('END', collection_id),
             trigger=AllDone(('GET', t.name) for t in tasks),
             callbacks={Command.OVER: _end}
             )
@@ -168,17 +189,13 @@ class Client:
 
         await self.transport.listen_reply_loop()
 
+        logging.info('Stopping outgoing message scheduler')
         scheduler.cancel()
 
         try:
             await scheduler
         except asyncio.CancelledError:
             pass
-
-        return [
-            self.protocol.store.get_native(task.name)
-            for task in tasks
-            ]
 
 class BrokerProtocol(ReplyProtocol):
     """
@@ -294,7 +311,12 @@ class BrokerProtocol(ReplyProtocol):
         # Also register the GETs in the script which will replace _finals in
         # the end
         for task_details in tasks:
-            self.script.add_command(('GET', task_details.name))
+            head_key = ('HEADGET', task_details.name)
+            if head_key not in self.script:
+                self.script.add_command(head_key)
+                self.script.add_command(('SUBGET', task_details.name))
+                self.script.add_command(('GET', task_details.name))
+
 
     def write_next(self, name):
         """

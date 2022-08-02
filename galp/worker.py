@@ -27,6 +27,7 @@ from galp.lower_protocol import MessageList
 from galp.protocol import ProtocolEndException, IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.script import Script, Command, AllDone
 
 from galp.profiler import Profiler
 from galp.serializer import Serializer
@@ -129,6 +130,7 @@ class WorkerProtocol(ReplyProtocol):
         super().__init__(name, router)
         self.worker = worker
         self.store = galp.cache.CacheStack(store_dir, Serializer())
+        self.script = Script()
 
     def on_invalid(self, route, reason):
         logging.error('Bad request: %s', reason)
@@ -162,7 +164,7 @@ class WorkerProtocol(ReplyProtocol):
 
         This the only asynchronous handler, all others are semantically blocking.
         """
-        logging.info('SUBMIT: %s', task_dict['step_name'])
+        logging.info('SUBMIT: %s', task_dict['step_name'].decode('ascii'))
 
         # Store hook. For now we just check the local cache, later we'll have a
         # central locking mechanism
@@ -175,13 +177,27 @@ class WorkerProtocol(ReplyProtocol):
         replies = MessageList([self.doing(route, name)])
 
         # If any resource is missing, send GETs back to the sender of the
-        # SUBMIT.
+        # SUBMIT. In any case, add it to the command list to be used as a
+        # trigger input for the actual task execution
         for dep_name in [
             *task_dict['arg_names'],
             *task_dict['kwarg_names'].values()
             ]:
-            if not self.store.contains(dep_name):
-                replies.append(self.get(route, dep_name))
+            command_key = 'GET', dep_name
+            if command_key in self.script:
+                # Resource was already requested at some point before, nothing
+                # else to do
+                continue
+            if dep_name in self.store:
+                # Resource is available, but we still need to mark it as such
+                self.script.add_command(
+                    command_key,
+                    trigger=AllDone()
+                    )
+                continue
+            # Else, we send a get back and register an external-trigger command
+            replies.append(self.get(route, dep_name))
+            self.script.add_command(command_key)
 
         self.worker.schedule_task(route, name, task_dict)
 
@@ -189,9 +205,10 @@ class WorkerProtocol(ReplyProtocol):
 
     def on_put(self, route, name, serialized):
         """
-        Put object in store, thus releasing tasks waiting for data.
+        Put object in store, and mark the command as done
         """
         self.store.put_serial(name, serialized)
+        self.script.done(('GET', name))
 
 class Worker:
     """
@@ -250,13 +267,32 @@ class Worker:
 
     def schedule_task(self, client_route, name, task_dict):
         """
-        Callback to schedule a task for execution
-        """
-        task = asyncio.create_task(
-            self.run_submission(client_route, name, task_dict)
-            )
+        Callback to schedule a task for execution.
 
-        self.galp_jobs.put_nowait(task)
+        The commands for fetching the data are assumed to have been added to the
+        script already.
+        """
+        def _start_task():
+            task = asyncio.create_task(
+                self.run_submission(client_route, name, task_dict)
+                )
+            self.galp_jobs.put_nowait(task)
+        self.protocol.script.add_command(
+            ('EXEC', name),
+            trigger=AllDone(
+                ('GET', dep_name)
+                for dep_name in [
+                    *task_dict['arg_names'],
+                    *task_dict['kwarg_names'].values()
+                    ]
+                    ),
+            callbacks={
+                # We start the task even if the fetch fails,
+                # so that it completes with error and a message gets propagated
+                # back
+                Command.OVER: _start_task
+                }
+            )
 
     async def listen(self):
         """
@@ -287,11 +323,14 @@ class Worker:
         """
     async def run_submission(self, route, name, task_dict):
         """
-        Actually run the task if not cached.
+        Actually run the task
         """
         step_name = task_dict['step_name']
         arg_names = task_dict['arg_names']
         kwarg_names = task_dict['kwarg_names']
+
+        logging.info('Executing step %s (%s)',
+            name.hex(), step_name.decode('ascii'))
 
         try:
             try:

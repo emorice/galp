@@ -207,14 +207,14 @@ class SubTask:
         self.name = handle.name
 
     @staticmethod
-    def gen_name(parent_name, index_name):
+    def gen_name(parent_name, index):
         """
         Create a resource name.
         """
 
         payload = Task.san(parent_name)
         payload += b'['
-        payload += Task.san(index_name)
+        payload += str(index).encode('ascii')
         payload += b']'
 
         return Task.hash_one(payload)
@@ -262,7 +262,7 @@ class Handle():
             raise NonIterableHandleError
         return (
             Handle(
-                SubTask.gen_name(self.name, str(i).encode('ascii')),
+                SubTask.gen_name(self.name, i),
                 0
                 )
             for i in range(self.items)
@@ -272,7 +272,7 @@ class Handle():
         if not self.has_items:
             raise NonIterableHandleError
         return Handle(
-                SubTask.gen_name(self.name, str(index).encode('ascii')),
+                SubTask.gen_name(self.name, index),
                 0)
 
 class HereisTask:

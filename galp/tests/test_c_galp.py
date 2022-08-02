@@ -151,11 +151,12 @@ async def assert_cache(clients, task=galp.steps.galp_hello()):
 
     assert ans1 == ans2 == [task.step.function()]
 
-    assert client1.submitted_count[task.name] == 1
-    assert client2.submitted_count[task.name] == 1
+    # May be more that 1 since drop-n-retry was adopted
+    assert client1.protocol.submitted_count[task.name] >= 1
+    assert client2.protocol.submitted_count[task.name] >= 1
 
-    assert client1.run_count[task.name] == 1
-    assert client2.run_count[task.name] == 0
+    assert client1.protocol.run_count[task.name] == 1
+    assert client2.protocol.run_count[task.name] == 0
 
 @pytest.mark.asyncio
 async def test_mem_cache(client_pair):
@@ -240,7 +241,7 @@ async def test_profiling(client):
 
 @pytest.mark.asyncio
 async def test_npserializer(client):
-    """Tests selecting a different serializer based on type hints"""
+    """Tests fetching a non-standard type"""
     task = gts.arange(10)
 
     ans = (await asyncio.wait_for(client.collect(task), 3))[0]
@@ -250,8 +251,7 @@ async def test_npserializer(client):
 
 @pytest.mark.asyncio
 async def test_npargserializer(disjoined_client_pair):
-    """Tests selecting a different serializer based on type hints, for an input
-    task.
+    """Tests passing a non-standard type between tasks.
 
     We use a pair of workers to force serialization between tasks"""
     client1, client2 = disjoined_client_pair

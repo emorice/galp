@@ -63,11 +63,11 @@ async def test_fill_queue(blocked_client):
     """
     _, client = blocked_client
     task = gts.plugin_hello()
-    route = client.proto.default_route()
+    route = client.protocol.default_route()
 
     # Check that client blocks
     with pytest.raises(asyncio.TimeoutError):
         async with timeout(1):
             await client.transport.send_message(
-                client.proto.submit_task(route, task)
+                client.protocol.submit_task(route, task)
                 )

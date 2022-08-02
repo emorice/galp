@@ -174,6 +174,7 @@ def test_notfound(worker_socket):
 
 def test_reference(worker_socket):
     """Tests passing the result of a task to an other through handle"""
+    # pylint: disable=no-member
     worker_socket, *_ = worker_socket
 
     task1 = galp.steps.galp_double()
