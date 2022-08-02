@@ -17,11 +17,12 @@ import zmq.asyncio
 
 from galp.cache import CacheStack
 from galp.serializer import Serializer
+from galp.protocol import ProtocolEndException
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.graph import Handle
 from galp.command_queue import CommandQueue
-from galp.script import Script
+from galp.script import Script, AllDone, Command
 
 
 class TaskStatus(IntEnum):
@@ -153,6 +154,16 @@ class Client:
         # be relied on
         self.protocol.add_finals(tasks)
 
+        # Register the termination command
+        def _end():
+            raise ProtocolEndException
+
+        self.protocol.script.add_command(
+            'END',
+            trigger=AllDone(('GET', t.name) for t in tasks),
+            callbacks={Command.OVER: _end}
+            )
+
         scheduler = asyncio.create_task(self.process_scheduled())
 
         await self.transport.listen_reply_loop()
@@ -163,6 +174,11 @@ class Client:
             await scheduler
         except asyncio.CancelledError:
             pass
+
+        return [
+            self.protocol.store.get_native(task.name)
+            for task in tasks
+            ]
 
 class BrokerProtocol(ReplyProtocol):
     """
@@ -192,7 +208,7 @@ class BrokerProtocol(ReplyProtocol):
         self._dependencies = defaultdict(set)
 
         # Memory only native+serial cache
-        self._cache = CacheStack(
+        self.store = CacheStack(
             dirpath=None,
             serializer=Serializer())
 
@@ -275,6 +291,11 @@ class BrokerProtocol(ReplyProtocol):
                 self.schedule(task_details.name)
             self._finals.add(task_details.name)
 
+        # Also register the GETs in the script which will replace _finals in
+        # the end
+        for task_details in tasks:
+            self.script.add_command(('GET', task_details.name))
+
     def write_next(self, name):
         """
         Returns the next nessage to be sent for a task given the information we
@@ -302,7 +323,7 @@ class BrokerProtocol(ReplyProtocol):
         self._status[task_name] = TaskStatus.SUBMITTED
 
         if hasattr(details, 'hereis'):
-            self._cache.put_native(details.handle, details.hereis)
+            self.store.put_native(details.handle, details.hereis)
             return self.on_done(None, task_name)
 
         # Sub-tasks are automatically satisfied when their parent and unique
@@ -317,7 +338,7 @@ class BrokerProtocol(ReplyProtocol):
     # ==================
     def on_get(self, route, name):
         try:
-            reply = self.put(route, name, self._cache.get_serial(name))
+            reply = self.put(route, name, self.store.get_serial(name))
             logging.debug('Client GET on %s', name.hex())
         except KeyError:
             reply = self.not_found(route, name)
@@ -353,7 +374,7 @@ class BrokerProtocol(ReplyProtocol):
             self.schedule(children_name)
 
         # Put the parent part
-        self._cache.put_serial(name, (proto, data, children))
+        self.store.put_serial(name, (proto, data, children))
 
         # Mark the task as available, not that this do not imply the
         # availability of the sub-tasks
