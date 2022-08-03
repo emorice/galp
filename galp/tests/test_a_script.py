@@ -2,16 +2,17 @@
 Tests for Script
 """
 
-from galp.script import Script, AllDone, Done
+from galp.script import Script, AllDone, Command
 
 def test_add_alldone():
     """
     Tests adding a command with no deps
     """
     script = Script()
-    script.add_command(
+    cdef = script.define_command(
         'test',
         trigger=AllDone()
         )
+    _cmd = script.run(cdef)
 
-    assert script.status('test') == Done.TRUE
+    assert script.status('test') == Command.DONE

@@ -1,23 +1,59 @@
 """
 Galp script
 """
-from enum import Enum
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from dataclasses import dataclass
 from typing import Any
+import logging
 
 class Trigger(list):
     """
     Trigger interface definition
     """
-    def eval(self, states):
+    def eval(self, command):
+        """
+        Eval the trigger condition on the given concrete values
+        """
+        if not command.inputs:
+            command.inputs = [(
+                    command.definition.script
+                    .get_def(command_key)
+                    .pull_command(
+                        (trigger_param,) + command.path,
+                        command)
+                ) for command_key, trigger_param in self
+            ]
+        defs = [command.definition.script._commands[dep] for dep in self]
+        return self.eval_defs(command, defs)
+
+
+    def eval_defs(self, command, defs):
         """
         Eval the trigger condition on the given concrete values
         """
         raise NotImplementedError
 
+    def downlinks(self):
+        """
+        Returns a list of deps and path mapping functions
+        """
+        return [
+            (dep, lambda path: path)
+            for dep in self
+            ]
+
     def __repr__(self):
         return f'{type(self).__name__}({list.__repr__(self)})'
+
+def status_conj(status):
+    """
+    Ternary conjunction of an iterable of status
+    """
+    if all(s == Command.DONE for s in status):
+        return Command.DONE
+    if any(s == Command.FAILED for s in status):
+        return Command.FAILED
+    return Command.UNKNOWN
 
 class AllDone(Trigger):
     """
@@ -25,12 +61,15 @@ class AllDone(Trigger):
 
     This a one-to-one trigger and only consider the first subkey.
     """
-    def eval(self, states):
-        if all(s[0] == Done.TRUE for s in states):
-            return Command.DONE
-        if any(s[0] == Done.FALSE for s in states):
-            return Command.FAILED
-        return Command.UNKNOWN
+    def eval_defs(self, command, defs):
+        input_status = [cdef.status[command.path] for cdef in defs]
+        status = status_conj(input_status)
+
+        logging.info('ALLDONE path %s: %s -> %s', command.path,
+            input_status, status
+            )
+        return status
+
 
 class AllOver(Trigger):
     """
@@ -38,37 +77,86 @@ class AllOver(Trigger):
     Never fails.
     One-to-one trigger.
     """
-    def eval(self, states):
-        if any(s[0] == Done.UNKNOWN for s in states):
+    def eval_defs(self, command, deps):
+        if any(dep.status[command.path] == Command.UNKNOWN for dep in deps):
             return Command.UNKNOWN
         return Command.DONE
+
+class ForLoop:
+    """
+    Trigger that activates when a number of subcommands of an other have
+    completed.
+    """
+    def __init__(self, length, body):
+        self.length = length
+        self.body = body
+
+    def eval(self, command):
+        """
+        Eval the trigger condition on the given concrete values
+        """
+        if not command.inputs:
+            command.inputs = {}
+        if not 'length' in command.inputs:
+            command.inputs['length'] = (
+                    command.definition.script
+                    .get_def(self.length)
+                    .pull_command(command.param, command)
+                    )
+        return Command.UNKNOWN
+
+    def downlinks(self):
+        return []
+
+class SubsDone(Trigger):
+    """
+    Trigger that activates when a number of subcommands of an other have
+    completed.
+    """
+    def eval_defs(self, command, deps):
+        counter, dep = deps
+        # If the counter is failed or unk, so is this
+        if counter.status[command.path] != Command.DONE:
+            return counter.status[command.path]
+        n_subs = counter.result[command.path]
+        input_status = [
+            dep.status[command.path + (i,)]
+            for i in range(n_subs)
+            ]
+        status =  status_conj(input_status)
+        logging.info('SUBSDONE path %s: %s -> %s', command.path,
+            input_status, status
+            )
+        return status
+
+    def downlinks(self):
+        counter, dep = self
+        return [
+            (counter, lambda path: path),
+            (dep, lambda path: path[:-1] if path else None)
+            ]
 
 class NoTrigger(Trigger):
     """
     An empty trigger, that is always considered UNKNOWN and never actually
     triggers.
     """
-    def eval(self, states):
+    def eval_defs(self, command, defs):
         return Command.UNKNOWN
 
-class Done(Enum):
-    """
-    Ternary state, True/False/Unknown
-    """
-    UNKNOWN = 'dU'
-    FALSE = 'dF'
-    TRUE = 'dT'
-
 @dataclass
-class Command:
+class CommandDefinition:
     """
-    A command and its known state
+    A command and its known status
     """
-    state: defaultdict
+    status: defaultdict
     triggered: defaultdict
     downstream: list
     trigger: Any
-    callbacks: dict
+    callback: Any
+    result: dict
+    key: Any
+    script: Any
 
     # callback conditions
     UNKNOWN = 'U'
@@ -76,6 +164,45 @@ class Command:
     DONE = 'D'
     OVER = 'O'
 
+    def pull_command(self, param, parent):
+        """
+        Instantiates a new command tracking structure, corresponding to one
+        specific invocation of the command.
+
+        When the command instance is created, its trigger is checked, possibly
+        leading to the creation of other commands recursively, and possibly
+        leading to the callbacks being called if the trigger consition is
+        satisfied.
+        """
+        # obsolete parameter
+        path = tuple(param[1:]) if param else tuple()
+        command = _Command(
+            definition=self,
+            path=path,
+            inputs=None,
+            outputs=[parent]
+            )
+        logging.info('Creating command %s / %s',
+            (self.key, param[0] if param else None),
+            path
+            )
+        self.script._maybe_trigger_cmd(command)
+        return command
+
+Command = CommandDefinition
+
+@dataclass
+class _Command:
+    """
+    A command and its known status
+
+    Prototype that represent only one path instance
+    """
+    definition: CommandDefinition
+    path: tuple
+    inputs: Any
+    outputs: Any = tuple()
+    param: Any = None
 
 class Script:
     """
@@ -87,87 +214,135 @@ class Script:
     def __init__(self):
         self._commands = {}
 
-    def done(self, command_key, sub_key=0):
+    def done(self, command_key, path=tuple(), result=None):
         """
         Marks the corresponding command as successfully done, and runs callbacks
-        synchronously
-        """
-        command = self._commands[command_key]
+        synchronously.
 
-        # First, we need to write the state of the command since further
-        # sister command may need it later
+        If no path is given, the root instance of the command is used.
+        """
+        return self.over(command_key, Command.DONE, path, result)
+
+    def over(self, command_key, status, path=tuple(), result=None):
+        """
+        Mark a command as terminated with the given status, and triggers
+        callbacks if necessery.
+        """
+        command_def = self._commands[command_key]
+
+        # First, we need to write the status of the command_def since further
+        # sister command_def may need it later
         # We only mark the specific subcommand
-        command.state[sub_key] = Done.TRUE
+        command_def.status[path] = status
+        command_def.result[path] = result
 
         # Next, we need to check for downstream commands
         # All subcommands have the same
-        for down_key in command.downstream:
-            self._maybe_trigger(down_key)
+        for down_key, pathmap in command_def.downstream:
+            down_path = pathmap(path)
+            logging.error('DOWN %s %s', down_key, down_path)
+            if down_path is not None:
+                self._maybe_trigger(down_key, down_path)
 
-    def _maybe_trigger(self, command_key, sub_key=0):
+    def _maybe_trigger_cmd(self, command):
         """
         Check for trigger conditions and call the callback at most once
         """
-        command = self._commands[command_key]
+        command_key = command.definition.key
+        path = command.path
+
+        command_def = self._commands[command_key]
 
         # Reentrancy check
-        if command.triggered[sub_key]:
+        if command_def.triggered[path]:
             return
 
-        trigger_state = command.trigger.eval(
-            self._commands[dep].state
-            for dep in command.trigger
+        trigger_status = command_def.trigger.eval(command)
+
+        if trigger_status != Command.UNKNOWN:
+            command_def.triggered[path] = True
+            command_def.status[path] = (
+                Command.DONE
+                if trigger_status == Command.DONE
+                else Command.FAILED
+                )
+            if command_def.callback:
+                command_def.callback(path, trigger_status)
+
+    def _maybe_trigger(self, command_key, path):
+        logging.warning('Obsolete _maybe_trigger called, use _maybe_trigger_cmd')
+        command_def = self._commands[command_key]
+
+        # Reentrancy check
+        if command_def.triggered[path]:
+            return
+
+        trigger_status = command_def.trigger.eval(
+            # Wrong, command has a state
+            _Command(command_def, path, None) 
             )
 
-        if trigger_state != Command.UNKNOWN:
-            command.triggered[sub_key] = True
-            command.state[sub_key] = (
-                Done.TRUE
-                if trigger_state == Command.DONE
-                else Done.FALSE
+        if trigger_status != Command.UNKNOWN:
+            command_def.triggered[path] = True
+            command_def.status[path] = (
+                Command.DONE
+                if trigger_status == Command.DONE
+                else Command.FAILED
                 )
-            callback = command.callbacks[trigger_state]
-            if callback:
-                callback()
+            if command_def.callback:
+                command_def.callback(path, trigger_status)
 
-    def add_command(self, command_key, trigger=NoTrigger(), callbacks=None):
+    def add_command(self, command_key, trigger=NoTrigger(), callback=None):
+        logging.warning('Obsolete add_command called, use define_command')
+        return self.define_command(command_key, trigger, callback)
+
+    def define_command(self, command_key, trigger=NoTrigger(), callback=None):
         """
         Register a command with callbacks.
 
         Run the callback immediately if the condition is already satisfied.
         """
-        if callbacks is None:
-            callbacks = {}
-        if (
-            (callbacks.get(Command.DONE) or callbacks.get(Command.FAILED))
-            and callbacks.get(Command.OVER)
-            ):
-            raise ValueError('Only one of done/failed or over supported at once')
-
         if command_key in self._commands:
             raise ValueError(f'Command already added: {command_key}')
 
-        self._commands[command_key] = Command(
-            state=defaultdict(lambda: Done.UNKNOWN),
+        command_def = CommandDefinition(
+            status=defaultdict(lambda: Command.UNKNOWN),
             triggered=defaultdict(bool),
             downstream=[],
             trigger=trigger,
-            callbacks={
-                state: callbacks.get(state) or callbacks.get(Command.OVER)
-                for state in (Command.DONE, Command.FAILED)
-                }
+            callback=callback,
+            result={},
+            key=command_key,
+            script=self,
             )
+        self._commands[command_key] = command_def
 
-        for dep in trigger:
-            self._commands[dep].downstream.append(command_key)
+        for dep, pathmap in trigger.downlinks():
+            self._commands[dep].downstream.append((command_key, pathmap))
 
-        self._maybe_trigger(command_key)
+        #self._maybe_trigger(command_key, path=tuple())
+
+        return command_def
+
+    def run(self, command_def):
+        """
+        Creates a concrete command from a command definition, potentially
+        triggering its execution
+        """
+        command = _Command(command_def, path=tuple(), inputs=None)
+
+        self._maybe_trigger_cmd(command)
+
+        return command
 
     def __contains__(self, command_key):
         return command_key in self._commands
 
-    def status(self, command_key, sub_key=0):
+    def status(self, command_key, path=tuple()):
         """
         Returns status of the command
         """
-        return self._commands[command_key].state[sub_key]
+        return self._commands[command_key].status[path]
+
+    def get_def(self, command_key):
+        return self._commands[command_key]

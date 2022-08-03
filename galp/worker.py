@@ -27,7 +27,8 @@ from galp.lower_protocol import MessageList
 from galp.protocol import ProtocolEndException, IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.script import Script, Command, AllDone
+from galp.script import Script, AllDone
+from galp.commands import define_commands
 
 from galp.profiler import Profiler
 from galp.serializer import Serializer
@@ -131,6 +132,7 @@ class WorkerProtocol(ReplyProtocol):
         self.worker = worker
         self.store = galp.cache.CacheStack(store_dir, Serializer())
         self.script = Script()
+        self.commands = define_commands(self.script)
 
     def on_invalid(self, route, reason):
         logging.error('Bad request: %s', reason)
@@ -190,10 +192,11 @@ class WorkerProtocol(ReplyProtocol):
                 continue
             if dep_name in self.store:
                 # Resource is available, but we still need to mark it as such
-                self.script.add_command(
+                cdef = self.script.define_command(
                     command_key,
                     trigger=AllDone()
                     )
+                self.script.run(cdef)
                 continue
             # Else, we send a get back and register an external-trigger command
             replies.append(self.get(route, dep_name))
@@ -272,12 +275,12 @@ class Worker:
         The commands for fetching the data are assumed to have been added to the
         script already.
         """
-        def _start_task():
+        def _start_task(path, status):
             task = asyncio.create_task(
                 self.run_submission(client_route, name, task_dict)
                 )
             self.galp_jobs.put_nowait(task)
-        self.protocol.script.add_command(
+        cdef = self.protocol.script.define_command(
             ('EXEC', name),
             trigger=AllDone(
                 ('GET', dep_name)
@@ -286,13 +289,9 @@ class Worker:
                     *task_dict['kwarg_names'].values()
                     ]
                     ),
-            callbacks={
-                # We start the task even if the fetch fails,
-                # so that it completes with error and a message gets propagated
-                # back
-                Command.OVER: _start_task
-                }
+            callback = _start_task
             )
+        self.protocol.script.run(cdef)
 
     async def listen(self):
         """
