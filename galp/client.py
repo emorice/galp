@@ -90,21 +90,15 @@ class Client:
         exceptions, cancellations or timeouts
         """
         scheduler = asyncio.create_task(self._process_scheduled())
-        async def _cleanup():
+        try:
+            yield
+        finally:
             logging.info('Stopping outgoing message scheduler')
             scheduler.cancel()
             try:
                 await scheduler
             except asyncio.CancelledError:
                 pass
-        try:
-            yield
-            await _cleanup()
-        except GeneratorExit:
-            logging.error('Skipping process_scheduled cancellation')
-        except:
-            await _cleanup()
-            raise
 
     async def _process_scheduled(self):
         """
@@ -129,18 +123,12 @@ class Client:
                 # Wait for either a new command or the end of timeout
                 logging.debug('SCHED: No ready command, waiting %s', next_time - time.time())
                 try:
-                    wait_task = asyncio.create_task(self.new_command.wait())
-                    done, pending = await asyncio.wait(
-                        [wait_task],
+                    await asyncio.wait_for(
+                        self.new_command.wait(),
                         timeout=next_time - time.time())
-                except asyncio.CancelledError:
-                    await cleanup_tasks([wait_task])
-                    raise
-                for task in done:
-                    await task
-                await cleanup_tasks(pending)
-                if done:
                     self.new_command.clear()
+                except asyncio.TimeoutError:
+                    pass
             else:
                 logging.debug('SCHED: No ready command, waiting forever')
                 await self.new_command.wait()
@@ -182,17 +170,12 @@ class Client:
         for task in new_inputs:
             self.schedule(task)
 
-        done, pending = await asyncio.wait([
-            self.run_collection(tasks, return_exceptions=return_exceptions)
-            ], timeout=timeout)
-        for task in done:
-            try:
-                await task
-            except ProtocolEndException:
-                pass
-        await cleanup_tasks(pending)
-        if not done:
-            raise asyncio.TimeoutError
+        try:
+            await asyncio.wait_for(
+                self.run_collection(tasks, return_exceptions=return_exceptions),
+                timeout=timeout)
+        except ProtocolEndException:
+            pass
 
         results = []
         failed = None

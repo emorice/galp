@@ -81,12 +81,11 @@ async def wait(tasks):
     try:
         done, pending = await asyncio.wait(tasks,
             return_when=asyncio.FIRST_COMPLETED)
+        await cleanup_tasks(pending)
         for task in done:
             await task
-        await cleanup_tasks(pending)
     except:
         logging.error("Aborting")
-        await cleanup_tasks(pending)
         raise
     else:
         logging.info("Terminating normally")
