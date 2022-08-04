@@ -22,8 +22,7 @@ from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.graph import Handle
 from galp.command_queue import CommandQueue
-from galp.script import Script, AllDone, SubsDone
-from galp.commands import define_commands
+from galp.commands import Script
 
 
 class TaskStatus(IntEnum):
@@ -93,24 +92,24 @@ class Client:
         while True:
             next_command, next_time = self.command_queue.pop()
             if next_command:
-                logging.info('SCHED: Ready command %s', next_command.hex())
+                logging.debug('SCHED: Ready command %s', next_command.hex())
                 next_msg = self.protocol.write_next(next_command)
                 if next_msg:
                     await self.transport.send_message(next_msg)
                     self.command_queue.requeue(next_command)
                 else:
-                    logging.info('SCHED: No message for %s', next_command.hex())
+                    logging.debug('SCHED: No message for %s', next_command.hex())
 
             elif next_time:
                 # Wait for either a new command or the end of timeout
-                logging.info('SCHED: No ready command, waiting %s', next_time - time.time())
+                logging.debug('SCHED: No ready command, waiting %s', next_time - time.time())
                 done, _pending = await asyncio.wait(
                     [self.new_command.wait()],
                     timeout=next_time - time.time())
                 if done:
                     self.new_command.clear()
             else:
-                logging.info('SCHED: No ready command, waiting forever')
+                logging.debug('SCHED: No ready command, waiting forever')
                 await self.new_command.wait()
 
     def schedule(self, task_name):
@@ -174,20 +173,16 @@ class Client:
         self.protocol.add_finals(tasks)
 
         # Register the termination command
-        def _end(path, status):
-            if path:
-                return
-            raise ProtocolEndException(path, status)
+        def _end(status):
+            raise ProtocolEndException(status)
 
-        collection_id = self._collections
-        self._collections += 1
-
-        main_command_def = self.protocol.script.define_command(
-            ('END', collection_id),
-            trigger=AllDone(('RGET', t.name) for t in tasks),
-            callback=_end
+        self.protocol.script.callback(
+            self.protocol.script.collect(
+                parent=None,
+                names=[t.name for t in tasks]
+                ),
+            _end
             )
-        main_command = self.protocol.script.run(main_command_def)
 
         scheduler = asyncio.create_task(self.process_scheduled())
 
@@ -216,11 +211,10 @@ class BrokerProtocol(ReplyProtocol):
 
 
         ## Replacement for status tracker
-        self.script = Script()
         # repo of keys, only for prototyping
         self._command_keys = {}
         # command defs
-        self.command_defs = define_commands(self.script)
+        self.script = Script()
 
         ## Current task status
         self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
@@ -316,25 +310,6 @@ class BrokerProtocol(ReplyProtocol):
                 self.schedule(task_details.name)
             self._finals.add(task_details.name)
 
-        # Also register the GETs in the script which will replace _finals in
-        # the end
-        for task_details in tasks:
-            get_key = 'GET', task_details.name
-            self._command_keys[task_details.name] = get_key, tuple()
-            if get_key not in self.script:
-                self.script.add_command(get_key)
-                rget_key = 'RGET', task_details.name
-                self.script.add_command(
-                    rget_key,
-                    trigger=SubsDone([get_key, rget_key]),
-                    callback=(
-                        lambda path, status, key=rget_key: self.script.over(
-                            key, status, path=path
-                            )
-                         )
-                    )
-
-
     def write_next(self, name):
         """
         Returns the next nessage to be sent for a task given the information we
@@ -392,7 +367,6 @@ class BrokerProtocol(ReplyProtocol):
         """
 
         # Fetch task information
-        command_key, command_path = self._command_keys[name]
         handle = (
             self._details[name].handle
             if name in self._details
@@ -411,8 +385,6 @@ class BrokerProtocol(ReplyProtocol):
             self._status[children_name] = TaskStatus.COMPLETED
             # The scheduler needs to know that this task wants to be fetched
             self._finals.add(children_name)
-            # Add the command link
-            self._command_keys[children_name] = command_key, command_path + (i,)
             # Schedule it for GET to be sent in the future
             self.schedule(children_name)
 
@@ -424,8 +396,11 @@ class BrokerProtocol(ReplyProtocol):
         # This also should become useless as the _status gets phased out
         self._status[name] = TaskStatus.AVAILABLE
 
-        # Mark the corresponding command as done and run callbacks
-        self.script.done(command_key, command_path, result=children)
+        # Fetch command
+        command = self.script.commands['GET', name]
+        # Mark as done and sets result
+        command.done(children)
+
 
     def on_done(self, route, name):
         """Given that done_task just finished, mark it as done, schedule any

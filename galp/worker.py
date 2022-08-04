@@ -27,8 +27,7 @@ from galp.lower_protocol import MessageList
 from galp.protocol import ProtocolEndException, IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.script import Script, AllDone
-from galp.commands import define_commands
+from galp.commands import Script
 
 from galp.profiler import Profiler
 from galp.serializer import Serializer
@@ -132,7 +131,6 @@ class WorkerProtocol(ReplyProtocol):
         self.worker = worker
         self.store = galp.cache.CacheStack(store_dir, Serializer())
         self.script = Script()
-        self.commands = define_commands(self.script)
 
     def on_invalid(self, route, reason):
         logging.error('Bad request: %s', reason)
@@ -181,28 +179,28 @@ class WorkerProtocol(ReplyProtocol):
         # If any resource is missing, send GETs back to the sender of the
         # SUBMIT. In any case, add it to the command list to be used as a
         # trigger input for the actual task execution
-        for dep_name in [
+        dep_names = [
             *task_dict['arg_names'],
             *task_dict['kwarg_names'].values()
-            ]:
+            ]
+
+        # Schedule the task first. It won't actually start until its inputs are
+        # marked as available
+        self.worker.schedule_task(route, name, task_dict)
+
+        for dep_name in dep_names:
             command_key = 'GET', dep_name
-            if command_key in self.script:
-                # Resource was already requested at some point before, nothing
-                # else to do
-                continue
             if dep_name in self.store:
                 # Resource is available, but we still need to mark it as such
-                cdef = self.script.define_command(
-                    command_key,
-                    trigger=AllDone()
-                    )
-                self.script.run(cdef)
+                # FIXME: this could be wrong if it's a multipart resource with
+                # some parts still missing. This case never happens.
+                logging.warning('DEP found %s', dep_name)
+                self.script.commands[command_key].done(0)
                 continue
-            # Else, we send a get back and register an external-trigger command
+            # Else, we send a get back
+            logging.warning('DEP fetch %s', dep_name)
             replies.append(self.get(route, dep_name))
-            self.script.add_command(command_key)
 
-        self.worker.schedule_task(route, name, task_dict)
 
         return replies
 
@@ -211,7 +209,8 @@ class WorkerProtocol(ReplyProtocol):
         Put object in store, and mark the command as done
         """
         self.store.put_serial(name, serialized)
-        self.script.done(('GET', name))
+        _proto, _data, children = serialized
+        self.script.commands['GET', name].done(children)
 
 class Worker:
     """
@@ -275,23 +274,19 @@ class Worker:
         The commands for fetching the data are assumed to have been added to the
         script already.
         """
-        def _start_task(path, status):
+        def _start_task(status):
             task = asyncio.create_task(
                 self.run_submission(client_route, name, task_dict)
                 )
             self.galp_jobs.put_nowait(task)
-        cdef = self.protocol.script.define_command(
-            ('EXEC', name),
-            trigger=AllDone(
-                ('GET', dep_name)
-                for dep_name in [
+        self.protocol.script.callback(
+            self.protocol.script.collect(
+                None, [
                     *task_dict['arg_names'],
                     *task_dict['kwarg_names'].values()
-                    ]
-                    ),
-            callback = _start_task
+                    ]),
+            callback=_start_task
             )
-        self.protocol.script.run(cdef)
 
     async def listen(self):
         """
@@ -329,7 +324,7 @@ class Worker:
         kwarg_names = task_dict['kwarg_names']
 
         logging.info('Executing step %s (%s)',
-            name.hex(), step_name.decode('ascii'))
+            name, step_name.decode('ascii'))
 
         try:
             try:

@@ -11,6 +11,18 @@ from dataclasses import dataclass
 
 from galp.eventnamespace import EventNamespace
 
+class TaskName(bytes):
+    """
+    Simpler wrapper around bytes with a shortened, more readable repr
+    """
+    def __repr__(self):
+        return self.__str__()
+
+    def __str__(self):
+        _hex = self.hex()
+        return _hex[:6] + '..' + _hex[-2:]
+
+
 class Step:
     """Object wrapping a function that can be called as a pipeline step
 
@@ -172,7 +184,7 @@ class Task:
         hashed = Task.hash_one(payload)
         logging.debug("HASH %s <- %s", hashed.hex(), payload.decode())
 
-        return hashed
+        return TaskName(hashed)
 
     def __iter__(self):
         """
@@ -217,7 +229,7 @@ class SubTask:
         payload += str(index).encode('ascii')
         payload += b']'
 
-        return Task.hash_one(payload)
+        return TaskName(Task.hash_one(payload))
 
     @property
     def dependencies(self):

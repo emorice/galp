@@ -90,7 +90,7 @@ class CacheStack():
         Recursive call if handle is iterable.
         """
         import logging
-        logging.error('Storing %s', handle.name.hex())
+        logging.error('Storing %s', handle.name)
         try:
             # Logical composite handle
             ## Recursively store the children

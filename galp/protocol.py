@@ -383,7 +383,8 @@ class Protocol(LowerProtocol):
         task_dict['kwarg_names'] = {}
         while argstack != []:
             try:
-                keyword, arg_name = argstack.pop(), argstack.pop()
+                keyword = argstack.pop()
+                arg_name = galp.graph.TaskName(argstack.pop())
             except IndexError as exc:
                 raise IllegalRequestError from exc
             if keyword == b'':
