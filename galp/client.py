@@ -101,9 +101,14 @@ class Client:
             elif next_time:
                 # Wait for either a new command or the end of timeout
                 logging.debug('SCHED: No ready command, waiting %s', next_time - time.time())
-                done, pending = await asyncio.wait(
-                    [self.new_command.wait()],
-                    timeout=next_time - time.time())
+                try:
+                    wait_task = asyncio.create_task(self.new_command.wait())
+                    done, pending = await asyncio.wait(
+                        [wait_task],
+                        timeout=next_time - time.time())
+                except asyncio.CancelledError:
+                    await cleanup_tasks([wait_task])
+                    raise
                 for task in done:
                     await task
                 await cleanup_tasks(pending)
