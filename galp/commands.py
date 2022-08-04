@@ -17,6 +17,16 @@ def status_conj(commands):
         return Status.FAILED
     return Status.UNKNOWN
 
+def status_conj_any(commands):
+    """
+    Ternary conjunction of an iterable of status
+    """
+    status = [cmd.status for cmd in commands]
+    if all(s != Status.UNKNOWN for s in status):
+        return Status.DONE
+    return Status.UNKNOWN
+
+
 class Script:
     """
     A collection of maker methods for Commands
@@ -24,11 +34,11 @@ class Script:
     def __init__(self):
         self.commands = {}
 
-    def collect(self, parent, names):
+    def collect(self, parent, names, allow_failures=False):
         """
         Creates a command representing a collection of recursive fetches
         """
-        return Collect(self, parent, names)
+        return Collect(self, parent, names, allow_failures)
 
     def rget(self, parent, name):
         """
@@ -124,6 +134,18 @@ class Command:
         self.result = result
         self.status = Status.DONE
 
+    def failed(self, result):
+        """
+        Mark the future as failed and runs callbacks.
+
+        A task can be safely marked several times, the callbacks are run only
+        when the status transitions from unknown to known.
+
+        However successive done calls will overwrite the result.
+        """
+        self.result = result
+        self.status = Status.FAILED
+
 class Get(Command):
     """
     Get a single resource part
@@ -172,8 +194,9 @@ class Collect(Command):
     """
     A collection of recursive gets
     """
-    def __init__(self, script, parent, names):
+    def __init__(self, script, parent, names, allow_failures):
         self.names = names
+        self.allow_failures = allow_failures
         self._in_rgets = None
         super().__init__(script, parent)
 
@@ -186,6 +209,8 @@ class Collect(Command):
                 self.script.rget(self, name)
                 for name in self.names
                 ]
+        if self.allow_failures:
+            return status_conj_any(self._in_rgets)
         return status_conj(self._in_rgets)
 
 class Callback(Command):

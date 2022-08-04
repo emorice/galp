@@ -24,7 +24,11 @@ import galp.tests.steps as gts
 
 @pytest.fixture
 def poisoned_cache(tmpdir):
+    """
+    A galp cache with a random bad value in it
 
+    The error should occur at deserialization.
+    """
     task = gts.arange(5)
 
     # use a valid name
@@ -32,12 +36,12 @@ def poisoned_cache(tmpdir):
     # Use a valid proto name
     proto = galp.serializer.DillSerializer.proto_id
     data = bytes.fromhex('0123456789abcdef')
-    children = b'\x00'
+    children = 0
 
     serializer = None
 
     cache = galp.cache.CacheStack(tmpdir, serializer)
-    cache.put_serial(name, proto, data, children)
+    cache.put_serial(name, (proto, data, children))
 
     return task
 
@@ -469,7 +473,7 @@ async def test_return_exceptions(client):
     task_fail = gts.raises_error()
     task_ok = gts.plugin_hello()
 
-    # Ensured the first task fails before we run the second
+    # Ensure the first task fails before we run the second
     with pytest.raises(galp.TaskFailedError):
         ans_fail, = await asyncio.wait_for(client.collect(task_fail), 3)
 
@@ -477,8 +481,8 @@ async def test_return_exceptions(client):
         client.collect(task_fail, task_ok, return_exceptions=True),
         3)
 
-    assert type(ans_fail) is galp.TaskFailedError
-    assert ans_ok == task_ok.step.function()
+    assert isinstance(ans_fail, galp.TaskFailedError)
+    assert ans_ok == task_ok.step.function() # pylint: disable=no-member
 
 async def test_cache_corruption(poisoned_cache, client):
     """

@@ -11,11 +11,12 @@ class ForwardProtocol(Protocol):
     def on_verb(self, route, msg_body):
         """
         Message handler that call's Protocol default handler
-        but returns the original message
+        but returns the original message when the handler generates no message.
+
+        If the handler generates a message, it replaces the original and gets
+        forwarded instead.
         """
         reply = super().on_verb(route, msg_body)
         if reply:
-            raise ValueError(f"Forwarding protocol handlers cannot generate "
-                f"replies (verb was \"{msg_body[:1]}\")"
-                )
+            return reply
         return (route, msg_body)

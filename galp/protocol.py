@@ -4,7 +4,7 @@ GALP protocol implementation
 
 import logging
 
-import galp.graph
+from galp.graph import Task, TaskName
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
@@ -209,6 +209,7 @@ class Protocol(LowerProtocol):
                 'Protocol layer')
 
         task_dict = dict(
+            name=task.name,
             step_name=task.step.key,
             vtags=task.vtags,
             arg_names=[ arg.name for arg in task.args ],
@@ -225,11 +226,11 @@ class Protocol(LowerProtocol):
 
         Args:
             task_dict: dictionary containing all the serializable part of the
-                task object to transmit. Contains the `step_name`, a list of
-                `vtags`, a list of positional `arg_names` and a dictionary of
-                `kwarg_names`.
+                task object to transmit. Contains the task `name`, the
+                `step_name`, a list of `vtags`, a list of positional `arg_names`
+                and a dictionary of `kwarg_names`.
         """
-        msg = [b'SUBMIT', task_dict['step_name']]
+        msg = [b'SUBMIT', task_dict['name'], task_dict['step_name']]
         # Vtags
         vtags = task_dict['vtags']
         msg += [ len(vtags).to_bytes(1, 'big') ]
@@ -302,7 +303,7 @@ class Protocol(LowerProtocol):
         self._validate(len(msg) >= 2, route, 'GET without a name')
         self._validate(len(msg) <= 2, route, 'GET with too many names')
 
-        name = msg[1]
+        name = TaskName(msg[1])
 
         return self.on_get(route, name)
 
@@ -311,7 +312,7 @@ class Protocol(LowerProtocol):
         self._validate(len(msg) >= 2, route, 'DOING without a name')
         self._validate(len(msg) <= 2, route, 'DOING with too many names')
 
-        name = msg[1]
+        name = TaskName(msg[1])
 
         return self.on_doing(route, name)
 
@@ -320,16 +321,16 @@ class Protocol(LowerProtocol):
         self._validate(len(msg) >= 2, route, 'DONE without a name')
         self._validate(len(msg) <= 2, route, 'DONE with too many names')
 
-        name = msg[1]
+        name = TaskName(msg[1])
 
         return self.on_done(route, name)
 
     @event.on('FAILED')
-    def _on_done(self, route, msg):
+    def _on_failed(self, route, msg):
         self._validate(len(msg) >= 2, route, 'FAILED without a name')
         self._validate(len(msg) <= 2, route, 'FAILED with too many names')
 
-        name = msg[1]
+        name = TaskName(msg[1])
 
         return self.on_failed(route, name)
 
@@ -338,7 +339,7 @@ class Protocol(LowerProtocol):
         self._validate(len(msg) >= 2, route, 'NOTFOUND without a name')
         self._validate(len(msg) <= 2, route, 'NOTFOUND with too many names')
 
-        name = msg[1]
+        name = TaskName(msg[1])
 
         return self.on_not_found(route, name)
 
@@ -346,7 +347,7 @@ class Protocol(LowerProtocol):
     def _on_put(self, route, msg):
         self._validate(4 <= len(msg) <= 5, route, 'PUT with wrong number of parts')
 
-        name = msg[1]
+        name = TaskName(msg[1])
         proto = msg[2]
         data = msg[3]
         children = int.from_bytes(msg[4], 'big') if len(msg) >= 5 else 0
@@ -364,13 +365,14 @@ class Protocol(LowerProtocol):
         task_dict = {}
 
         self._validate(
-            len(msg) >= 3, route,
-            'SUBMIT without step or tag count') # SUBMIT step n_tags
-        task_dict['step_name'] = msg[1]
+            len(msg) >= 4, route,
+            'SUBMIT without name, step or tag count') # SUBMIT name step n_tags
+        task_dict['name'] = msg[1]
+        task_dict['step_name'] = msg[2]
 
-        n_tags = int.from_bytes(msg[2], 'big')
+        n_tags = int.from_bytes(msg[3], 'big')
         # Collect tags
-        argstack = msg[3:]
+        argstack = msg[4:]
         self._validate(
             len(argstack) >= n_tags, route,
             'Not as many tags as stated') # Expected number of tags
@@ -384,7 +386,7 @@ class Protocol(LowerProtocol):
         while argstack != []:
             try:
                 keyword = argstack.pop()
-                arg_name = galp.graph.TaskName(argstack.pop())
+                arg_name = TaskName(argstack.pop())
             except IndexError as exc:
                 raise IllegalRequestError from exc
             if keyword == b'':
@@ -392,6 +394,10 @@ class Protocol(LowerProtocol):
             else:
                 task_dict['kwarg_names'][keyword] = arg_name
 
-        name = galp.graph.Task.gen_name(task_dict)
+        # Name generation from older version where the name was not included
+        # explicitely
+        name = Task.gen_name(task_dict)
+        self._validate(name == task_dict['name'], route,
+            'Given and generated names do not match')
 
         return self.on_submit(route, name, task_dict)

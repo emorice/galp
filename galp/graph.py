@@ -22,7 +22,6 @@ class TaskName(bytes):
         _hex = self.hex()
         return _hex[:6] + '..' + _hex[-2:]
 
-
 class Step:
     """Object wrapping a function that can be called as a pipeline step
 
@@ -84,7 +83,7 @@ class Task:
           included as a vtag, causing unique names to be generated
           and the step to be rerun for each python client session.
     """
-    def __init__(self, step, args, kwargs, vtag=None):
+    def __init__(self, step, args, kwargs, vtag=None, items=None):
         self.step = step
         self.args = [self.ensure_task(arg) for arg in args]
         self.kwargs = { kw.encode('ascii'): self.ensure_task(arg) for kw, arg in kwargs.items() }
@@ -302,7 +301,7 @@ class HereisTask:
         # Todo: more robust hashing, but this is enough for most case where
         # hereis resources are a good fit (more complex objects would tend to be
         # actual step outputs)
-        self.name = Task.hash_one(json.dumps(obj).encode('ascii'))
+        self.name = TaskName(Task.hash_one(json.dumps(obj).encode('ascii')))
 
     @property
     def dependencies(self):

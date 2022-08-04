@@ -3,7 +3,6 @@ Tests direct communication with a worker, with no broker or client involved.
 """
 
 import asyncio
-import logging
 import signal
 import psutil
 import zmq
@@ -137,6 +136,7 @@ def test_task(worker_socket):
     socket, *_ = worker_socket
 
     task = galp.steps.galp_hello()
+    # pylint: disable=no-member
     step_name = task.step.key
 
     name = galp.graph.Task.gen_name(dict(
@@ -144,7 +144,7 @@ def test_task(worker_socket):
         arg_names=[], kwarg_names={}, vtags=[]
         ))
 
-    socket.send_multipart(make_msg(b'SUBMIT', step_name, b'\x00'))
+    socket.send_multipart(make_msg(b'SUBMIT', name, step_name, b'\x00'))
 
     assert_ready(socket)
 
@@ -181,7 +181,7 @@ def test_reference(worker_socket):
 
     task2 = galp.steps.galp_double(task1)
 
-    worker_socket.send_multipart(make_msg(b'SUBMIT', task1.step.key, b'\x00'))
+    worker_socket.send_multipart(make_msg(b'SUBMIT', task1.name, task1.step.key, b'\x00'))
 
     assert_ready(worker_socket)
 
@@ -191,7 +191,7 @@ def test_reference(worker_socket):
     assert is_body(doing, [b'DOING', task1.name])
     assert is_body(done, [b'DONE', task1.name])
 
-    worker_socket.send_multipart(make_msg(b'SUBMIT', task2.step.key, b'\x00', b'', task1.name))
+    worker_socket.send_multipart(make_msg(b'SUBMIT', task2.name, task2.step.key, b'\x00', b'', task1.name))
 
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)

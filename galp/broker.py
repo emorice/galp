@@ -135,13 +135,23 @@ class WorkerProtocol(BrokerProtocol):
             logging.error("Worker %s was not assigned a task, ignoring exit", peer)
             return None
 
-        task_name, client_route = task
+        command, client_route = task
+        command_name, task_name = command
         # Normally the other route part is the worker route, but here the
         # worker died so we set it to empty to make sure the client cannot
         # accidentally try to re-use it.
-        incoming_route = []
+        new_route = [], client_route
 
-        return self.failed((incoming_route, client_route), task_name)
+        if command_name == b'GET':
+            return self.not_found(new_route, task_name)
+        if command_name == b'SUBMIT':
+            return self.failed(new_route, task_name)
+        logging.error(
+            'Worker %s died while handling %s, no error propagation',
+            peer, command
+            )
+        return None
+
 
     def write_message(self, msg):
         route, msg_body = msg
@@ -198,7 +208,6 @@ async def main(args):
         tasks.append(asyncio.create_task(coro))
 
     await galp.cli.wait(tasks)
-
 
 def add_parser_arguments(parser):
     """Add broker-specific arguments to the given parser"""

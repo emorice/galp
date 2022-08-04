@@ -89,8 +89,6 @@ class CacheStack():
         For now this eagerly serializes it and commits it to persistent cache.
         Recursive call if handle is iterable.
         """
-        import logging
-        logging.error('Storing %s', handle.name)
         try:
             # Logical composite handle
             ## Recursively store the children

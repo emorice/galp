@@ -16,13 +16,14 @@ import zmq
 import zmq.asyncio
 
 from galp.cache import CacheStack
-from galp.serializer import Serializer
+from galp.serializer import Serializer, DeserializeError
 from galp.protocol import ProtocolEndException
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.graph import Handle
 from galp.command_queue import CommandQueue
 from galp.commands import Script
+from galp.cli import cleanup_tasks
 
 
 class TaskStatus(IntEnum):
@@ -78,9 +79,6 @@ class Client:
         self.command_queue = CommandQueue()
         self.new_command = asyncio.Event()
 
-        # Collection counter to generate unique commands
-        self._collections = 0
-
     async def process_scheduled(self):
         """
         Send submit/get requests from the queue.
@@ -103,9 +101,12 @@ class Client:
             elif next_time:
                 # Wait for either a new command or the end of timeout
                 logging.debug('SCHED: No ready command, waiting %s', next_time - time.time())
-                done, _pending = await asyncio.wait(
+                done, pending = await asyncio.wait(
                     [self.new_command.wait()],
                     timeout=next_time - time.time())
+                for task in done:
+                    await task
+                await cleanup_tasks(pending)
                 if done:
                     self.new_command.clear()
             else:
@@ -151,16 +152,33 @@ class Client:
 
         # Run message processing until fulfillment (may be not at all !)
         try:
-            await self.run_collection(tasks)
+            done, pending = await asyncio.wait(
+                [self.run_collection(tasks, return_exceptions=return_exceptions)],
+                timeout=timeout
+                )
         except ProtocolEndException:
             pass
+        await cleanup_tasks(pending)
+        if not done:
+            raise asyncio.TimeoutError
 
-        return [
-            self.protocol.store.get_native(task.name)
-            for task in tasks
-            ]
+        results = []
+        failed = None
+        for task in tasks:
+            try:
+                results.append(
+                    self.protocol.store.get_native(task.name)
+                    )
+            except (KeyError, DeserializeError) as exc:
+                new_exc = TaskFailedError(task.name)
+                new_exc.__cause__ = exc
+                failed = new_exc
+                results.append(new_exc)
+        if failed is None or return_exceptions:
+            return results
+        raise failed
 
-    async def run_collection(self, tasks):
+    async def run_collection(self, tasks, return_exceptions):
         """
         Processes messages until the collection target is achieved
         """
@@ -179,7 +197,8 @@ class Client:
         self.protocol.script.callback(
             self.protocol.script.collect(
                 parent=None,
-                names=[t.name for t in tasks]
+                names=[t.name for t in tasks],
+                allow_failures=return_exceptions
                 ),
             _end
             )
@@ -391,7 +410,7 @@ class BrokerProtocol(ReplyProtocol):
         # Put the parent part
         self.store.put_serial(name, (proto, data, children))
 
-        # Mark the task as available, not that this do not imply the
+        # Mark the task as available, not that this does not imply the
         # availability of the sub-tasks
         # This also should become useless as the _status gets phased out
         self._status[name] = TaskStatus.AVAILABLE
@@ -400,7 +419,6 @@ class BrokerProtocol(ReplyProtocol):
         command = self.script.commands['GET', name]
         # Mark as done and sets result
         command.done(children)
-
 
     def on_done(self, route, name):
         """Given that done_task just finished, mark it as done, schedule any
@@ -437,14 +455,18 @@ class BrokerProtocol(ReplyProtocol):
             task_desc = self._details[task].description
 
             if task == name:
-                logging.error('TASK FAILED: %s [%s]', task_desc, task.hex())
+                logging.error('TASK FAILED: %s [%s]', task_desc, task)
             else:
-                logging.error('Propagating failure: %s [%s]', task_desc, task.hex())
+                logging.error('Propagating failure: %s [%s]', task_desc, task)
 
             # Mark as failed
             self._status[task] = TaskStatus.FAILED
+            # Mark fetch command as failed if pending:
+            command = self.script.commands.get(('GET', task))
+            if command:
+                command.failed('FAILED')
 
-            # Fails the dependents
+            # Fail the dependents
             # Note: this can visit a task several time, not a problem
             for subtask in self._dependents[task]:
                 tasks.add(subtask)
