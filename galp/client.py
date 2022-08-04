@@ -9,6 +9,7 @@ import logging
 import asyncio
 import time
 
+from contextlib import asynccontextmanager
 from enum import IntEnum, auto
 from collections import defaultdict
 
@@ -79,7 +80,33 @@ class Client:
         self.command_queue = CommandQueue()
         self.new_command = asyncio.Event()
 
+    @asynccontextmanager
     async def process_scheduled(self):
+        """
+        Async context manager running process_scheduled in the background and
+        cancelling it at the end.
+
+        Meant to ensure the scheduling loop is correctly cancelled even on
+        exceptions, cancellations or timeouts
+        """
+        scheduler = asyncio.create_task(self._process_scheduled())
+        async def _cleanup():
+            logging.info('Stopping outgoing message scheduler')
+            scheduler.cancel()
+            try:
+                await scheduler
+            except asyncio.CancelledError:
+                pass
+        try:
+            yield
+            await _cleanup()
+        except GeneratorExit:
+            logging.error('Skipping process_scheduled cancellation')
+        except:
+            await _cleanup()
+            raise
+
+    async def _process_scheduled(self):
         """
         Send submit/get requests from the queue.
 
@@ -155,14 +182,14 @@ class Client:
         for task in new_inputs:
             self.schedule(task)
 
-        # Run message processing until fulfillment (may be not at all !)
-        try:
-            done, pending = await asyncio.wait(
-                [self.run_collection(tasks, return_exceptions=return_exceptions)],
-                timeout=timeout
-                )
-        except ProtocolEndException:
-            pass
+        done, pending = await asyncio.wait([
+            self.run_collection(tasks, return_exceptions=return_exceptions)
+            ], timeout=timeout)
+        for task in done:
+            try:
+                await task
+            except ProtocolEndException:
+                pass
         await cleanup_tasks(pending)
         if not done:
             raise asyncio.TimeoutError
@@ -208,17 +235,8 @@ class Client:
             _end
             )
 
-        scheduler = asyncio.create_task(self.process_scheduled())
-
-        await self.transport.listen_reply_loop()
-
-        logging.info('Stopping outgoing message scheduler')
-        scheduler.cancel()
-
-        try:
-            await scheduler
-        except asyncio.CancelledError:
-            pass
+        async with self.process_scheduled():
+            await self.transport.listen_reply_loop()
 
 class BrokerProtocol(ReplyProtocol):
     """
