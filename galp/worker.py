@@ -9,6 +9,7 @@ within the job and easy to patch if the code has to be run somewhere else.
 """
 
 import os
+import sys
 import asyncio
 import logging
 import argparse
@@ -376,6 +377,27 @@ class Worker:
                 'running asynchronous task. This signals a bug in GALP itself.')
             raise
 
+def fork(**kwargs):
+    """
+    Forks a worker with the given arguments.
+
+    No validation is done on the arguments
+    """
+    pid = os.fork()
+    if pid == 0:
+        all_args = {
+            action.dest: action.default
+            for action in make_parser()._actions
+            if action.dest is not argparse.SUPPRESS
+        }
+        all_args.update(kwargs)
+        sys.exit(asyncio.run(
+            main(
+                argparse.Namespace(**all_args)
+            )
+        ))
+    return pid
+
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""
     parser.add_argument(
@@ -391,8 +413,14 @@ def add_parser_arguments(parser):
 
     galp.cli.add_parser_arguments(parser)
 
-if __name__ == '__main__':
-    # Convenience hook to start a worker from CLI
+def make_parser():
+    """
+    Creates argument parser and configures it
+    """
     _parser = argparse.ArgumentParser()
     add_parser_arguments(_parser)
-    asyncio.run(main(_parser.parse_args()))
+    return _parser
+
+if __name__ == '__main__':
+    # Convenience hook to start a worker from CLI
+    asyncio.run(main(make_parser().parse_args()))

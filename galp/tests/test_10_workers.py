@@ -2,6 +2,7 @@
 Tests direct communication with a worker, with no broker or client involved.
 """
 
+import os
 import asyncio
 import signal
 import psutil
@@ -9,8 +10,13 @@ import zmq
 import dill
 
 import pytest
+from async_timeout import timeout
 
 import galp.tests
+import galp.worker
+
+# pylint: disable=redefined-outer-name
+# pylint: disable=no-member
 
 # Custom fixtures
 # ===============
@@ -90,7 +96,7 @@ def test_shutdown(worker_socket, fatal_order):
 def test_signals(worker_socket, sig):
     """Test for termination on INT and TERM)"""
 
-    socket, endpoint, worker_handle = worker_socket
+    socket, _endpoint, worker_handle = worker_socket
 
     assert worker_handle.poll() is None
     assert_ready(socket)
@@ -103,7 +109,7 @@ def test_signals(worker_socket, sig):
 
     worker_handle.send_signal(sig)
 
-    gone, alive = psutil.wait_procs([process, *children], timeout=4)
+    _gone, alive = psutil.wait_procs([process, *children], timeout=4)
     assert not alive
 
 @pytest.mark.parametrize('msg_body', [
@@ -191,7 +197,9 @@ def test_reference(worker_socket):
     assert is_body(doing, [b'DOING', task1.name])
     assert is_body(done, [b'DONE', task1.name])
 
-    worker_socket.send_multipart(make_msg(b'SUBMIT', task2.name, task2.step.key, b'\x00', b'', task1.name))
+    worker_socket.send_multipart(
+        make_msg(b'SUBMIT', task2.name, task2.step.key, b'\x00', b'', task1.name)
+        )
 
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)
@@ -214,10 +222,9 @@ def test_reference(worker_socket):
         task2.name: 4
         }
     assert got_a[5] == got_b[5] == b'dill'
-    for _, _, _, _, name, proto, res, *children in [got_a, got_b]:
+    for _, _, _, _, name, _proto, res, *_children in [got_a, got_b]:
         assert dill.loads(res) == expected[name]
 
-@pytest.mark.asyncio
 async def test_async_socket(async_worker_socket):
     """
     Tests simple message exchange with the asyncio flavor of pyzmq
@@ -231,3 +238,23 @@ async def test_async_socket(async_worker_socket):
 
     ans = await asyncio.wait_for(sock.recv_multipart(), 3)
     assert body_startswith(ans, [b'ILLEGAL'])
+
+async def test_fork_worker(tmpdir):
+    """
+    Workers can be created through a fork based call
+    """
+    socket = zmq.asyncio.Context.instance().socket(zmq.ROUTER)
+    socket.bind('tcp://127.0.0.1:*')
+    endpoint = socket.getsockopt(zmq.LAST_ENDPOINT)
+
+    pid = galp.worker.fork(
+        endpoint=endpoint,
+        storedir=tmpdir
+        )
+    try:
+        async with timeout(3):
+            msg = await socket.recv_multipart()
+
+        assert b'READY' in msg
+    finally:
+        os.kill(pid, signal.SIGKILL)
