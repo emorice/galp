@@ -83,7 +83,6 @@ async def test_fill_queue(blocked_client):
                 client.protocol.submit_task(route, task)
                 )
 
-@pytest.mark.xfail
 async def test_unique_submission(peer_client):
     """
     Tests that we only successfully send a submit only once

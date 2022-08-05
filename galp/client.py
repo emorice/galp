@@ -30,14 +30,17 @@ class TaskStatus(IntEnum):
     A sorted enum representing the status of a task
     """
     UNKNOWN = auto()
-    DEPEND = auto()
 
-    SUBMITTED = auto()
+    # DOING received
     RUNNING = auto()
 
+    # DONE received or equiv.
     COMPLETED = auto()
-    TRANSFER = auto()
+
+    # PUT received or equiv.
     AVAILABLE = auto()
+
+    # FAILED received or equiv.
     FAILED = auto()
 
 class TaskFailedError(RuntimeError):
@@ -339,8 +342,12 @@ class BrokerProtocol(ReplyProtocol):
         Returns the next nessage to be sent for a task given the information we
         have about it
         """
-        if self._status[name] < TaskStatus.COMPLETED:
+        if self._status[name] < TaskStatus.RUNNING:
             return self.submit_task_by_name(name)
+
+        if self._status[name] < TaskStatus.COMPLETED:
+            # Task is running but not done yet, nothing to send
+            return None
 
         if name in self._finals:
             if self._status[name] < TaskStatus.AVAILABLE:
@@ -357,8 +364,6 @@ class BrokerProtocol(ReplyProtocol):
         if task_name not in self._details:
             raise ValueError(f"Task {task_name.hex()} is unknown")
         details = self._details[task_name]
-
-        self._status[task_name] = TaskStatus.SUBMITTED
 
         if hasattr(details, 'hereis'):
             self.store.put_native(details.handle, details.hereis)
