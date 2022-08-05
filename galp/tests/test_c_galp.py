@@ -8,8 +8,6 @@ import signal
 import pstats
 import psutil
 
-import zmq
-import zmq.asyncio
 import pytest
 import numpy as np
 
@@ -21,6 +19,8 @@ import galp.tests.steps as gts
 
 # Other fixtures
 # ========
+# pylint: disable=redefined-outer-name
+# pylint: disable=no-member
 
 @pytest.fixture
 def poisoned_cache(tmpdir):
@@ -390,7 +390,7 @@ async def test_array_like(client):
 async def test_light_syntax(client):
     task = gts.light_syntax()
 
-    ans = await asyncio.wait_for(client.collect(*task), 3)
+    ans = await asyncio.wait_for(client.collect(*task), 6)
 
     assert tuple(ans) == task.step.function()
 

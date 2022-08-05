@@ -99,7 +99,7 @@ async def test_unique_submission(peer_client):
         client.collect(task)
         )
     try:
-        async with timeout(2):
+        async with timeout(6):
             # Process one SUBMIT and drop it
             await peer.recv_message()
             logging.info('Mock dropping')
@@ -115,7 +115,7 @@ async def test_unique_submission(peer_client):
             # We should not receive any further message, at least until we add status
             # update to the protocol
             with pytest.raises(asyncio.TimeoutError):
-                async with timeout(1):
+                async with timeout(2):
                     await peer.recv_message()
     finally:
         with pytest.raises(asyncio.CancelledError):
