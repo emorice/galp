@@ -269,15 +269,6 @@ class Protocol(LowerProtocol):
             return self.event.handler(event_name)(self, *args, **kwargs)
         return _handler
 
-    def send_illegal(self, route):
-        """Send a straightforward error message back so that hell is raised where
-        due.
-
-        Note: this is technically part of the Protocol and should probably be
-            moved there.
-        """
-        return self.illegal(route)
-
     @event.on('EXIT')
     def _on_exit(self, route, msg):
         self._validate(len(msg) == 1, route, 'EXIT with args')
