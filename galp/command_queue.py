@@ -24,7 +24,8 @@ class CommandQueue:
 
         if self.retry_queue:
             next_cmd, next_time = self.retry_queue[0]
-            if next_time > time.time():
+            now = time.time()
+            if next_time > now:
                 # Not time yet
                 return None, next_time
             self.retry_queue.popleft()

@@ -14,10 +14,12 @@ import galp.tests.steps as gts
 from galp.protocol import Protocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 
+# pylint: disable=redefined-outer-name
+
 @pytest.fixture
-async def blocked_client():
+async def peer_client():
     """
-    A Client and bound socket with the client sending queue artificially filled
+    A client and connected peer
     """
     # Inproc seems to have the most consistent buffering behavior,
     # understandably
@@ -27,6 +29,18 @@ async def blocked_client():
         endpoint, zmq.DEALER, bind=True) # pylint: disable=no-member
 
     client = galp.Client(endpoint)
+
+    yield peer, client
+
+    peer.socket.close(linger=1)
+    client.transport.socket.close(linger=1)
+
+@pytest.fixture
+async def blocked_client(peer_client):
+    """
+    A Client and bound socket with the client sending queue artificially filled
+    """
+    peer, client = peer_client
 
     # Lower the HWMs first, else filling the queues takes lots of messages
     # 0 creates problems, 1 seems the minimum still safe
@@ -54,9 +68,6 @@ async def blocked_client():
 
     yield peer, client
 
-    peer.socket.close(linger=1)
-    client.transport.socket.close(linger=1)
-
 async def test_fill_queue(blocked_client):
     """
     Tests that we can saturate the client outgoing queue at will
@@ -71,3 +82,46 @@ async def test_fill_queue(blocked_client):
             await client.transport.send_message(
                 client.protocol.submit_task(route, task)
                 )
+
+@pytest.mark.xfail
+async def test_unique_submission(peer_client):
+    """
+    Tests that we only successfully send a submit only once
+    """
+    peer, client = peer_client
+    task = gts.sleeps(1, 42)
+
+    submit_counter = [0]
+    def _count(*_):
+        submit_counter[0] += 1
+    peer.protocol.on_submit = _count
+
+    bg_collect = asyncio.create_task(
+        client.collect(task)
+        )
+    try:
+        async with timeout(2):
+            # Process one SUBMIT and drop it
+            await peer.recv_message()
+            logging.info('Mock dropping')
+            # Process a second SUBMIT and reply DOING
+            await peer.recv_message()
+            logging.info('Mock processing')
+            await peer.send_message(
+                peer.protocol.doing(
+                    peer.protocol.default_route(),
+                    task.name # pylint: disable=no-member
+                    )
+                )
+            # We should not receive any further message, at least until we add status
+            # update to the protocol
+            with pytest.raises(asyncio.TimeoutError):
+                async with timeout(1):
+                    await peer.recv_message()
+    finally:
+        with pytest.raises(asyncio.CancelledError):
+            bg_collect.cancel()
+            await bg_collect
+
+    # 1 drop + 1 through
+    assert submit_counter[0] == 2

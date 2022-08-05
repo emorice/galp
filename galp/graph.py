@@ -180,10 +180,10 @@ class Task:
             )
         payload += b')'
 
-        hashed = Task.hash_one(payload)
-        logging.debug("HASH %s <- %s", hashed.hex(), payload.decode())
+        name = TaskName(Task.hash_one(payload))
+        #logging.debug("HASH %s <- %s", name, payload.decode())
 
-        return TaskName(hashed)
+        return name
 
     def __iter__(self):
         """

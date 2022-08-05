@@ -24,8 +24,6 @@ from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.graph import Handle
 from galp.command_queue import CommandQueue
 from galp.commands import Script
-from galp.cli import cleanup_tasks
-
 
 class TaskStatus(IntEnum):
     """
@@ -107,17 +105,18 @@ class Client:
         Receives information from nowhere but the queue, so has to be cancelled
         externally.
         """
-
         while True:
+            self.new_command.clear()
             next_command, next_time = self.command_queue.pop()
             if next_command:
-                logging.debug('SCHED: Ready command %s', next_command.hex())
+                logging.debug('SCHED: Ready command %s', next_command)
                 next_msg = self.protocol.write_next(next_command)
                 if next_msg:
                     await self.transport.send_message(next_msg)
                     self.command_queue.requeue(next_command)
+                    logging.debug('SCHED: Sent message, requeuing %s', next_command)
                 else:
-                    logging.debug('SCHED: No message for %s', next_command.hex())
+                    logging.debug('SCHED: No message, dropping %s', next_command)
 
             elif next_time:
                 # Wait for either a new command or the end of timeout
@@ -126,9 +125,9 @@ class Client:
                     await asyncio.wait_for(
                         self.new_command.wait(),
                         timeout=next_time - time.time())
-                    self.new_command.clear()
+                    logging.debug('SCHED: new command signal')
                 except asyncio.TimeoutError:
-                    pass
+                    logging.debug('SCHED: time elapsed')
             else:
                 logging.debug('SCHED: No ready command, waiting forever')
                 await self.new_command.wait()
@@ -141,7 +140,7 @@ class Client:
         submit or collect it depending on its state.
         """
 
-        logging.debug("Scheduling %s", task_name.hex())
+        logging.debug("Scheduling %s", task_name)
         self.command_queue.enqueue(task_name)
         self.new_command.set()
 
