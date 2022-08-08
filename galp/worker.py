@@ -15,6 +15,7 @@ import logging
 import argparse
 import resource
 import importlib
+import threading
 
 import zmq
 import zmq.asyncio
@@ -85,8 +86,10 @@ def limit_resources(args):
         _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         resource.setrlimit(resource.RLIMIT_AS, (size, hard))
 
-async def main(args):
-    """Entry point for the worker program
+def make_worker_init(args):
+    """Prepare a worker factory function. Must be called in main thread.
+
+    This involves parsing the config and loading plug-in steps.
 
     Args:
         args: an object whose attributes are the the parsed arguments, as
@@ -96,8 +99,13 @@ async def main(args):
     # Signal handler
     galp.cli.set_sync_handlers()
 
+    print(asyncio.get_event_loop())
     config = {}
+    if hasattr(args, 'config_dict'):
+        config = args.config_dict
     if args.config:
+        if config:
+            raise ValueError('Do not specify both config and config_dict')
         logging.info("Loading config file %s", args.config)
         # TOML is utf-8 by spec
         with open(args.config, encoding='utf-8') as fstream:
@@ -110,16 +118,20 @@ async def main(args):
     logging.info("Worker connecting to %s", args.endpoint)
     logging.info("Storing in %s", args.storedir)
 
-    worker = Worker(
-        args.endpoint, args.storedir,
-        step_dir,
-        Profiler(config.get('profile'))
-        )
+    def _make_worker():
+        return Worker(
+            args.endpoint, args.storedir,
+            step_dir,
+            Profiler(config.get('profile'))
+            )
+    return _make_worker
 
-    await galp.cli.wait(worker.run())
-
-    # TODO: the worker may still have submissions in queue, we should clean
-    # these
+def main(args):
+    """
+    Normal entry point
+    """
+    make_worker = make_worker_init(args)
+    sync_main(make_worker)
 
     logging.info("Worker terminating normally")
 
@@ -169,7 +181,7 @@ class WorkerProtocol(ReplyProtocol):
 
         # Store hook. For now we just check the local cache, later we'll have a
         # central locking mechanism
-        # FIXME: that's probably not correct for multi-output tasks !
+        # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name.hex())
             return self.done(route, name)
@@ -193,7 +205,7 @@ class WorkerProtocol(ReplyProtocol):
             command_key = 'GET', dep_name
             if dep_name in self.store:
                 # Resource is available, but we still need to mark it as such
-                # FIXME: this could be wrong if it's a multipart resource with
+                # NOTE: this could be wrong if it's a multipart resource with
                 # some parts still missing. This case never happens.
                 logging.warning('DEP found %s', dep_name)
                 self.script.commands[command_key].done(0)
@@ -276,6 +288,7 @@ class Worker:
         script already.
         """
         def _start_task(status):
+            del status
             task = asyncio.create_task(
                 self.run_submission(client_route, name, task_dict)
                 )
@@ -385,18 +398,38 @@ def fork(**kwargs):
     """
     pid = os.fork()
     if pid == 0:
-        all_args = {
-            action.dest: action.default
-            for action in make_parser()._actions
-            if action.dest is not argparse.SUPPRESS
-        }
-        all_args.update(kwargs)
-        sys.exit(asyncio.run(
-            main(
+        ret = -1
+        try:
+            all_args = {
+                action.dest: action.default
+                for action in make_parser()._actions # pylint: disable=protected-access
+                if action.dest is not argparse.SUPPRESS
+            }
+            all_args.update(kwargs)
+            # We do the initialization in the main thread...
+            make_worker = make_worker_init(
                 argparse.Namespace(**all_args)
+                )
+            # ... but run the loop in a separate thread
+            main_thread = threading.Thread(
+                target=sync_main,
+                args=(make_worker,)
             )
-        ))
+            main_thread.start()
+            main_thread.join()
+            ret = 0
+        finally:
+            sys.exit(ret)
     return pid
+
+def sync_main(make_worker):
+    """
+    Synchronous entry point
+    """
+    async def _coro(make_worker):
+        worker = make_worker()
+        return await galp.cli.wait(worker.run())
+    return asyncio.run(_coro(make_worker))
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""

@@ -147,7 +147,7 @@ class Client:
         self.command_queue.enqueue(task_name)
         self.new_command.set()
 
-    async def collect(self, *tasks, return_exceptions=False, timeout=None):
+    async def gather(self, *tasks, return_exceptions=False, timeout=None):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
         and returns the actual results.
@@ -194,6 +194,19 @@ class Client:
         if failed is None or return_exceptions:
             return results
         raise failed
+
+    # Old name of gather
+    collect = gather
+
+    async def run(self, *tasks, return_exceptions=False, timeout=None):
+        """
+        Shorthand for gather with a more variadic style
+        """
+        results = await self.gather(*tasks, return_exceptions=return_exceptions, timeout=timeout)
+
+        if len(results) == 1:
+            return results[0]
+        return results
 
     async def run_collection(self, tasks, return_exceptions):
         """

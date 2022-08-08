@@ -15,8 +15,10 @@ from galp.forward_protocol import ForwardProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 
 class Broker:
-    def __init__(self, terminate, client_endpoint, worker_endpoint):
-        self.terminate = terminate
+    """
+    Load-balancing client-to-worker and a worker-to-broker loops
+    """
+    def __init__(self, client_endpoint, worker_endpoint):
 
         # pylint: disable=no-member # False positive
         self.client_proto = BrokerProtocol('CL', router=True)
@@ -47,9 +49,6 @@ class Broker:
                     )
             await dest_transport.send_messages(replies)
 
-        # FIXME: termination condition ?
-        self.terminate.set()
-
     async def listen_clients(self):
         """Listen client-side, forward to workers"""
         return await self.listen_forward_loop(
@@ -61,6 +60,17 @@ class Broker:
         return await self.listen_forward_loop(
             self.worker_transport,
             self.client_transport)
+
+    async def run(self):
+        """
+        Runs both loops.
+
+        Must be externally cancelled
+        """
+        return await asyncio.gather(
+            self.listen_workers(),
+            self.listen_clients()
+            )
 
 class BrokerProtocol(ForwardProtocol):
     """
@@ -192,9 +202,7 @@ async def main(args):
     """
     galp.cli.setup(args, "broker")
 
-    terminate = galp.cli.create_terminate()
-
-    broker = Broker(terminate,
+    broker = Broker(
         client_endpoint=args.client_endpoint,
         worker_endpoint=args.worker_endpoint
         )

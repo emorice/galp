@@ -6,13 +6,13 @@ import argparse
 import asyncio
 import logging
 import signal
-import sys
 import time
 import zmq
 
 import galp.worker
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.reply_protocol import ReplyProtocol
+from galp.async_utils import background
 
 class Pool:
     """
@@ -50,82 +50,68 @@ class Pool:
             )
             for i in range(self.args.pool_size)
         ]
-        listener = asyncio.create_task(
+        async with background(
             self.broker_transport.listen_reply_loop()
-            )
-
-        await asyncio.gather(*self.tasks)
-
-        listener.cancel()
-        try:
-            await listener
-        except asyncio.CancelledError:
-            pass
+            ):
+            await asyncio.gather(*self.tasks)
 
     async def start_worker(self):
-        args = self.args
-        arg_list = ['-m', 'galp.worker']
-        if args.config:
-            arg_list.extend(['-c', args.config])
-        if args.vm:
-            arg_list.extend(['--vm', args.vm])
-        if args.debug:
-            arg_list.extend(['--debug'])
-        arg_list.extend([args.endpoint, args.storedir])
-
+        """
+        Starts a worker.
+        """
         ret = True
         while ret and not self.pending_signal.is_set():
             self.last_start_time = time.time()
-            process = await asyncio.create_subprocess_exec(
-                    sys.executable,
-                    *arg_list,
-                )
-            logging.info('Started worker %d', process.pid)
+            pid = galp.worker.fork(**vars(self.args))
+
+            logging.info('Started worker %d', pid)
 
             wait_signal = asyncio.create_task(self.pending_signal.wait())
-            wait_process = asyncio.create_task(process.wait())
+
+            # FIXME: how to wait after a fork ?
+            # wait_process = asyncio.create_task(process.wait())
             done, pending = await asyncio.wait(
-                (wait_signal, wait_process),
+                (wait_signal,),
                 return_when=asyncio.FIRST_COMPLETED)
 
             if wait_signal in done:
-                if wait_process in pending:
-                    logging.error("Forwarding signal %d to worker %d",
-                        self.signal, process.pid)
-                    process.send_signal(self.signal)
-                    await process.wait()
-                else:
-                    logging.info("Not forwarding to dead worker %d", process.pid)
-            else:
-                ret = wait_process.result()
-                if ret:
-                    delay = self.last_start_time - time.time() + args.restart_delay
-                    delay = max(args.min_restart_delay, delay)
-                    logging.error(
-                        "Child %d exited with abnormal status %d, "
-                        "scheduling restart in at least %d seconds",
-                        process.pid, ret, delay
-                    )
-                    await self.notify_exit(process.pid)
-                    while delay > 0:
-                        wait_delay = asyncio.create_task(asyncio.sleep(delay))
-                        done, pending = await asyncio.wait(
-                            (wait_signal, wait_delay),
-                            return_when=asyncio.FIRST_COMPLETED)
-                        if wait_signal in done:
-                            logging.info("Not forwarding to dead worker %d", process.pid)
-                            break
-                        # We have waited the min time, now loop and start asap
-                        delay = self.last_start_time - time.time() + args.restart_delay
-                        if delay > 0:
-                            logging.error(
-                                "Postponing restart due to rate limiting, "
-                                "next restart in at least %d seconds",
-                                delay
-                            )
-                else:
-                    logging.info('Child %d exited normally, not restarting',
-                        process.pid)
+                #if wait_process in pending:
+                #    logging.error("Forwarding signal %d to worker %d",
+                #        self.signal, process.pid)
+                #    process.send_signal(self.signal)
+                #    await process.wait()
+                #else:
+                    logging.info("Not forwarding to untracked worker %d", pid)
+#            else:
+#                ret = wait_process.result()
+#                if ret:
+#                    delay = self.last_start_time - time.time() + args.restart_delay
+#                    delay = max(args.min_restart_delay, delay)
+#                    logging.error(
+#                        "Child %d exited with abnormal status %d, "
+#                        "scheduling restart in at least %d seconds",
+#                        process.pid, ret, delay
+#                    )
+#                    await self.notify_exit(process.pid)
+#                    while delay > 0:
+#                        wait_delay = asyncio.create_task(asyncio.sleep(delay))
+#                        done, pending = await asyncio.wait(
+#                            (wait_signal, wait_delay),
+#                            return_when=asyncio.FIRST_COMPLETED)
+#                        if wait_signal in done:
+#                            logging.info("Not forwarding to dead worker %d", process.pid)
+#                            break
+#                        # We have waited the min time, now loop and start asap
+#                        delay = self.last_start_time - time.time() + args.restart_delay
+#                        if delay > 0:
+#                            logging.error(
+#                                "Postponing restart due to rate limiting, "
+#                                "next restart in at least %d seconds",
+#                                delay
+#                            )
+#                else:
+#                    logging.info('Child %d exited normally, not restarting',
+#                        process.pid)
 
     async def notify_exit(self, pid):
         """
