@@ -5,7 +5,7 @@ Tests relating to brokers and borker parts in isolation
 import pytest
 from async_timeout import timeout
 
-from galp.broker import WorkerProtocol
+from galp.broker.broker import WorkerProtocol
 
 @pytest.fixture
 def worker_protocol():

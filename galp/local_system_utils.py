@@ -29,7 +29,6 @@ async def local_system(pool_size=1, steps=[]):
             endpoint=worker_endpoint,
             pool_size=pool_size,
             config_dict={'steps': steps},
-            debug=True,
             ))
 
     async with background(broker.run()):

@@ -15,16 +15,16 @@ def status_conj(commands):
         return Status.DONE
     if any(s == Status.FAILED for s in status):
         return Status.FAILED
-    return Status.UNKNOWN
+    return Status.PENDING
 
 def status_conj_any(commands):
     """
     Ternary conjunction of an iterable of status
     """
     status = [cmd.status for cmd in commands]
-    if all(s != Status.UNKNOWN for s in status):
+    if all(s != Status.PENDING for s in status):
         return Status.DONE
-    return Status.UNKNOWN
+    return Status.PENDING
 
 
 class Script:
@@ -70,7 +70,7 @@ class Status(Enum):
     """
     Command status
     """
-    UNKNOWN ='U'
+    PENDING ='P'
     DONE = 'D'
     FAILED = 'F'
 
@@ -79,9 +79,8 @@ class Command:
     An asynchronous command
     """
     def __init__(self, script, parent):
-        logging.info('START\t%s', self)
         self.script = script
-        self._status = Status.UNKNOWN
+        self._status = Status.PENDING
         self.result = None
         self.outputs = []
         self.update()
@@ -103,13 +102,13 @@ class Command:
     def status(self, new_status):
         old_status = self._status
         self._status = new_status
-        if old_status == Status.UNKNOWN and new_status != Status.UNKNOWN:
-            logging.info('%s\t%s',
-                new_status.name + ' ' * (
-                    len(Status.FAILED.name) - len(new_status.name)
-                    ),
-                self
-                )
+        logging.info('%s\t%s',
+            new_status.name + ' ' * (
+                len(Status.FAILED.name) - len(new_status.name)
+                ),
+            self
+            )
+        if old_status == Status.PENDING and new_status != Status.PENDING:
             for command in self.outputs:
                 command.update()
 
@@ -117,8 +116,7 @@ class Command:
         """
         Re-evals condition and possibly trigger callbacks
         """
-        logging.info('UP    \t%s', self)
-        if self.status != Status.UNKNOWN:
+        if self.status != Status.PENDING:
             return
         self.status = self._eval()
 
@@ -158,7 +156,7 @@ class Get(Command):
         return f'get {self.name}'
 
     def _eval(self):
-        return Status.UNKNOWN
+        return Status.PENDING
 
 class Rget(Command):
     """
@@ -227,7 +225,7 @@ class Callback(Command):
         return f'callback {self._callback}'
 
     def _eval(self):
-        if self._in.status != Status.UNKNOWN:
+        if self._in.status != Status.PENDING:
             self._callback(self._in.status)
             return Status.DONE
-        return Status.UNKNOWN
+        return Status.PENDING

@@ -9,13 +9,11 @@ within the job and easy to patch if the code has to be run somewhere else.
 """
 
 import os
-import sys
 import asyncio
 import logging
 import argparse
 import resource
 import importlib
-import threading
 
 import zmq
 import zmq.asyncio
@@ -99,7 +97,6 @@ def make_worker_init(args):
     # Signal handler
     galp.cli.set_sync_handlers()
 
-    print(asyncio.get_event_loop())
     config = {}
     if hasattr(args, 'config_dict'):
         config = args.config_dict
@@ -126,15 +123,6 @@ def make_worker_init(args):
             )
     return _make_worker
 
-def main(args):
-    """
-    Normal entry point
-    """
-    make_worker = make_worker_init(args)
-    sync_main(make_worker)
-
-    logging.info("Worker terminating normally")
-
 class WorkerProtocol(ReplyProtocol):
     """
     Handler for messages from the broker
@@ -158,14 +146,14 @@ class WorkerProtocol(ReplyProtocol):
         raise ProtocolEndException('Incoming EXIT')
 
     def on_get(self, route, name):
-        logging.debug('Received GET for %s', name.hex())
+        logging.debug('Received GET for %s', name)
         try:
             serialized = self.store.get_serial(name)
             reply = self.put(route, name, serialized)
-            logging.info('GET: Cache HIT: %s', name.hex())
+            logging.info('GET: Cache HIT: %s', name)
             return reply
         except KeyError:
-            logging.info('GET: Cache MISS: %s', name.hex())
+            logging.info('GET: Cache MISS: %s', name)
             return self.not_found(route, name)
 
     def on_submit(self, route, name, task_dict):
@@ -183,7 +171,7 @@ class WorkerProtocol(ReplyProtocol):
         # central locking mechanism
         # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
-            logging.info('SUBMIT: Cache HIT: %s', name.hex())
+            logging.info('SUBMIT: Cache HIT: %s', name)
             return self.done(route, name)
 
         # If not in cache, resolve metadata and run the task
@@ -398,7 +386,7 @@ def fork(**kwargs):
     """
     pid = os.fork()
     if pid == 0:
-        ret = -1
+        ret = 1
         try:
             all_args = {
                 action.dest: action.default
@@ -406,29 +394,25 @@ def fork(**kwargs):
                 if action.dest is not argparse.SUPPRESS
             }
             all_args.update(kwargs)
-            # We do the initialization in the main thread...
-            make_worker = make_worker_init(
+            ret = main(
                 argparse.Namespace(**all_args)
                 )
-            # ... but run the loop in a separate thread
-            main_thread = threading.Thread(
-                target=sync_main,
-                args=(make_worker,)
-            )
-            main_thread.start()
-            main_thread.join()
-            ret = 0
         finally:
-            sys.exit(ret)
+            # Not sys.exit after a fork as it could call parent-specific
+            # callbacks
+            os._exit(ret) # pylint: disable=protected-access
     return pid
 
-def sync_main(make_worker):
+def main(args):
     """
-    Synchronous entry point
+    Normal entry point
     """
+    make_worker = make_worker_init(args)
     async def _coro(make_worker):
         worker = make_worker()
-        return await galp.cli.wait(worker.run())
+        ret = await galp.cli.wait(worker.run())
+        logging.info("Worker terminating normally")
+        return ret
     return asyncio.run(_coro(make_worker))
 
 def add_parser_arguments(parser):
@@ -453,7 +437,3 @@ def make_parser():
     _parser = argparse.ArgumentParser()
     add_parser_arguments(_parser)
     return _parser
-
-if __name__ == '__main__':
-    # Convenience hook to start a worker from CLI
-    asyncio.run(main(make_parser().parse_args()))

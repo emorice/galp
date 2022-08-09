@@ -37,16 +37,27 @@ def log_signal(sig, context, orig_handler):
     if callable(orig_handler):
         return orig_handler(sig, context)
 
-    logging.error('Re-raising signal', stack_info=context)
+    logging.error("Re-raising signal %s", signal.strsignal(sig))
+    logging.debug('Re-raising signal from', stack_info=context)
     signal.signal(sig, orig_handler)
     return signal.raise_signal(sig)
 
-def set_sync_handlers():
+def set_sync_handlers(reset=True):
     """
-    Add our logging hook to signal handlers
+    Add a logging hook to signal handlers, chaining either the pre-existing or
+    default handlers.
+
+    Resetting handlers can be important after a fork since the parent may have
+    defined handlers that make no sense for the child.
     """
     for sig in (signal.SIGINT, signal.SIGTERM):
-        orig_handler = signal.getsignal(sig)
+        if reset:
+            if sig == signal.SIGINT:
+                orig_handler = signal.default_int_handler
+            else:
+                orig_handler = signal.Handlers.SIG_DFL
+        else:
+            orig_handler = signal.getsignal(sig)
         signal.signal(sig,
             lambda sig, context, orig=orig_handler: log_signal(sig, context, orig)
             )
