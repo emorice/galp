@@ -10,6 +10,7 @@ import psutil
 
 import pytest
 import numpy as np
+from async_timeout import timeout
 
 import galp.steps
 import galp.client
@@ -565,3 +566,14 @@ async def test_vmlimit(make_galp_set, make_client):
 
     with pytest.raises(galp.TaskFailedError):
         ans = await limited_client.collect(task_b, timeout=3)
+
+async def test_complex_inline(client):
+    """
+    Sends a non-native object as inline argument
+    """
+
+    async with timeout(3):
+        ans = await client.run(
+            gts.npsum( np.arange(10) * 1. )
+            )
+        assert np.allclose(ans, 45.)

@@ -1,13 +1,14 @@
 """
 General routines to build and operate on graphs of tasks.
 """
-import json
 import logging
 import hashlib
 from itertools import chain
 
 from typing import get_type_hints, get_args
 from dataclasses import dataclass
+
+import dill
 
 from galp.eventnamespace import EventNamespace
 
@@ -301,7 +302,7 @@ class HereisTask:
         # Todo: more robust hashing, but this is enough for most case where
         # hereis resources are a good fit (more complex objects would tend to be
         # actual step outputs)
-        self.name = TaskName(Task.hash_one(json.dumps(obj).encode('ascii')))
+        self.name = TaskName(Task.hash_one(dill.dumps(obj)))
 
     @property
     def dependencies(self):
