@@ -9,10 +9,7 @@ import psutil
 import numpy as np
 import pyarrow as pa
 
-from typing import Tuple
-
 from galp.graph import StepSet
-from galp.typing import ArrayLike, Table
 
 export = StepSet()
 
@@ -22,13 +19,22 @@ export3 = StepSet()
 
 @export.step
 def plugin_hello():
+    """
+    Takes no arguments, returns a constant, simplest step
+    """
     return '6*7'
 
 @export.step()
 def alt_decorator_syntax():
+    """
+    Step using a call to `step()` in the decorator
+    """
     return 'alt'
 
 def tag_me():
+    """
+    Input for steps with tags
+    """
     return 'tagged'
 
 # Only this one can be called
@@ -37,46 +43,58 @@ tagged1 = export.step(vtag=0)(tag_me)
 untagged = export2.step(tag_me)
 tagged2 = export3.step(vtag=1)(tag_me)
 
-def naive_fib(n):
-     if n == 1 or n == 2:
-         return 1
-     else:
-         return naive_fib(n-1) + naive_fib(n-2)
+def naive_fib(n): # pylint: disable=invalid-name
+    """
+    Recursive fibonacci calculation, useful to put some load on the interpreter.
+    """
+    if n in (1, 2):
+        return 1
+    return naive_fib(n-1) + naive_fib(n-2)
 
 @export.step
-def profile_me(n):
+def profile_me(n): # pylint: disable=invalid-name
+    """
+    Wrapper around `naive_fib`
+    """
     return naive_fib(n)
 
 @export.step
-def arange(n) -> ArrayLike:
+def arange(n): # pylint: disable=invalid-name
     """Numpy return type"""
     return np.arange(n)
 
 @export.step
-def npsum(v: ArrayLike):
+def npsum(vect):
     """
     Numpy input but generic return type
     """
-    # Wrong, returns a numpy type
-    # return v.sum()
-    return float(v.sum())
+    return float(vect.sum())
 
 @export.step
-def some_table() -> Table:
+def some_table():
+    """
+    Pyarrow return type
+    """
     return  pa.table({
         'x': ['abc', 'def', 'gh'],
         'y': [1.0, -0.0, 7]
         })
 
-@export.step
-def some_tuple() -> Tuple[ArrayLike, int]:
+@export.step(items=2)
+def some_tuple():
+    """
+    Returns two resources that can be addressed separately
+    """
     return (
         np.arange(10),
         10
     )
 
-@export.step
-def native_tuple() -> Tuple[str, int]:
+@export.step(items=2)
+def native_tuple():
+    """
+    Returns two resources that can be addressed separately
+    """
     return (
         'fluff',
         14
@@ -84,14 +102,16 @@ def native_tuple() -> Tuple[str, int]:
 
 @export.step
 def raises_error():
+    """
+    Never completes, raises a divide-by-zero error
+    """
     return 1 / 0
-
-@export.step
-def some_numerical_list() -> ArrayLike:
-    return [1., 2.5, 3.]
 
 @export(items=3)
 def light_syntax():
+    """
+    Uses directly the StepSet as a decorator
+    """
     return 5, ["a", "b"], {'x': 7.}
 
 @export(items=2)
@@ -103,23 +123,38 @@ def raises_error_multiple():
 
 @export
 def sleeps(secs, some_arg):
+    """
+    Sleeps for the given time and return the argument unchanged
+    """
     time.sleep(secs)
     return some_arg
 
 @export
 def sum_variadic(*args):
+    """
+    Step that takes variadic positional args
+    """
     return sum(args)
 
 @export
 def busy_loop():
+    """
+    Infinite pure python loop
+    """
     while True:
         pass
 
 @export
 def suicide(sig):
+    """
+    Steps that mocks a crash py sending a signal to its own process
+    """
     os.kill(os.getpid(), sig)
 
-class RefCounted:
+class RefCounted: # pylint: disable=too-few-public-methods
+    """
+    Class that tracks its number of living instances
+    """
     count = 0
     def __init__(self):
         self.last_count = self.count
@@ -135,17 +170,21 @@ def refcount(dummy, fail=True):
     Create an instance of a reference-counted class and returns instance number
     """
 
+    del dummy # only used to simulate different step
     obj = RefCounted()
 
     if fail:
         raise ValueError
-    else:
-        return obj.count
+    return obj.count
 
 @export
-def alloc_mem(N, dummy):
-    p = psutil.Process()
-    logging.info('VM: %d', p.memory_info().vms)
-    x = np.zeros(N // 8)
-    logging.info('VM: %d', p.memory_info().vms)
-    return True
+def alloc_mem(N, dummy): # pylint: disable=invalid-name
+    """
+    Tries to alloc N bytes of memory
+    """
+    del dummy # only to make different tasks
+    proc = psutil.Process()
+    logging.info('VM: %d', proc.memory_info().vms)
+    some_array = np.zeros(N // 8)
+    logging.info('VM: %d', proc.memory_info().vms)
+    return some_array.sum()

@@ -378,16 +378,6 @@ async def test_missing_step_error(client):
        await asyncio.wait_for(client.collect(missing()), 3)
 
 @pytest.mark.asyncio
-async def test_array_like(client):
-    """Test numpy serialization for non-numpy array-like types"""
-    ans = await asyncio.wait_for(client.collect(gts.some_numerical_list()), 3)
-
-    np.testing.assert_array_equal(
-        ans[0],
-        np.array(gts.some_numerical_list().step.function())
-        )
-
-@pytest.mark.asyncio
 async def test_light_syntax(client):
     task = gts.light_syntax()
 

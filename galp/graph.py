@@ -41,18 +41,6 @@ class Step:
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
         self.items = items
 
-        # Compat with hint-style
-        if items is None:
-            hints = get_type_hints(self.function)
-            if 'return' in hints:
-                n_rets = len(get_args(hints['return']))
-                if n_rets:
-                    logging.warning(
-                        "DEPRECATED: setting items from type hint (%s)",
-                        function.__name__)
-                    self.items = n_rets
-
-
     def make_handles(self, name, arg_names, kwarg_names):
         """
         Make initial handles.
