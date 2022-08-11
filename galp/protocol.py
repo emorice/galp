@@ -353,7 +353,7 @@ class Protocol(LowerProtocol):
         self._validate(
             len(msg) >= 3, route,
             'SUBMIT without name or step') # SUBMIT name step
-        task_dict['name'] = msg[1]
+        task_dict['name'] = TaskName(msg[1])
         task_dict['step_name'] = msg[2]
 
         # Collect args
