@@ -4,7 +4,6 @@ Lists of internal commands
 
 from enum import Enum
 import logging
-from galp.graph import SubTask
 
 def status_conj(commands):
     """
@@ -183,8 +182,8 @@ class Rget(Command):
 
         if self._in_rgets is None:
             self._in_rgets = [
-                self.script.rget(self, SubTask.gen_name(self.name, i))
-                for i in range(self._in_get.result)
+                self.script.rget(self, child_name)
+                for child_name in self._in_get.result
                 ]
         return status_conj(self._in_rgets)
 

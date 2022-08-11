@@ -169,15 +169,15 @@ class Protocol(LowerProtocol):
 
         Args:
             name: the name of the task
-            serialized: a triple of two bytes objects and an int (proto, data,
-                children)
+            serialized: a tuple of a bytes object, the payload, and a list of
+                byes objects, the names of the sub-objects needed.
 
         """
         data, children = serialized
         if data is None:
             data = b''
         logging.debug('-> putting %d bytes', len(data))
-        msg_body = [b'PUT', name, data, children.to_bytes(1, 'big')]
+        msg_body = [b'PUT', name, data, *children]
         return route, msg_body
 
     def ready(self, route, peer):
@@ -337,11 +337,11 @@ class Protocol(LowerProtocol):
     @event.on('PUT')
     def _on_put(self, route, msg):
         # PUT name data [children]
-        self._validate(3 <= len(msg) <= 4, route, 'PUT with wrong number of parts')
+        self._validate(3 <= len(msg), route, 'PUT with wrong number of parts')
 
         name = TaskName(msg[1])
         data = msg[2]
-        children = int.from_bytes(msg[3], 'big') if len(msg) >= 4 else 0
+        children = [ TaskName(child_name) for child_name in msg[3:] ]
 
         return self.on_put(route, name, (data, children))
 

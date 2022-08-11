@@ -3,9 +3,17 @@ Caching utils
 """
 
 import diskcache
+import msgpack
 
-from galp.graph import SubTask, NonIterableHandleError
+from galp.graph import NonIterableHandleError, TaskName
 from galp.serializer import Serializer
+
+class StoreReadError(Exception):
+    """
+    Something, attached as the cause of this exception, prevented us from
+    reading the result despite it seemingly being in the store (object not in
+    store raises KeyError instead).
+    """
 
 class CacheStack():
     """Synchronous cache proxy.
@@ -50,9 +58,9 @@ class CacheStack():
         data, children = self.get_serial(name)
         native_children = [
             self.get_native(
-                SubTask.gen_name(name, i)
+                child_name
                 )
-            for i in range(children)
+            for child_name in children
             ]
 
         native = self.serializer.loads(data, native_children)
@@ -66,9 +74,18 @@ class CacheStack():
             a tuple of one bytes object and one int (data, children).
             If there is no data, None is returned instead.
         """
-        children = int.from_bytes(
-            self.serialcache[name + b'.children'],
-            'big')
+        try:
+            children = [
+                TaskName(child_name)
+                for child_name in msgpack.unpackb(
+                    self.serialcache[name + b'.children']
+                    )
+                ]
+        except KeyError:
+            raise
+        except Exception as exc:
+            raise StoreReadError from exc
+
         try:
             data = self.serialcache[name + b'.data']
         except KeyError:
@@ -87,13 +104,15 @@ class CacheStack():
         try:
             # Logical composite handle
             ## Recursively store the children
+            children = []
             for sub_handle, sub_obj in zip(handle, obj):
+                children.append(sub_handle.name)
                 self.put_native(sub_handle, sub_obj)
 
-            self.put_serial(handle.name, (None, len(obj)))
+            self.put_serial(handle.name, (None, children))
         except NonIterableHandleError:
             data = self.serializer.dumps(obj)
-            self.put_serial(handle.name, (data, 0))
+            self.put_serial(handle.name, (data, []))
 
 
     def put_serial(self, name, serialized):
@@ -104,7 +123,7 @@ class CacheStack():
         """
         data, children = serialized
 
-        assert isinstance(children, int)
+        assert not isinstance(children, bytes) # guard against legacy code
 
-        self.serialcache[name + b'.children'] = children.to_bytes(1, 'big')
+        self.serialcache[name + b'.children'] = msgpack.packb(children)
         self.serialcache[name + b'.data'] = data if data is not None else b''

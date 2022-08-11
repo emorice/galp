@@ -125,6 +125,10 @@ class WorkerProtocol(BrokerProtocol):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
+    def on_not_found(self, route, name):
+        worker_route, _ = route
+        self.mark_worker_available(worker_route)
+
     def on_put(self, route, name, serialized):
         worker_route, _ = route
         self.mark_worker_available(worker_route)

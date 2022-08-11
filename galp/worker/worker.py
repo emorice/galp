@@ -21,6 +21,7 @@ import toml
 
 import galp.steps
 import galp.cache
+from galp.cache import StoreReadError
 import galp.cli
 from galp.config import ConfigError
 from galp.lower_protocol import MessageList
@@ -154,7 +155,9 @@ class WorkerProtocol(ReplyProtocol):
             return reply
         except KeyError:
             logging.info('GET: Cache MISS: %s', name)
-            return self.not_found(route, name)
+        except StoreReadError:
+            logging.exception('GET: Cache ERROR: %s', name)
+        return self.not_found(route, name)
 
     def on_submit(self, route, name, task_dict):
         """Start processing the submission asynchronously.
@@ -196,7 +199,7 @@ class WorkerProtocol(ReplyProtocol):
                 # NOTE: this could be wrong if it's a multipart resource with
                 # some parts still missing. This case never happens.
                 logging.warning('DEP found %s', dep_name)
-                self.script.commands[command_key].done(0)
+                self.script.commands[command_key].done([])
                 continue
             # Else, we send a get back
             logging.warning('DEP fetch %s', dep_name)

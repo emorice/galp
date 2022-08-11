@@ -23,24 +23,31 @@ import galp.tests.steps as gts
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member
 
-@pytest.fixture
-def poisoned_cache(tmpdir):
+@pytest.fixture(params=[
+    # Invalid children value
+    bytes('INVALID', 'ascii'),
+    # Valid children value
+    bytes.fromhex('90')
+    ])
+def poisoned_cache(tmpdir, request):
     """
     A galp cache with a random bad value in it
 
-    The error should occur at deserialization.
+    The error should occur when deserializing the children list, so rpesumably
+    worker-side
     """
     task = gts.arange(5)
 
-    # use a valid name
+    # Valid name
     name = task.handle.name
+    # Either children value
+    children = request.param
+    # Invalid data but we should fail before that
     data = bytes.fromhex('0123456789abcdef')
-    children = 0
 
-    serializer = None
-
-    cache = galp.cache.CacheStack(tmpdir, serializer)
-    cache.put_serial(name, (data, children))
+    cache = galp.cache.CacheStack(tmpdir, None)
+    cache.serialcache[name + b'.children'] = children
+    cache.serialcache[name + b'.data'] = data
 
     return task
 
@@ -473,9 +480,9 @@ async def test_return_exceptions(client):
     assert isinstance(ans_fail, galp.TaskFailedError)
     assert ans_ok == task_ok.step.function() # pylint: disable=no-member
 
-async def test_cache_corruption(poisoned_cache, client):
+async def test_cache_corruption_get(poisoned_cache, client):
     """
-    Raise a TaskFailed if we cannot deserialize in client
+    Raise a TaskFailed if we cannot fetch a corrupted entry
     """
     task = poisoned_cache
 
@@ -484,9 +491,17 @@ async def test_cache_corruption(poisoned_cache, client):
             client.collect(task),
             3)
 
+    # Test that the worker recovered
+    task3 = gts.plugin_hello()
+    ans, = await asyncio.wait_for(
+        client.collect(task3),
+        3)
+
+    assert ans == task3.step.function()
+
 async def test_remote_cache_corruption(poisoned_cache, client):
     """
-    Raise a TaskFailed if we cannot deserialize in worker
+    Raise a TaskFailed if we cannot re-use a corrupted entry as input
     """
     task = poisoned_cache
 

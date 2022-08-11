@@ -408,27 +408,19 @@ class BrokerProtocol(ReplyProtocol):
         termination
         """
 
-        # Fetch task information
-        handle = (
-            self._details[name].handle
-            if name in self._details
-            else Handle(name)
-            )
-
         data, children = serialized
 
         # Schedule sub-gets if necessary
         # To be moved to the script engine eventually
         # Also we should get rid of the handle
-        for i in range(children):
-            children_name = handle[i].name
+        for child_name in children:
             # We do not send explicit DONEs for subtasks, so we mark them as
             # done when we receive the parent data.
-            self._status[children_name] = TaskStatus.COMPLETED
+            self._status[child_name] = TaskStatus.COMPLETED
             # The scheduler needs to know that this task wants to be fetched
-            self._finals.add(children_name)
+            self._finals.add(child_name)
             # Schedule it for GET to be sent in the future
-            self.schedule(children_name)
+            self.schedule(child_name)
 
         # Put the parent part
         self.store.put_serial(name, (data, children))
@@ -496,6 +488,18 @@ class BrokerProtocol(ReplyProtocol):
 
         # This is not a fatal error to the client, by default processing of
         # messages for other ongoing tasks is still permitted.
+
+    def on_not_found(self, route, name):
+        """
+        Mark a fetch as failed. Here no propagation logic is neeeded, it's
+        already handled by the command dependencies.
+        """
+
+        task_desc = self._details[name].description
+        logging.error('TASK RESULT FETCH FAILED: %s [%s]', task_desc, name)
+        # Mark fetch command as failed
+        command = self.script.commands.get(('GET', name))
+        command.failed('NOTFOUND')
 
     def on_illegal(self, route, reason):
         """Should never happen"""
