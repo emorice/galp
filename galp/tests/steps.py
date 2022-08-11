@@ -68,7 +68,7 @@ def npsum(vect):
     """
     Numpy input but generic return type
     """
-    return float(vect.sum())
+    return float(np.sum(vect))
 
 @export.step
 def some_table():
@@ -188,3 +188,13 @@ def alloc_mem(N, dummy): # pylint: disable=invalid-name
     some_array = np.zeros(N // 8)
     logging.info('VM: %d', proc.memory_info().vms)
     return some_array.sum()
+
+@export
+def sum_dict(some_dict):
+    """
+    Sums the values in a dict, ignoring keys, by iteration
+    """
+    tot = 0
+    for key in some_dict:
+        tot += some_dict[key]
+    return tot

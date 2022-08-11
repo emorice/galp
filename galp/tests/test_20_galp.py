@@ -580,3 +580,20 @@ async def test_complex_inline(client):
             gts.npsum( np.arange(10) * 1. )
             )
         assert np.allclose(ans, 45.)
+
+async def test_structured_inputs(client):
+    """
+    Sends list or dicts of tasks to steps
+    """
+    in1, in2 = gts.naive_fib(1), gts.naive_fib(2)
+    in_list = [in1, in2]
+
+    async with timeout(3):
+        ans = await client.run(gts.npsum(in_list))
+        ans_dict = await client.run(gts.sum_dict({
+            'first': in1,
+            'second': in2
+            }))
+
+    assert ans == 2
+    assert ans_dict == 2
