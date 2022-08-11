@@ -7,7 +7,7 @@ import asyncio
 import signal
 import psutil
 import zmq
-import dill
+import msgpack
 
 import pytest
 from async_timeout import timeout
@@ -164,7 +164,7 @@ def test_task(worker_socket):
 
     ans = asserted_zmq_recv_multipart(socket)
     assert ans[3:5] == [b'PUT', name]
-    assert dill.loads(ans[5]) == 42
+    assert msgpack.unpackb(ans[5]) == 42
 
 def test_notfound(worker_socket):
     """Tests the answer of server when asking to send unexisting resource"""
@@ -222,7 +222,7 @@ def test_reference(worker_socket):
         task2.name: 4
         }
     for _, _, _, _, name, res, *_children in [got_a, got_b]:
-        assert dill.loads(res) == expected[name]
+        assert msgpack.unpackb(res) == expected[name]
 
 async def test_async_socket(async_worker_socket):
     """

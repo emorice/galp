@@ -97,9 +97,6 @@ async def wait(tasks):
         await cleanup_tasks(pending)
         for task in done:
             await task
-    except KeyboardInterrupt:
-        logging.error("Interruped")
-        raise
     except:
         logging.exception("Aborting")
         raise

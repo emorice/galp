@@ -6,7 +6,7 @@ import diskcache
 import msgpack
 
 from galp.graph import NonIterableHandleError, TaskName
-from galp.serializer import Serializer
+from galp.serializer import Serializer, CHILD_EXT_CODE
 
 class StoreReadError(Exception):
     """
@@ -105,25 +105,35 @@ class CacheStack():
             # Logical composite handle
             ## Recursively store the children
             children = []
-            for sub_handle, sub_obj in zip(handle, obj):
+            struct = []
+            for i, (sub_handle, sub_obj) in enumerate(zip(handle, obj)):
                 children.append(sub_handle.name)
                 self.put_native(sub_handle, sub_obj)
-
-            self.put_serial(handle.name, (None, children))
+                struct.append(
+                    msgpack.ExtType(
+                        code=CHILD_EXT_CODE,
+                        data=i.to_bytes(4, 'little')
+                        )
+                    )
+            payload = msgpack.packb(struct)
+            self.put_serial(handle.name, (payload, children))
+            return
         except NonIterableHandleError:
-            data = self.serializer.dumps(obj)
-            self.put_serial(handle.name, (data, []))
+            pass
+
+        data = self.serializer.dumps(obj)
+        self.put_serial(handle.name, (data, []))
 
 
     def put_serial(self, name, serialized):
         """
         Simply pass the underlying object to the underlying cold cache.
 
-        No serialization involved, except for the children number.
+        No serialization involved, except for the children
         """
         data, children = serialized
 
         assert not isinstance(children, bytes) # guard against legacy code
 
         self.serialcache[name + b'.children'] = msgpack.packb(children)
-        self.serialcache[name + b'.data'] = data if data is not None else b''
+        self.serialcache[name + b'.data'] = data

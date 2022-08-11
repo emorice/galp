@@ -198,11 +198,11 @@ class WorkerProtocol(ReplyProtocol):
                 # Resource is available, but we still need to mark it as such
                 # NOTE: this could be wrong if it's a multipart resource with
                 # some parts still missing. This case never happens.
-                logging.warning('DEP found %s', dep_name)
+                logging.info('DEP found %s', dep_name)
                 self.script.commands[command_key].done([])
                 continue
             # Else, we send a get back
-            logging.warning('DEP fetch %s', dep_name)
+            logging.info('DEP fetch %s', dep_name)
             replies.append(self.get(route, dep_name))
 
 

@@ -112,7 +112,7 @@ def light_syntax():
     """
     Uses directly the StepSet as a decorator
     """
-    return 5, ["a", "b"], {'x': 7.}
+    return 5, ("a", "b"), {'x': 7.}
 
 @export(items=2)
 def raises_error_multiple():
