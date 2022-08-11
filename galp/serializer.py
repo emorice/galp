@@ -8,6 +8,8 @@ import logging
 import msgpack
 import dill
 
+TaskType = type('TaskType', tuple(), {})
+
 class DeserializeError(ValueError):
     """
     Exception raised to wrap any error encountered by the deserialization
@@ -38,14 +40,26 @@ def ext_hook(native_children):
         raise DeserializeError(f'Unknown ExtType {code}')
     return _hook
 
-def default(obj):
+def default(children):
     """
-    Object to dill ExtType for msgpack
+    Out-of-band sub-tasks and dill fallback
+
+    Modifies children in-place
     """
-    return msgpack.ExtType(
-            _DILL_EXT_CODE,
-            dill.dumps(obj)
-            )
+    def _default(obj):
+        if isinstance(obj, TaskType):
+            index = len(children)
+            children.append(obj)
+            return msgpack.ExtType(
+                CHILD_EXT_CODE,
+                index.to_bytes(4, 'little')
+                )
+
+        return msgpack.ExtType(
+                _DILL_EXT_CODE,
+                dill.dumps(obj)
+                )
+    return _default
 
 class Serializer:
     """
@@ -65,7 +79,7 @@ class Serializer:
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj: Any) -> bytes:
+    def dumps(self, obj, child_objects=False) -> bytes:
         """
         Serialize the data.
 
@@ -73,5 +87,17 @@ class Serializer:
         higher-level galp resources like lists of resources are normally
         serialized one by one, so the higher-level object is never directly
         passed down to the serializer.
+
+        Args:
+            obj: object to serialize
+            child_objects: if True, returns the list of Task objects found
+                during the traversal, not just their names
         """
-        return msgpack.packb(obj, default=default, use_bin_type=True)
+        children = []
+        # Modifies children in place
+        payload = msgpack.packb(obj, default=default(children), use_bin_type=True)
+        if not child_objects:
+            children = [
+                child.name for child in children
+                ]
+        return payload, children

@@ -33,19 +33,19 @@ class Script:
     def __init__(self):
         self.commands = {}
 
-    def collect(self, parent, names, allow_failures=False):
+    def collect(self, parent, out, names, allow_failures=False):
         """
         Creates a command representing a collection of recursive fetches
         """
-        return Collect(self, parent, names, allow_failures)
+        return Collect(self, parent, out, names, allow_failures)
 
-    def rget(self, parent, name):
+    def rget(self, parent, out, name):
         """
         Creates a non-unique command representing a recursive resource fetch
         """
-        return Rget(self, parent, name)
+        return Rget(self, parent, out, name)
 
-    def get(self, parent, name):
+    def get(self, parent, out, name):
         """
         Creates a unique-by-name command representing the fetch of a single
         resource
@@ -55,7 +55,7 @@ class Script:
             cmd = self.commands[key]
             cmd.outputs.append(parent)
             return cmd
-        cmd = Get(self, parent, name)
+        cmd = Get(self, parent, out, name)
         self.commands[key] = cmd
         return cmd
 
@@ -77,30 +77,25 @@ class Command:
     """
     An asynchronous command
     """
-    def __init__(self, script, parent):
+    def __init__(self, script, parent, out):
         self.script = script
-        self._status = Status.PENDING
+        self.status = Status.PENDING
         self.result = None
         self.outputs = []
-        self.update()
+        self.update(out)
 
         if parent:
             self.outputs.append(parent)
 
-    def _eval(self):
+    def _eval(self, out):
         raise NotImplementedError
 
-    @property
-    def status(self):
+    def change_status(self, new_status, out):
         """
-        Status (unknown, done or failed) of the command
+        Updates status, triggering callbacks and collecting replies
         """
-        return self._status
-
-    @status.setter
-    def status(self, new_status):
-        old_status = self._status
-        self._status = new_status
+        old_status = self.status
+        self.status = new_status
         logging.info('%s\t%s',
             new_status.name + ' ' * (
                 len(Status.FAILED.name) - len(new_status.name)
@@ -109,15 +104,15 @@ class Command:
             )
         if old_status == Status.PENDING and new_status != Status.PENDING:
             for command in self.outputs:
-                command.update()
+                command.update(out)
 
-    def update(self):
+    def update(self, out):
         """
-        Re-evals condition and possibly trigger callbacks
+        Re-evals condition and possibly trigger callbacks, returns a list of
+        replies
         """
-        if self.status != Status.PENDING:
-            return
-        self.status = self._eval()
+        if self.status == Status.PENDING:
+            self.change_status(self._eval(out), out)
 
     def done(self, result):
         """
@@ -128,8 +123,7 @@ class Command:
 
         However successive done calls will overwrite the result.
         """
-        self.result = result
-        self.status = Status.DONE
+        return self._mark_as(Status.DONE, result)
 
     def failed(self, result):
         """
@@ -140,49 +134,55 @@ class Command:
 
         However successive done calls will overwrite the result.
         """
+        return self._mark_as(Status.FAILED, result)
+
+    def _mark_as(self, status, result):
         self.result = result
-        self.status = Status.FAILED
+        out = []
+        self.change_status(status, out)
+        return out
 
 class Get(Command):
     """
     Get a single resource part
     """
-    def __init__(self, script, parent, name):
+    def __init__(self, script, parent, out, name):
         self.name = name
-        super().__init__(script, parent)
+        out.append(['GET', name])
+        super().__init__(script, parent, out)
 
     def __str__(self):
         return f'get {self.name}'
 
-    def _eval(self):
+    def _eval(self, out):
         return Status.PENDING
 
 class Rget(Command):
     """
     Recursively gets a resource and all its parts
     """
-    def __init__(self, script, parent, name):
+    def __init__(self, script, parent, out, name):
         self.name = name
         self._in_get = None
         self._in_rgets = None
-        super().__init__(script, parent)
+        super().__init__(script, parent, out)
 
     def __str__(self):
         return f'rget {self.name}'
 
-    def _eval(self):
+    def _eval(self, out):
         """
         Eval the trigger condition on the given concrete values
         """
         if self._in_get is None:
-            self._in_get = self.script.get(self, self.name)
+            self._in_get = self.script.get(self, out, self.name)
 
         if self._in_get.status != Status.DONE:
             return self._in_get.status
 
         if self._in_rgets is None:
             self._in_rgets = [
-                self.script.rget(self, child_name)
+                self.script.rget(self, out, child_name)
                 for child_name in self._in_get.result
                 ]
         return status_conj(self._in_rgets)
@@ -191,19 +191,19 @@ class Collect(Command):
     """
     A collection of recursive gets
     """
-    def __init__(self, script, parent, names, allow_failures):
+    def __init__(self, script, parent, out, names, allow_failures):
         self.names = names
         self.allow_failures = allow_failures
         self._in_rgets = None
-        super().__init__(script, parent)
+        super().__init__(script, parent, out)
 
     def __str__(self):
         return f'collect {self.names}'
 
-    def _eval(self):
+    def _eval(self, out):
         if self._in_rgets is None:
             self._in_rgets = [
-                self.script.rget(self, name)
+                self.script.rget(self, out, name)
                 for name in self.names
                 ]
         if self.allow_failures:
@@ -218,12 +218,12 @@ class Callback(Command):
         self._callback = callback
         self._in = command
         self._in.outputs.append(self)
-        super().__init__(script=None, parent=None)
+        super().__init__(script=None, parent=None, out=None)
 
     def __str__(self):
         return f'callback {self._callback}'
 
-    def _eval(self):
+    def _eval(self, out):
         if self._in.status != Status.PENDING:
             self._callback(self._in.status)
             return Status.DONE

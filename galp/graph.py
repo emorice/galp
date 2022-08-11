@@ -6,8 +6,9 @@ from itertools import chain
 
 from dataclasses import dataclass
 
-import dill
+import msgpack
 
+from galp.serializer import Serializer, TaskType
 from galp.eventnamespace import EventNamespace
 
 class TaskName(bytes):
@@ -20,6 +21,23 @@ class TaskName(bytes):
     def __str__(self):
         _hex = self.hex()
         return _hex[:6] + '..' + _hex[-2:]
+
+_serializer = Serializer() # Actually stateless, safe
+
+def hash_one(payload):
+    """
+    Hash argument with sha256
+    """
+    return hashlib.sha256(payload).digest()
+
+def obj_to_name(canon_rep):
+    """
+    Generate a task name from a canonical representation of task made from basic
+    types
+    """
+    payload = msgpack.packb(canon_rep)
+    name = TaskName(hash_one(payload))
+    return name
 
 class Step:
     """Object wrapping a function that can be called as a pipeline step
@@ -58,7 +76,7 @@ class Step:
 
         return handle, arg_handles, kwarg_handles
 
-class Task:
+class Task(TaskType):
     """
     Object wrapping a step invocation with its arguments
 
@@ -75,7 +93,7 @@ class Task:
         self.args = [self.ensure_task(arg) for arg in args]
         self.kwargs = { kw.encode('ascii'): self.ensure_task(arg) for kw, arg in kwargs.items() }
         self.vtags = (
-            [ self.hash_one(ascii(vtag).encode('ascii')) ]
+            [ ascii(vtag) ]
             if vtag is not None else [])
         self.name = self.gen_name(dict(
             step_name=step.key,
@@ -116,20 +134,9 @@ class Task:
         deps.extend(self.kwargs.values())
         return deps
 
-    @staticmethod
-    def hash_one(payload):
-        """
-        Hash argument with sha256
-        """
-        return hashlib.sha256(payload).digest()
 
-    @staticmethod
-    def san(bts):
-        """This constrains the range of values of the resulting bytes"""
-        return bts.hex().encode('ascii')
-
-    @staticmethod
-    def gen_name(task_dict):
+    @classmethod
+    def gen_name(cls, task_dict):
         """Create a resource name.
 
         Args:
@@ -143,34 +150,20 @@ class Task:
 
         We simply mash together the step name, the tags and the args name in order.
         The only difficulty is the order of keyword arguments, so we sort kwargs
-        by keyword (in original byte representation).
-        All input is sanitized by hexing it, then building a representation from
-        it.
-
+        by keyword (in original byte representation). We also sort the vtags, so
+        that they are seen as a set.
         """
 
-        # Step name
-        payload = Task.san(task_dict['step_name'])
-        # Version tags
-        payload += b'['
-        payload += b','.join(
-            [ Task.san(n) for n in task_dict['vtags'] ]
-            )
-        payload += b']'
-        # Inputs
-        sortedkw = sorted(list(task_dict['kwarg_names'].items()))
-        payload+= b'('
-        payload += b','.join(
-            [ Task.san(n) for n in task_dict['arg_names'] ]
-            +
-            [ Task.san(kw) + b'=' + Task.san(n) for kw, n in sortedkw ]
-            )
-        payload += b')'
+        canon_rep = [
+            cls.__name__,
+            task_dict['step_name'], # Step name
+            sorted(task_dict['vtags']), # Set of tags
+            task_dict['arg_names'], # List of pos args
+            sorted(list(task_dict['kwarg_names'].items())) # Map of kw args
+            ]
 
-        name = TaskName(Task.hash_one(payload))
-        #logging.debug("HASH %s <- %s", name, payload.decode())
+        return obj_to_name(canon_rep)
 
-        return name
 
     def __iter__(self):
         """
@@ -189,7 +182,7 @@ class Task:
         """Return a readable description of task"""
         return str(self.step.key, 'ascii')
 
-class SubTask:
+class SubTask(TaskType):
     """
     A Task refering to an item of a Task representing a collection.
 
@@ -204,18 +197,15 @@ class SubTask:
         self.handle = handle
         self.name = handle.name
 
-    @staticmethod
-    def gen_name(parent_name, index):
+    @classmethod
+    def gen_name(cls, parent_name, index):
         """
         Create a resource name.
         """
 
-        payload = Task.san(parent_name)
-        payload += b'['
-        payload += str(index).encode('ascii')
-        payload += b']'
+        rep = [ cls.__name__, parent_name, str(index) ]
 
-        return TaskName(Task.hash_one(payload))
+        return obj_to_name(rep)
 
     @property
     def dependencies(self):
@@ -273,7 +263,7 @@ class Handle():
                 SubTask.gen_name(self.name, index),
                 0)
 
-class HereisTask:
+class HereisTask(TaskType):
     """
     Task wrapper for data provided direclty as arguments in graph building.
 
@@ -288,14 +278,14 @@ class HereisTask:
         # Todo: more robust hashing, but this is enough for most case where
         # hereis resources are a good fit (more complex objects would tend to be
         # actual step outputs)
-        self.name = TaskName(Task.hash_one(dill.dumps(obj)))
+        self.data, self.dependencies = _serializer.dumps(obj, child_objects=True)
 
-    @property
-    def dependencies(self):
-        """
-        Empty list of other tasks we depend on.
-        """
-        return []
+        rep = [
+            self.__class__.__name__, self.data,
+            [ dep.name for dep in self.dependencies ]
+            ]
+
+        self.name = obj_to_name(rep)
 
     @property
     def description(self):

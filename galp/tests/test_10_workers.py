@@ -118,7 +118,7 @@ def test_signals(worker_socket, sig):
     [b'GET', b'one', b'two'],
     [b'SUBMIT'],
     [b'SUBMIT', b'RABBIT'],
-    [b'SUBMIT', b'step', b'keyword_without_value'],
+    [b'SUBMIT', b'name', b'step', b'keyword_without_value'],
     ])
 def test_illegals(worker_socket, msg_body):
     """Tests a few messages that should fire back an illegal
@@ -150,7 +150,7 @@ def test_task(worker_socket):
         arg_names=[], kwarg_names={}, vtags=[]
         ))
 
-    socket.send_multipart(make_msg(b'SUBMIT', name, step_name, b'\x00'))
+    socket.send_multipart(make_msg(b'SUBMIT', name, step_name))
 
     assert_ready(socket)
 
@@ -187,7 +187,7 @@ def test_reference(worker_socket):
 
     task2 = galp.steps.galp_double(task1)
 
-    worker_socket.send_multipart(make_msg(b'SUBMIT', task1.name, task1.step.key, b'\x00'))
+    worker_socket.send_multipart(make_msg(b'SUBMIT', task1.name, task1.step.key))
 
     assert_ready(worker_socket)
 
@@ -198,7 +198,7 @@ def test_reference(worker_socket):
     assert is_body(done, [b'DONE', task1.name])
 
     worker_socket.send_multipart(
-        make_msg(b'SUBMIT', task2.name, task2.step.key, b'\x00', b'', task1.name)
+        make_msg(b'SUBMIT', task2.name, task2.step.key, b'', task1.name)
         )
 
     doing = asserted_zmq_recv_multipart(worker_socket)

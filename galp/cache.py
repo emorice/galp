@@ -44,7 +44,7 @@ class CacheStack():
         Returns:
             boolean
         """
-        return name + b'.data' in self.serialcache
+        return name + b'.children' in self.serialcache
 
     def __contains__(self, name):
         return self.contains(name)
@@ -66,13 +66,9 @@ class CacheStack():
         native = self.serializer.loads(data, native_children)
         return native
 
-    def get_serial(self, name):
+    def get_children(self, name):
         """
-        Get a serialized object form the cache.
-
-        Returns:
-            a tuple of one bytes object and one int (data, children).
-            If there is no data, None is returned instead.
+        Gets the list of sub-resources of a resource in store
         """
         try:
             children = [
@@ -85,6 +81,18 @@ class CacheStack():
             raise
         except Exception as exc:
             raise StoreReadError from exc
+
+        return children
+
+    def get_serial(self, name):
+        """
+        Get a serialized object form the cache.
+
+        Returns:
+            a tuple of one bytes object and one int (data, children).
+            If there is no data, None is returned instead.
+        """
+        children = self.get_children(name)
 
         try:
             data = self.serialcache[name + b'.data']
@@ -121,8 +129,8 @@ class CacheStack():
         except NonIterableHandleError:
             pass
 
-        data = self.serializer.dumps(obj)
-        self.put_serial(handle.name, (data, []))
+        data, children = self.serializer.dumps(obj)
+        self.put_serial(handle.name, (data, children))
 
 
     def put_serial(self, name, serialized):
@@ -135,5 +143,5 @@ class CacheStack():
 
         assert not isinstance(children, bytes) # guard against legacy code
 
-        self.serialcache[name + b'.children'] = msgpack.packb(children)
         self.serialcache[name + b'.data'] = data
+        self.serialcache[name + b'.children'] = msgpack.packb(children)

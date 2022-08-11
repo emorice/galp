@@ -28,6 +28,11 @@ class MessageList(list):
     def __repr__(self):
         return f'MessageList({super().__repr__()})'
 
+    def __add__(self, other):
+        new_list = MessageList(self)
+        new_list.extend(other)
+        return new_list
+
 class BaseProtocol:
     """
     Abstract class defining the interface expected by the transport

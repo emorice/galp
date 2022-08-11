@@ -159,7 +159,7 @@ class WorkerProtocol(ReplyProtocol):
             logging.exception('GET: Cache ERROR: %s', name)
         return self.not_found(route, name)
 
-    def on_submit(self, route, name, task_dict):
+    def on_submit(self, route, task_dict):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -169,6 +169,7 @@ class WorkerProtocol(ReplyProtocol):
         This the only asynchronous handler, all others are semantically blocking.
         """
         logging.info('SUBMIT: %s', task_dict['step_name'].decode('ascii'))
+        name = task_dict['name']
 
         # Store hook. For now we just check the local cache, later we'll have a
         # central locking mechanism
@@ -180,33 +181,16 @@ class WorkerProtocol(ReplyProtocol):
         # If not in cache, resolve metadata and run the task
         replies = MessageList([self.doing(route, name)])
 
-        # If any resource is missing, send GETs back to the sender of the
-        # SUBMIT. In any case, add it to the command list to be used as a
-        # trigger input for the actual task execution
-        dep_names = [
-            *task_dict['arg_names'],
-            *task_dict['kwarg_names'].values()
-            ]
-
         # Schedule the task first. It won't actually start until its inputs are
-        # marked as available
-        self.worker.schedule_task(route, name, task_dict)
+        # marked as available, and will return the list of GETs that are needed
+        cmd_rep = self.worker.schedule_task(route, name, task_dict)
+        logging.info('CMD REP: %s', cmd_rep)
 
-        for dep_name in dep_names:
-            command_key = 'GET', dep_name
-            if dep_name in self.store:
-                # Resource is available, but we still need to mark it as such
-                # NOTE: this could be wrong if it's a multipart resource with
-                # some parts still missing. This case never happens.
-                logging.info('DEP found %s', dep_name)
-                self.script.commands[command_key].done([])
-                continue
-            # Else, we send a get back
-            logging.info('DEP fetch %s', dep_name)
-            replies.append(self.get(route, dep_name))
+        # Process the list of GETs. This checks if they're in store,
+        # and recursively finds new missing sub-resources when they are
+        more_replies = self.command_keys_to_messages(route, cmd_rep)
 
-
-        return replies
+        return replies + more_replies
 
     def on_put(self, route, name, serialized):
         """
@@ -214,7 +198,43 @@ class WorkerProtocol(ReplyProtocol):
         """
         self.store.put_serial(name, serialized)
         _data, children = serialized
-        self.script.commands['GET', name].done(children)
+        cmd_rep = self.script.commands['GET', name].done(children)
+        logging.info('CMD REP: %s', cmd_rep)
+        return self.command_keys_to_messages(route, cmd_rep)
+
+    def on_not_found(self, route, name):
+        self.script.commands['GET', name].failed('NOTFOUND')
+
+    def command_keys_to_messages(self, route, command_keys):
+        """
+        Generate galp messages from a command reply list
+        """
+        messages = MessageList()
+        while command_keys:
+            verb, name = command_keys.pop()
+            if verb != 'GET':
+                raise ValueError(f'Unknown command {verb}')
+            try:
+                children = self.store.get_children(name)
+                logging.info('DEP found %s', name)
+                command_keys.extend(
+                    self.script.commands[verb, name].done(children)
+                    )
+                continue
+            except StoreReadError:
+                logging.exception('DEP error %s', name)
+                command_keys.extend(
+                    self.script.commands[verb, name].failed('StoreReadError')
+                    )
+                continue
+            except KeyError:
+                pass
+            logging.info('DEP fetch %s', name)
+            messages.append(
+                self.get(route, name)
+                )
+        return messages
+
 
 class Worker:
     """
@@ -274,9 +294,6 @@ class Worker:
     def schedule_task(self, client_route, name, task_dict):
         """
         Callback to schedule a task for execution.
-
-        The commands for fetching the data are assumed to have been added to the
-        script already.
         """
         def _start_task(status):
             del status
@@ -284,14 +301,16 @@ class Worker:
                 self.run_submission(client_route, name, task_dict)
                 )
             self.galp_jobs.put_nowait(task)
+        init_messages = []
         self.protocol.script.callback(
             self.protocol.script.collect(
-                None, [
+                None, init_messages, [
                     *task_dict['arg_names'],
                     *task_dict['kwarg_names'].values()
                     ]),
             callback=_start_task
             )
+        return init_messages
 
     async def listen(self):
         """

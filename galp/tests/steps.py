@@ -190,6 +190,13 @@ def alloc_mem(N, dummy): # pylint: disable=invalid-name
     return some_array.sum()
 
 @export
+def identity(arg):
+    """
+    Returns its arg unchanged
+    """
+    return arg
+
+@export
 def sum_dict(some_dict):
     """
     Sums the values in a dict, ignoring keys, by iteration

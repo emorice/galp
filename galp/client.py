@@ -21,7 +21,6 @@ from galp.serializer import Serializer, DeserializeError
 from galp.protocol import ProtocolEndException
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.graph import Handle
 from galp.command_queue import CommandQueue
 from galp.commands import Script
 
@@ -224,14 +223,19 @@ class Client:
         def _end(status):
             raise ProtocolEndException(status)
 
+        init_messages = []
+
         self.protocol.script.callback(
             self.protocol.script.collect(
                 parent=None,
                 names=[t.name for t in tasks],
+                out=init_messages,
                 allow_failures=return_exceptions
                 ),
             _end
             )
+
+        logging.info('CMD REP: %s', init_messages)
 
         async with self.process_scheduled():
             await self.transport.listen_reply_loop()

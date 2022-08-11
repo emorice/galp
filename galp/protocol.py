@@ -81,7 +81,7 @@ class Protocol(LowerProtocol):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
-    def on_submit(self, route, name, task_dict):
+    def on_submit(self, route, task_dict):
         """A `SUBMIT` message was received"""
         return self.on_unhandled(b'SUBMIT')
 
@@ -231,11 +231,6 @@ class Protocol(LowerProtocol):
                 and a dictionary of `kwarg_names`.
         """
         msg = [b'SUBMIT', task_dict['name'], task_dict['step_name']]
-        # Vtags
-        vtags = task_dict['vtags']
-        msg += [ len(vtags).to_bytes(1, 'big') ]
-        for tag in vtags:
-            msg += [ tag ]
         # Pos args
         for arg_name in task_dict['arg_names']:
             msg += [ b'', arg_name ]
@@ -356,21 +351,13 @@ class Protocol(LowerProtocol):
         task_dict = {}
 
         self._validate(
-            len(msg) >= 4, route,
-            'SUBMIT without name, step or tag count') # SUBMIT name step n_tags
+            len(msg) >= 3, route,
+            'SUBMIT without name or step') # SUBMIT name step
         task_dict['name'] = msg[1]
         task_dict['step_name'] = msg[2]
 
-        n_tags = int.from_bytes(msg[3], 'big')
-        # Collect tags
-        argstack = msg[4:]
-        self._validate(
-            len(argstack) >= n_tags, route,
-            'Not as many tags as stated') # Expected number of tags
-        task_dict['vtags'] = argstack[:n_tags]
-
         # Collect args
-        argstack = argstack[n_tags:]
+        argstack = msg[3:]
         argstack.reverse()
         task_dict['arg_names'] = []
         task_dict['kwarg_names'] = {}
@@ -378,17 +365,11 @@ class Protocol(LowerProtocol):
             try:
                 keyword = argstack.pop()
                 arg_name = TaskName(argstack.pop())
-            except IndexError as exc:
-                raise IllegalRequestError from exc
+            except IndexError:
+                self._validate(False, route, 'SUBMIT with argument index but no argument value')
             if keyword == b'':
                 task_dict['arg_names'].append(arg_name)
             else:
                 task_dict['kwarg_names'][keyword] = arg_name
 
-        # Name generation from older version where the name was not included
-        # explicitely
-        name = Task.gen_name(task_dict)
-        self._validate(name == task_dict['name'], route,
-            'Given and generated names do not match')
-
-        return self.on_submit(route, name, task_dict)
+        return self.on_submit(route, task_dict)
