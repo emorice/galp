@@ -1,11 +1,9 @@
 """
 General routines to build and operate on graphs of tasks.
 """
-import logging
 import hashlib
 from itertools import chain
 
-from typing import get_type_hints, get_args
 from dataclasses import dataclass
 
 import dill

@@ -345,14 +345,14 @@ async def test_step_error(client):
     Test running a task containing a bug
     """
     with pytest.raises(galp.TaskFailedError):
-       await asyncio.wait_for(client.collect(gts.raises_error()), 3)
+        await asyncio.wait_for(client.collect(gts.raises_error()), 3)
 
 async def test_suicide(client):
     """
     Test running a task triggering a signal
     """
     with pytest.raises(galp.TaskFailedError):
-       await asyncio.wait_for(client.collect(gts.suicide(signal.SIGKILL)), 3)
+        await asyncio.wait_for(client.collect(gts.suicide(signal.SIGKILL)), 3)
 
 @pytest.mark.asyncio
 async def test_step_error_multiple(client):
@@ -360,7 +360,7 @@ async def test_step_error_multiple(client):
     Test running a multiple task containing a bug
     """
     with pytest.raises(galp.TaskFailedError):
-       await asyncio.wait_for(client.collect(*gts.raises_error_multiple()), 3)
+        await asyncio.wait_for(client.collect(*gts.raises_error_multiple()), 3)
 
 @pytest.mark.asyncio
 async def test_missing_step_error(client):
@@ -375,7 +375,7 @@ async def test_missing_step_error(client):
         pass
 
     with pytest.raises(galp.TaskFailedError):
-       await asyncio.wait_for(client.collect(missing()), 3)
+        await asyncio.wait_for(client.collect(missing()), 3)
 
 @pytest.mark.asyncio
 async def test_light_syntax(client):
