@@ -36,7 +36,7 @@ class CacheStack():
         Returns:
             boolean
         """
-        return name + b'.proto' in self.serialcache
+        return name + b'.data' in self.serialcache
 
     def __contains__(self, name):
         return self.contains(name)
@@ -47,7 +47,7 @@ class CacheStack():
 
         Either finds it in memory, or deserialize from persistent storage.
         """
-        proto, data, children = self.get_serial(name)
+        data, children = self.get_serial(name)
         native_children = [
             self.get_native(
                 SubTask.gen_name(name, i)
@@ -55,7 +55,7 @@ class CacheStack():
             for i in range(children)
             ]
 
-        native = self.serializer.loads(proto, data, native_children)
+        native = self.serializer.loads(data, native_children)
         return native
 
     def get_serial(self, name):
@@ -63,22 +63,17 @@ class CacheStack():
         Get a serialized object form the cache.
 
         Returns:
-            a triplet of two bytes objects and one int (proto, data, children).
+            a tuple of one bytes object and one int (data, children).
             If there is no data, None is returned instead.
         """
+        children = int.from_bytes(
+            self.serialcache[name + b'.children'],
+            'big')
         try:
             data = self.serialcache[name + b'.data']
         except KeyError:
             data = None
-        try:
-            children = int.from_bytes(
-                self.serialcache[name + b'.children'],
-                'big')
-        except KeyError:
-            children = 0
-        proto = self.serialcache[name + b'.proto']
         return (
-            proto,
             data,
             children
             )
@@ -95,10 +90,10 @@ class CacheStack():
             for sub_handle, sub_obj in zip(handle, obj):
                 self.put_native(sub_handle, sub_obj)
 
-            self.put_serial(handle.name, (b'tuple', None, len(obj)))
+            self.put_serial(handle.name, (None, len(obj)))
         except NonIterableHandleError:
-            proto, data = self.serializer.dumps(obj)
-            self.put_serial(handle.name, (proto, data, 0))
+            data = self.serializer.dumps(obj)
+            self.put_serial(handle.name, (data, 0))
 
 
     def put_serial(self, name, serialized):
@@ -107,10 +102,9 @@ class CacheStack():
 
         No serialization involved, except for the children number.
         """
-        proto, data, children = serialized
+        data, children = serialized
 
         assert isinstance(children, int)
 
-        self.serialcache[name + b'.proto'] = proto
-        self.serialcache[name + b'.data'] = data if data is not None else b''
         self.serialcache[name + b'.children'] = children.to_bytes(1, 'big')
+        self.serialcache[name + b'.data'] = data if data is not None else b''

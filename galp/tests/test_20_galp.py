@@ -34,15 +34,13 @@ def poisoned_cache(tmpdir):
 
     # use a valid name
     name = task.handle.name
-    # Use a valid proto name
-    proto = galp.serializer.DillSerializer.proto_id
     data = bytes.fromhex('0123456789abcdef')
     children = 0
 
     serializer = None
 
     cache = galp.cache.CacheStack(tmpdir, serializer)
-    cache.put_serial(name, (proto, data, children))
+    cache.put_serial(name, (data, children))
 
     return task
 

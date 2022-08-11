@@ -163,8 +163,8 @@ def test_task(worker_socket):
     socket.send_multipart(make_msg(b'GET', name))
 
     ans = asserted_zmq_recv_multipart(socket)
-    assert ans[3:6] == [b'PUT', name, b'dill']
-    assert dill.loads(ans[6]) == 42
+    assert ans[3:5] == [b'PUT', name]
+    assert dill.loads(ans[5]) == 42
 
 def test_notfound(worker_socket):
     """Tests the answer of server when asking to send unexisting resource"""
@@ -221,8 +221,7 @@ def test_reference(worker_socket):
         task1.name: 2,
         task2.name: 4
         }
-    assert got_a[5] == got_b[5] == b'dill'
-    for _, _, _, _, name, _proto, res, *_children in [got_a, got_b]:
+    for _, _, _, _, name, res, *_children in [got_a, got_b]:
         assert dill.loads(res) == expected[name]
 
 async def test_async_socket(async_worker_socket):

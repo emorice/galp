@@ -415,7 +415,7 @@ class BrokerProtocol(ReplyProtocol):
             else Handle(name)
             )
 
-        proto, data, children = serialized
+        data, children = serialized
 
         # Schedule sub-gets if necessary
         # To be moved to the script engine eventually
@@ -431,7 +431,7 @@ class BrokerProtocol(ReplyProtocol):
             self.schedule(children_name)
 
         # Put the parent part
-        self.store.put_serial(name, (proto, data, children))
+        self.store.put_serial(name, (data, children))
 
         # Mark the task as available, not that this does not imply the
         # availability of the sub-tasks

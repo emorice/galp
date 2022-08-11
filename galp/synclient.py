@@ -50,10 +50,12 @@ class SynClient(Protocol):
             logging.warning('Unexpected message')
             return None
 
-        if ans[-1]: # children
+        data, children = ans
+
+        if children:
             raise NotImplementedError
 
-        return self.serializer.loads(*ans)
+        return self.serializer.loads(data, [])
 
     def on_put(self, route, name, serialized):
         return serialized

@@ -173,11 +173,11 @@ class Protocol(LowerProtocol):
                 children)
 
         """
-        proto, data, children = serialized
+        data, children = serialized
         if data is None:
             data = b''
         logging.debug('-> putting %d bytes', len(data))
-        msg_body = [b'PUT', name, proto, data, children.to_bytes(1, 'big')]
+        msg_body = [b'PUT', name, data, children.to_bytes(1, 'big')]
         return route, msg_body
 
     def ready(self, route, peer):
@@ -336,14 +336,14 @@ class Protocol(LowerProtocol):
 
     @event.on('PUT')
     def _on_put(self, route, msg):
-        self._validate(4 <= len(msg) <= 5, route, 'PUT with wrong number of parts')
+        # PUT name data [children]
+        self._validate(3 <= len(msg) <= 4, route, 'PUT with wrong number of parts')
 
         name = TaskName(msg[1])
-        proto = msg[2]
-        data = msg[3]
-        children = int.from_bytes(msg[4], 'big') if len(msg) >= 5 else 0
+        data = msg[2]
+        children = int.from_bytes(msg[3], 'big') if len(msg) >= 4 else 0
 
-        return self.on_put(route, name, (proto, data, children))
+        return self.on_put(route, name, (data, children))
 
     @event.on('READY')
     def _on_ready(self, route, msg):

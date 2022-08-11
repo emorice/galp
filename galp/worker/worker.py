@@ -210,7 +210,7 @@ class WorkerProtocol(ReplyProtocol):
         Put object in store, and mark the command as done
         """
         self.store.put_serial(name, serialized)
-        _proto, _data, children = serialized
+        _data, children = serialized
         self.script.commands['GET', name].done(children)
 
 class Worker:
