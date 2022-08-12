@@ -31,6 +31,7 @@ def hash_one(payload):
     return hashlib.sha256(payload).digest()
 
 def obj_to_name(canon_rep):
+
     """
     Generate a task name from a canonical representation of task made from basic
     types
@@ -38,6 +39,13 @@ def obj_to_name(canon_rep):
     payload = msgpack.packb(canon_rep)
     name = TaskName(hash_one(payload))
     return name
+
+def ensure_task(obj):
+    """Wrap object in a literal Task if it does not seem to be a Task"""
+    if hasattr(obj, 'name') and hasattr(obj, 'dependencies'):
+        return obj
+    return LiteralTask(obj)
+
 
 class Step:
     """Object wrapping a function that can be called as a pipeline step
@@ -57,24 +65,11 @@ class Step:
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
         self.items = items
 
-    def make_handles(self, name, arg_names, kwarg_names):
+    def make_handle(self, name):
         """
         Make initial handles.
         """
-        handle = Handle(name, self.items)
-
-        # arg handles are never iterable
-        arg_handles = [
-            Handle(arg_name, 0)
-            for arg_name in arg_names
-            ]
-
-        kwarg_handles = {
-            kw: Handle(kwname, 0)
-            for kw, kwname in kwarg_names.items()
-            }
-
-        return handle, arg_handles, kwarg_handles
+        return Handle(name, items=self.items)
 
 class Task(TaskType):
     """
@@ -90,8 +85,8 @@ class Task(TaskType):
     """
     def __init__(self, step, args, kwargs, vtag=None, items=None):
         self.step = step
-        self.args = [self.ensure_task(arg) for arg in args]
-        self.kwargs = { kw.encode('ascii'): self.ensure_task(arg) for kw, arg in kwargs.items() }
+        self.args = [ensure_task(arg) for arg in args]
+        self.kwargs = { kw.encode('ascii'): ensure_task(arg) for kw, arg in kwargs.items() }
         self.vtags = (
             [ ascii(vtag) ]
             if vtag is not None else [])
@@ -101,31 +96,7 @@ class Task(TaskType):
             kwarg_names={ k : v.name for k, v in self.kwargs.items() },
             vtags=self.vtags
             ))
-        self.handle, self.arg_handles, self.kwarg_handles = self.step.make_handles(
-            self.name,
-            [ arg.name for arg in self.args ],
-            { kw: arg.name for kw, arg in self.kwargs.items() }
-            # note: for python 3.7+ this has the same order than kwargs
-            )
-
-        # Set the hereis upstream handles manually
-        for task, handle in zip(
-            chain(self.args, self.kwargs.values()),
-            chain(self.arg_handles, self.kwarg_handles.values()),
-            ):
-            if hasattr(task, 'hereis'):
-                task.handle = handle
-            else:
-                # todo: we have, as expected, both a downstream and upstream handle for
-                # each task, they probably should be checked for compatibilty.
-                pass
-
-    @staticmethod
-    def ensure_task(obj):
-        """Wrap obj in a hereis Task if it does not seem to be a Task"""
-        if hasattr(obj, 'name') and hasattr(obj, 'dependencies'):
-            return obj
-        return HereisTask(obj)
+        self.handle = self.step.make_handle(self.name)
 
     @property
     def dependencies(self):
@@ -133,7 +104,6 @@ class Task(TaskType):
         deps = list(self.args)
         deps.extend(self.kwargs.values())
         return deps
-
 
     @classmethod
     def gen_name(cls, task_dict):
@@ -163,7 +133,6 @@ class Task(TaskType):
             ]
 
         return obj_to_name(canon_rep)
-
 
     def __iter__(self):
         """
@@ -263,7 +232,7 @@ class Handle():
                 SubTask.gen_name(self.name, index),
                 0)
 
-class HereisTask(TaskType):
+class LiteralTask(TaskType):
     """
     Task wrapper for data provided direclty as arguments in graph building.
 
@@ -273,10 +242,10 @@ class HereisTask(TaskType):
     """
 
     def __init__(self, obj):
-        self.hereis = obj
+        self.literal = obj
 
         # Todo: more robust hashing, but this is enough for most case where
-        # hereis resources are a good fit (more complex objects would tend to be
+        # literal resources are a good fit (more complex objects would tend to be
         # actual step outputs)
         self.data, self.dependencies = _serializer.dumps(obj, child_objects=True)
 
@@ -286,11 +255,12 @@ class HereisTask(TaskType):
             ]
 
         self.name = obj_to_name(rep)
+        self.handle = Handle(self.name)
 
     @property
     def description(self):
         """Return a readable description of task"""
-        return '[hereis]'
+        return '[literal]'
 
 class StepSet(EventNamespace):
     """A collection of steps"""

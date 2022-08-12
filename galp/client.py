@@ -16,6 +16,7 @@ from collections import defaultdict
 import zmq
 import zmq.asyncio
 
+from galp.graph import ensure_task
 from galp.cache import CacheStack
 from galp.serializer import Serializer, DeserializeError
 from galp.protocol import ProtocolEndException
@@ -35,9 +36,6 @@ class TaskStatus(IntEnum):
 
     # DONE received or equiv.
     COMPLETED = auto()
-
-    # PUT received or equiv.
-    AVAILABLE = auto()
 
     # FAILED received or equiv.
     FAILED = auto()
@@ -111,14 +109,14 @@ class Client:
             self.new_command.clear()
             next_command, next_time = self.command_queue.pop()
             if next_command:
-                logging.debug('SCHED: Ready command %s', next_command)
+                logging.debug('SCHED: Ready command %s %s', *next_command)
                 next_msg = self.protocol.write_next(next_command)
                 if next_msg:
                     await self.transport.send_message(next_msg)
                     self.command_queue.requeue(next_command)
-                    logging.debug('SCHED: Sent message, requeuing %s', next_command)
+                    logging.debug('SCHED: Sent message, requeuing %s %s', *next_command)
                 else:
-                    logging.debug('SCHED: No message, dropping %s', next_command)
+                    logging.debug('SCHED: No message, dropping %s %s', *next_command)
 
             elif next_time:
                 # Wait for either a new command or the end of timeout
@@ -134,7 +132,7 @@ class Client:
                 logging.debug('SCHED: No ready command, waiting forever')
                 await self.new_command.wait()
 
-    def schedule(self, task_name):
+    def schedule(self, command_key):
         """
         Add a task to the scheduling queue.
 
@@ -142,8 +140,8 @@ class Client:
         submit or collect it depending on its state.
         """
 
-        logging.debug("Scheduling %s", task_name)
-        self.command_queue.enqueue(task_name)
+        logging.debug("Scheduling %s %s", *command_key)
+        self.command_queue.enqueue(command_key)
         self.new_command.set()
 
     async def gather(self, *tasks, return_exceptions=False, timeout=None):
@@ -162,6 +160,7 @@ class Client:
                 required tasks are either done or failed.
         """
 
+        tasks = list(map(ensure_task, tasks))
 
         # Update the task graph
         new_inputs = self.protocol.add(tasks)
@@ -169,7 +168,7 @@ class Client:
         # Schedule SUBMITs for all possibly new and ready downstream tasks
         # This should be handled by the Script
         for task in new_inputs:
-            self.schedule(task)
+            self.schedule(('SUBMIT', task))
 
         try:
             await asyncio.wait_for(
@@ -212,12 +211,9 @@ class Client:
         Processes messages until the collection target is achieved
         """
 
-        # Update the list of final tasks and schedule GETs for the already done
-        # Note: comes after submit as derived task need to be submitted first to
-        # be marked as completed before.
-        # Note 2: the above note does not work with async scheduling and should not
-        # be relied on
-        self.protocol.add_finals(tasks)
+        # Schedule GETs for tasks that were already done in a previous
+        # collection run
+        self.protocol.get_done(tasks)
 
         # Register the termination command
         def _end(status):
@@ -263,9 +259,6 @@ class BrokerProtocol(ReplyProtocol):
         ## Current task status
         self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
 
-        # Tasks whose result is to be fetched
-        self._finals = set()
-
         self._details = {}
         self._dependents = defaultdict(set)
         self._dependencies = defaultdict(set)
@@ -285,7 +278,7 @@ class BrokerProtocol(ReplyProtocol):
     def add(self, tasks):
         """
         Browse the graph and add it to the tasks we're tracking, in an
-        idempotent way. Also tracks which ones are final.
+        idempotent way.
 
         The client can keep references to any task passed to it directly or as
         a dependency. Modifying tasks after there were added, directly or as
@@ -337,53 +330,61 @@ class BrokerProtocol(ReplyProtocol):
 
         return new_top_level
 
-    def add_finals(self, tasks):
+    def get_done(self, tasks):
         """
-        Add tasks to the set of finals (= to be collected) tasks, and schedule
-        for collection any new one that was already done.
+        Schedule for collection any new task that was already done.
         """
 
         for task_details in tasks:
+            get_key = 'GET', task_details.name
             if (
-                task_details not in self._finals
+                get_key not in self.script.commands
                 and
                 self._status[task_details.name] is TaskStatus.COMPLETED
                 ):
                 logging.debug("Scheduling extra GET for upgraded %s",
                     task_details.name.hex())
-                self.schedule(task_details.name)
-            self._finals.add(task_details.name)
+                self.schedule(get_key)
 
-    def write_next(self, name):
+    def write_next(self, command_key):
         """
         Returns the next nessage to be sent for a task given the information we
         have about it
         """
-        if self._status[name] < TaskStatus.RUNNING:
-            return self.submit_task_by_name(name)
+        verb, name = command_key
 
-        if self._status[name] < TaskStatus.COMPLETED:
-            # Task is running but not done yet, nothing to send
+        if verb == 'SUBMIT':
+            if self._status[name] < TaskStatus.RUNNING:
+                return self.submit_task_by_name(name)
             return None
 
-        if name in self._finals:
-            if self._status[name] < TaskStatus.AVAILABLE:
+        if verb == 'GET':
+            if self.script.commands[command_key].is_pending():
                 return self.get(self.route, name)
+            return None
 
-        return None
+        raise NotImplementedError(verb)
 
     # Custom protocol sender
     # ======================
     # For simplicity these set the route inside them
 
     def submit_task_by_name(self, task_name):
-        """Loads details, handles hereis and subtasks, and manage stats"""
+        """Loads details, handles literals and subtasks, and manage stats"""
         if task_name not in self._details:
             raise ValueError(f"Task {task_name.hex()} is unknown")
         details = self._details[task_name]
 
-        if hasattr(details, 'hereis'):
-            self.store.put_native(details.handle, details.hereis)
+        if hasattr(details, 'literal'):
+            # Reference the literal
+            self.store.put_native(details.handle, details.literal)
+            # Mark any possible GET as completed
+            command = self.script.commands.get(('GET', task_name))
+            if command:
+                cmd_rep = command.done([dep.name for dep in details.dependencies])
+                logging.info('CMD REP: %s', cmd_rep)
+                for command_key in cmd_rep:
+                    self.schedule(command_key)
             return self.on_done(None, task_name)
 
         # Sub-tasks are automatically satisfied when their parent and unique
@@ -421,18 +422,11 @@ class BrokerProtocol(ReplyProtocol):
             # We do not send explicit DONEs for subtasks, so we mark them as
             # done when we receive the parent data.
             self._status[child_name] = TaskStatus.COMPLETED
-            # The scheduler needs to know that this task wants to be fetched
-            self._finals.add(child_name)
             # Schedule it for GET to be sent in the future
-            self.schedule(child_name)
+            self.schedule(('GET', child_name))
 
         # Put the parent part
         self.store.put_serial(name, (data, children))
-
-        # Mark the task as available, not that this does not imply the
-        # availability of the sub-tasks
-        # This also should become useless as the _status gets phased out
-        self._status[name] = TaskStatus.AVAILABLE
 
         # Fetch command
         command = self.script.commands['GET', name]
@@ -442,20 +436,23 @@ class BrokerProtocol(ReplyProtocol):
     def on_done(self, route, name):
         """Given that done_task just finished, mark it as done, schedule any
         dependent ready to be submitted, and schedule GETs for final tasks.
-
         """
 
         self._status[name] = TaskStatus.COMPLETED
 
-        if name in self._finals:
-            self.schedule(name)
-
+        # check if we have ready pending outputs, if yes schedule them
         for dept in self._dependents[name]:
             if all(
                 self._status[sister_dep] >= TaskStatus.COMPLETED
                 for sister_dep in self._dependencies[dept]
                 ):
-                self.schedule(dept)
+                self.schedule(('SUBMIT', dept))
+
+        # check if we have a pending get, if yes schedule it
+        command_key = 'GET', name
+        command = self.script.commands.get(command_key)
+        if command:
+            self.schedule(command_key)
 
     def on_doing(self, route, name):
         """Just updates statistics"""

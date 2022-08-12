@@ -125,6 +125,24 @@ class Command:
         """
         return self._mark_as(Status.DONE, result)
 
+    def is_done(self):
+        """
+        Boolean, if command done
+        """
+        return self.status == Status.DONE
+
+    def is_failed(self):
+        """
+        Boolean, if command done
+        """
+        return self.status == Status.FAILED
+
+    def is_pending(self):
+        """
+        Boolean, if command still pending
+        """
+        return self.status == Status.PENDING
+
     def failed(self, result):
         """
         Mark the future as failed and runs callbacks.
@@ -148,7 +166,7 @@ class Get(Command):
     """
     def __init__(self, script, parent, out, name):
         self.name = name
-        out.append(['GET', name])
+        out.append(('GET', name))
         super().__init__(script, parent, out)
 
     def __str__(self):

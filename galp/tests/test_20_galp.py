@@ -597,3 +597,18 @@ async def test_structured_inputs(client):
 
     assert ans == 7
     assert ans_dict == 7
+
+async def test_gather_structured(client):
+    """
+    Runs direclty a list or dict of tasks
+    """
+    task1, task2 = gts.identity(3), gts.identity(4)
+    struct = {'t1': task1, 't2': task2}
+
+    async with timeout(3):
+        ans = await client.run(struct)
+
+    assert isinstance(ans, dict)
+    assert set(ans.keys()) == set(('t1', 't2'))
+    assert ans['t1'] == 3
+    assert ans['t2'] == 4

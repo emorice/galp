@@ -194,15 +194,15 @@ class Protocol(LowerProtocol):
     def submit_task(self, route, task):
         """Sends SUBMIT for given task object.
 
-        Hereis-tasks and derived tasks should not be passed at all and will
-        trigger an error, since they do not represent the result of a step and
-        cannot be executed.
+        Literal and derived tasks should not be passed at all and will trigger
+        an error, since they do not represent the result of a step and cannot be
+        executed.
 
         Handle them in a wrapper or override.
         """
 
-        if hasattr(task, 'hereis'):
-            raise ValueError('Here-is tasks must never be passed to '
+        if hasattr(task, 'literal'):
+            raise ValueError('Literal tasks must never be passed to '
                 'Protocol layer')
         if hasattr(task, 'parent'):
             raise ValueError('Derived tasks must never be passed to '

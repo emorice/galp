@@ -357,7 +357,7 @@ class Worker:
                 logging.exception('No such step known to worker: %s', step_name.decode('ascii'))
                 raise NonFatalTaskError from exc
 
-            handle, _arg_handles, _kwarg_handles = step.make_handles(name, arg_names, kwarg_names)
+            handle = step.make_handle(name)
 
             # Load args from store, usually from disk.
             try:
