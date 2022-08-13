@@ -32,4 +32,11 @@ async def test_explicit():
         client = await gls.start()
         res = await client.run(task)
         assert res == 1234
+
+        client2 = gls.client
+        res = await client.run(task)
+        assert res == 1234
+
         await gls.stop()
+
+        assert gls.client is None

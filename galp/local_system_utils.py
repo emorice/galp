@@ -30,6 +30,7 @@ class LocalSystem:
                 pool_size=pool_size,
                 config_dict={'steps': steps},
                 ))
+        self.client = None
 
     async def start(self):
         """
@@ -45,12 +46,14 @@ class LocalSystem:
         await self._stack.enter_async_context(
             background(self._pool.run())
             )
-        return Client(self._client_endpoint)
+        self.client =  Client(self._client_endpoint)
+        return self.client
 
     async def stop(self):
         """
         Stops background tasks and clean up
         """
+        self.client = None
         await self._stack.aclose()
 
 
