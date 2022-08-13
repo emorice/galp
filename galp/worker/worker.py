@@ -21,15 +21,16 @@ import toml
 
 import galp.steps
 import galp.cache
-from galp.cache import StoreReadError
 import galp.cli
+
+from galp.cache import StoreReadError
+from galp.graph import StepSet
 from galp.config import ConfigError
 from galp.lower_protocol import MessageList
 from galp.protocol import ProtocolEndException, IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.commands import Script
-
 from galp.profiler import Profiler
 from galp.serializer import Serializer
 from galp.eventnamespace import NoHandlerError
@@ -42,14 +43,16 @@ class NonFatalTaskError(RuntimeError):
 
 def load_steps(plugin_names):
     """
-    Attempts to import the given modules, and add their `export` attribute to
-    the list of currently known steps
+    Attempts to import the given modules, and add any public StepSet attribute
+    to the list of currently known steps
     """
     step_dir = galp.steps.export
     for name in plugin_names:
         try:
             plugin = importlib.import_module(name)
-            step_dir += plugin.export
+            for k, v in vars(plugin).items():
+                if isinstance(v, StepSet) and not k.startswith('_'):
+                    step_dir += v
             logging.info('Loaded plug-in %s', name)
         except ModuleNotFoundError as exc:
             logging.error('No such plug-in: %s', name)

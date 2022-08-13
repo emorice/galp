@@ -14,8 +14,8 @@ from galp.graph import StepSet
 export = StepSet()
 
 # Alternative namespaces to register the same function several times
-export2 = StepSet()
-export3 = StepSet()
+_export2 = StepSet()
+_export3 = StepSet()
 
 @export.step
 def plugin_hello():
@@ -40,8 +40,8 @@ def tag_me():
 # Only this one can be called
 tagged1 = export.step(vtag=0)(tag_me)
 
-untagged = export2.step(tag_me)
-tagged2 = export3.step(vtag=1)(tag_me)
+untagged = _export2.step(tag_me)
+tagged2 = _export3.step(vtag=1)(tag_me)
 
 def naive_fib(n): # pylint: disable=invalid-name
     """
