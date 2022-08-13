@@ -262,21 +262,10 @@ class Worker:
         as any finishes or raises
         """
         tasks = [
-            asyncio.create_task(self.log_heartbeat()),
             asyncio.create_task(self.monitor_jobs()),
             asyncio.create_task(self.listen())
             ]
         return tasks
-
-    async def log_heartbeat(self):
-        """
-        Simple loop that periodically logs a message
-        """
-        i = 0
-        while True:
-            logging.info("Worker heartbeat %d", i)
-            await asyncio.sleep(10)
-            i += 1
 
     async def monitor_jobs(self):
         """

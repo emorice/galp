@@ -19,3 +19,17 @@ async def test_standalone():
         async with galp.local_system(steps=['galp.tests.steps']) as client:
             res = await client.run(task)
         assert res == task.step.function()
+
+async def test_explicit():
+    """
+    Use a standalone system without the context manager syntax
+    """
+    task = gts.identity(1234)
+
+    gls = galp.LocalSystem(steps=['galp.tests.steps'])
+
+    async with timeout(3):
+        client = await gls.start()
+        res = await client.run(task)
+        assert res == 1234
+        await gls.stop()
