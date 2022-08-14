@@ -8,7 +8,9 @@ import logging
 import signal
 
 import galp.cli
+import galp.worker
 from .pool import Pool
+
 
 def on_signal(sig, pool):
     """
@@ -25,10 +27,15 @@ async def main(args):
     """
     Main CLI entry point
     """
-    galp.cli.setup(args, " pool ")
+    galp.cli.setup(" pool ", args.debug)
     logging.info("Starting worker pool")
 
-    pool = Pool(args)
+    config = {
+        'pool_size': args.pool_size,
+        'endpoint': args.endpoint,
+        }
+
+    pool = Pool(config, galp.worker.worker.make_config(args))
 
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD):

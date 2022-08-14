@@ -62,7 +62,7 @@ def load_steps(plugin_names):
             raise ConfigError(('Bad plugin', name)) from exc
     return step_dir
 
-def limit_resources(args):
+def limit_resources(vm=None):
     """
     Set resource limits from command line, for now only virtual memory.
 
@@ -74,21 +74,21 @@ def limit_resources(args):
         'M': 6,
         'G': 9
         }
-    if args.vm:
-        opt_suffix = args.vm[-1]
+    if vm:
+        opt_suffix = vm[-1]
         exp = suffixes.get(opt_suffix)
         if exp is not None:
             mult = 10**exp
-            size = int(args.vm[:-1]) * mult
+            size = int(vm[:-1]) * mult
         else:
-            size = int(args.vm)
+            size = int(vm)
 
         logging.info('Setting virtual memory limit to %d bytes', size)
 
         _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         resource.setrlimit(resource.RLIMIT_AS, (size, hard))
 
-def make_worker_init(args):
+def make_worker_init(config):
     """Prepare a worker factory function. Must be called in main thread.
 
     This involves parsing the config and loading plug-in steps.
@@ -97,31 +97,40 @@ def make_worker_init(args):
         args: an object whose attributes are the the parsed arguments, as
             returned by argparse.ArgumentParser.parse_args.
     """
-    galp.cli.setup(args, "worker")
-    # Signal handler
+    # Early setup, make sure this work before attempting config
+    galp.cli.setup("worker", config.get('debug'))
     galp.cli.set_sync_handlers()
 
-    config = {}
-    if hasattr(args, 'config_dict'):
-        config = args.config_dict
-    if args.config:
-        if config:
-            raise ValueError('Do not specify both config and config_dict')
-        logging.info("Loading config file %s", args.config)
+    # Parse configuration
+    config = config or {}
+    configfile = config.get('configfile')
+    default_configfile = 'galp.cfg'
+
+    if not configfile and os.path.exists(default_configfile):
+        configfile = default_configfile
+
+    if configfile:
+        logging.info("Loading config file %s", configfile)
         # TOML is utf-8 by spec
-        with open(args.config, encoding='utf-8') as fstream:
-            config = toml.load(fstream)
+        with open(configfile, encoding='utf-8') as fstream:
+            config.update(toml.load(fstream))
 
-    limit_resources(args)
+    # Validate config
+    if not config.get('store'):
+        raise ConfigError('No storage directory given')
+    if not config.get('endpoint'):
+        raise ConfigError('No endpoint directory given')
 
-    step_dir = load_steps(config['steps'] if 'steps' in config else [])
+    # Late setup
+    limit_resources(config.get('vm'))
+    step_dir = load_steps(config.get('steps') or [])
 
-    logging.info("Worker connecting to %s", args.endpoint)
-    logging.info("Storing in %s", args.storedir)
+    logging.info("Worker connecting to %s", config['endpoint'])
+    logging.info("Storing in %s", config['store'])
 
     def _make_worker():
         return Worker(
-            args.endpoint, args.storedir,
+            config['endpoint'], config['store'],
             step_dir,
             Profiler(config.get('profile'))
             )
@@ -392,7 +401,7 @@ class Worker:
                 'running asynchronous task. This signals a bug in GALP itself.')
             raise
 
-def fork(**kwargs):
+def fork(config):
     """
     Forks a worker with the given arguments.
 
@@ -402,26 +411,22 @@ def fork(**kwargs):
     if pid == 0:
         ret = 1
         try:
-            all_args = {
-                action.dest: action.default
-                for action in make_parser()._actions # pylint: disable=protected-access
-                if action.dest is not argparse.SUPPRESS
-            }
-            all_args.update(kwargs)
-            ret = main(
-                argparse.Namespace(**all_args)
-                )
+            ret = main(config)
+        except:
+            # os._exit swallows exception so make sure to log them
+            logging.exception('Uncaught exception in worker')
+            raise
         finally:
             # Not sys.exit after a fork as it could call parent-specific
             # callbacks
             os._exit(ret) # pylint: disable=protected-access
     return pid
 
-def main(args):
+def main(config):
     """
     Normal entry point
     """
-    make_worker = make_worker_init(args)
+    make_worker = make_worker_init(config)
     async def _coro(make_worker):
         worker = make_worker()
         ret = await galp.cli.wait(worker.run())
@@ -443,6 +448,17 @@ def add_parser_arguments(parser):
         help='Limit on process virtual memory size, e.g. "2M" or "1G"')
 
     galp.cli.add_parser_arguments(parser)
+
+def make_config(args):
+    """
+    Makes a config dictionary from parsed command-line arguments.
+    """
+    return {
+        'endpoint': args.endpoint,
+        'store': args.storedir,
+        'configfile': args.config,
+        'vm': args.vm
+        }
 
 def make_parser():
     """

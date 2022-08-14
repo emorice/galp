@@ -16,7 +16,7 @@ async def test_standalone():
     task = gts.hello()
 
     async with timeout(3):
-        async with galp.local_system(steps=['galp.tests.steps']) as client:
+        async with galp.temp_system(steps=['galp.tests.steps']) as client:
             res = await client.run(task)
         assert res == task.step.function()
 
@@ -26,7 +26,7 @@ async def test_explicit():
     """
     task = gts.identity(1234)
 
-    gls = galp.LocalSystem(steps=['galp.tests.steps'])
+    gls = galp.TempSystem(steps=['galp.tests.steps'])
 
     async with timeout(3):
         client = await gls.start()

@@ -246,10 +246,10 @@ async def test_fork_worker(tmpdir):
     socket.bind('tcp://127.0.0.1:*')
     endpoint = socket.getsockopt(zmq.LAST_ENDPOINT)
 
-    pid = galp.worker.fork(
+    pid = galp.worker.fork(dict(
         endpoint=endpoint,
-        storedir=tmpdir
-        )
+        store=tmpdir
+        ))
     try:
         async with timeout(3):
             msg = await socket.recv_multipart()

@@ -11,7 +11,7 @@ def add_parser_arguments(parser):
     parser.add_argument('-d', '--debug', action='store_true',
         help='Turn on debug-level logging')
 
-def setup(args, name):
+def setup(name, debug=False):
     """
     Common CLI setup steps
     """
@@ -24,7 +24,7 @@ def setup(args, name):
     )
     # Note the use of force ; this unregisters existing handlers that could have been
     # set by a parent forking process
-    if args.debug:
+    if debug:
         logging.basicConfig(level=logging.DEBUG, format=log_format, force=True)
     else:
         logging.basicConfig(level=logging.INFO, format=log_format, force=True)
