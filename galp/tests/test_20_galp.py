@@ -14,7 +14,6 @@ import galp.client
 import galp.synclient
 import galp.tests.steps as gts
 
-
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member
 
@@ -145,7 +144,7 @@ async def test_plugin(client):
     """
     Test running a task defined in a plug-in
     """
-    task = gts.plugin_hello()
+    task = gts.hello()
 
     ans = await asyncio.wait_for(client.collect(task), 3)
 
@@ -369,3 +368,14 @@ async def test_gather_structured(client):
     assert set(ans.keys()) == set(('t1', 't2'))
     assert ans['t1'] == 3
     assert ans['t2'] == 4
+
+async def test_auto_call(client):
+    """
+    When steps are given to the client, call them to make them into tasks
+    """
+    step = gts.hello # not hello()
+
+    async with timeout(3):
+        ans = await client.run(step)
+
+    assert ans == step.function()

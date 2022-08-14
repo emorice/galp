@@ -73,7 +73,7 @@ async def test_fill_queue(blocked_client):
     Tests that we can saturate the client outgoing queue at will
     """
     _, client = blocked_client
-    task = gts.plugin_hello()
+    task = gts.hello()
     route = client.protocol.default_route()
 
     # Check that client blocks

@@ -126,7 +126,7 @@ async def test_return_exceptions(client):
     Test keeping on collecting tasks after first failure
     """
     task_fail = gts.raises_error()
-    task_ok = gts.plugin_hello()
+    task_ok = gts.hello()
 
     # Ensure the first task fails before we run the second
     with pytest.raises(galp.TaskFailedError):
@@ -151,7 +151,7 @@ async def test_cache_corruption_get(poisoned_cache, client):
             3)
 
     # Test that the worker recovered
-    task3 = gts.plugin_hello()
+    task3 = gts.hello()
     ans, = await asyncio.wait_for(
         client.collect(task3),
         3)
@@ -172,7 +172,7 @@ async def test_remote_cache_corruption(poisoned_cache, client):
             3)
 
     # Test that the worker recovered
-    task3 = gts.plugin_hello()
+    task3 = gts.hello()
     ans, = await asyncio.wait_for(
         client.collect(task3),
         3)

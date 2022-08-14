@@ -18,7 +18,7 @@ _export2 = StepSet()
 _export3 = StepSet()
 
 @export.step
-def plugin_hello():
+def hello():
     """
     Takes no arguments, returns a constant, simplest step
     """

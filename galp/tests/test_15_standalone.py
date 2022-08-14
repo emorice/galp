@@ -13,7 +13,7 @@ async def test_standalone():
     """
     Use a one-liner to start galp and use it
     """
-    task = gts.plugin_hello()
+    task = gts.hello()
 
     async with timeout(3):
         async with galp.local_system(steps=['galp.tests.steps']) as client:

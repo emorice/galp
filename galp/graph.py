@@ -2,7 +2,6 @@
 General routines to build and operate on graphs of tasks.
 """
 import hashlib
-from itertools import chain
 
 from dataclasses import dataclass
 
@@ -41,9 +40,15 @@ def obj_to_name(canon_rep):
     return name
 
 def ensure_task(obj):
-    """Wrap object in a literal Task if it does not seem to be a Task"""
-    if hasattr(obj, 'name') and hasattr(obj, 'dependencies'):
+    """Makes object into a task in some way.
+
+    If it's a step, try to call it to get a task.
+    Else, wrap into a Literal task
+    """
+    if isinstance(obj, TaskType):
         return obj
+    if isinstance(obj, Step):
+        return obj()
     return LiteralTask(obj)
 
 
@@ -60,16 +65,24 @@ class Step:
             objects, and allows to index or iterate over the task to generate
             handle pointing to the individual items.
     """
-    def __init__(self, function, items=None):
+    def __init__(self, function, **task_options):
         self.function = function
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
-        self.items = items
+        self.task_options = task_options
+
+    def __call__(self, *args, **kwargs):
+        """
+        Symbolically calls the function wrapped by this step, returning a Task
+        object representing the eventual result
+        """
+        return Task(self, args, kwargs, **self.task_options)
 
     def make_handle(self, name):
         """
         Make initial handles.
         """
-        return Handle(name, items=self.items)
+        items = self.task_options.get('items')
+        return Handle(name, items=items)
 
 class Task(TaskType):
     """
@@ -96,7 +109,7 @@ class Task(TaskType):
             kwarg_names={ k : v.name for k, v in self.kwargs.items() },
             vtags=self.vtags
             ))
-        self.handle = self.step.make_handle(self.name)
+        self.handle = Handle(self.name, items)
 
     @property
     def dependencies(self):
@@ -297,12 +310,10 @@ class StepSet(EventNamespace):
         def _step_maker(function):
             step = Step(
                 function,
-                items=options['items'] if 'items' in options else None
+                **options,
                 )
             self.on(step.key)(step)
-            def _task_maker(*args, **kwargs):
-                return Task(step, args, kwargs, **options)
-            return _task_maker
+            return step
 
         if decorated:
             return _step_maker(*decorated)
