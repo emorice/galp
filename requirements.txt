@@ -1,10 +1,6 @@
 pytest
 pytest-asyncio
 async-timeout
-zmq
+psutil
 numpy
 pyarrow
-diskcache
-dill
-toml
-psutil

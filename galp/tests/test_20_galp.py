@@ -4,11 +4,8 @@ High-level tests for galp
 
 import os
 import asyncio
-import signal
 import pstats
-import psutil
 
-import pytest
 import numpy as np
 from async_timeout import timeout
 
@@ -18,43 +15,12 @@ import galp.synclient
 import galp.tests.steps as gts
 
 
-# Other fixtures
-# ========
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member
-
-@pytest.fixture(params=[
-    # Invalid children value
-    bytes('INVALID', 'ascii'),
-    # Valid children value
-    bytes.fromhex('90')
-    ])
-def poisoned_cache(tmpdir, request):
-    """
-    A galp cache with a random bad value in it
-
-    The error should occur when deserializing the children list, so rpesumably
-    worker-side
-    """
-    task = gts.arange(5)
-
-    # Valid name
-    name = task.handle.name
-    # Either children value
-    children = request.param
-    # Invalid data but we should fail before that
-    data = bytes.fromhex('0123456789abcdef')
-
-    cache = galp.cache.CacheStack(tmpdir, None)
-    cache.serialcache[name + b'.children'] = children
-    cache.serialcache[name + b'.data'] = data
-
-    return task
 
 # Tests
 # =====
 
-@pytest.mark.asyncio
 async def test_client(client):
     """Test simple functionnalities of client"""
     task = galp.steps.galp_hello()
@@ -65,7 +31,6 @@ async def test_client(client):
 
     assert ans == [42,]
 
-@pytest.mark.asyncio
 async def test_double_collect(client):
     """Proper handling of collecting the same task twice"""
     task = galp.steps.galp_hello()
@@ -80,7 +45,6 @@ async def test_double_collect(client):
 
     assert ans1 == ans2
 
-@pytest.mark.asyncio
 async def test_task_kwargs(client):
     two = galp.steps.galp_double()
     four = galp.steps.galp_double(two)
@@ -96,7 +60,6 @@ async def test_task_kwargs(client):
 
     assert tuple(ans) == (2, 2, -2)
 
-@pytest.mark.asyncio
 async def test_task_posargs(client):
     two = galp.steps.galp_double()
     four = galp.steps.galp_double(two)
@@ -110,7 +73,6 @@ async def test_task_posargs(client):
 
     assert tuple(ans) == (2, -2)
 
-@pytest.mark.asyncio
 async def test_recollect_intermediate(client):
     """
     Tests doing a collect on a task already run previously as an intermediate
@@ -129,7 +91,6 @@ async def test_recollect_intermediate(client):
 
     assert tuple(ans_four), tuple(ans_two) == ( (4,), (2,) )
 
-@pytest.mark.asyncio
 async def test_stepwise_collect(client):
     """
     Tests running tasks in several incremental collect calls
@@ -168,21 +129,18 @@ async def assert_cache(clients, task=galp.steps.galp_hello()):
     assert client1.protocol.run_count[task.name] == 1
     assert client2.protocol.run_count[task.name] == 0
 
-@pytest.mark.asyncio
 async def test_mem_cache(client_pair):
     """
     Test worker-side in-memory cache
     """
     await assert_cache(client_pair)
 
-@pytest.mark.asyncio
 async def test_fs_cache(disjoined_client_pair):
     """
     Test worker-side fs cache
     """
     await assert_cache(disjoined_client_pair)
 
-@pytest.mark.asyncio
 async def test_plugin(client):
     """
     Test running a task defined in a plug-in
@@ -193,7 +151,6 @@ async def test_plugin(client):
 
     assert ans == ['6*7']
 
-@pytest.mark.asyncio
 async def test_alt_decorator_syntax(client):
     """
     Test declaring a task with decorator called instead of applied.
@@ -204,7 +161,6 @@ async def test_alt_decorator_syntax(client):
 
     assert ans == ['alt']
 
-@pytest.mark.asyncio
 async def test_vtags(client):
     """
     Exercises version tags
@@ -222,7 +178,6 @@ async def test_vtags(client):
 
     assert ans == ['tagged']
 
-@pytest.mark.asyncio
 async def test_inline(client):
     """Test using non-task arguments"""
 
@@ -235,7 +190,6 @@ async def test_inline(client):
 
     assert ans == [11, 11]
 
-@pytest.mark.asyncio
 async def test_profiling(client):
     """Tests the integrated python profiler"""
     task = gts.profile_me(27)
@@ -249,7 +203,6 @@ async def test_profiling(client):
     stats = pstats.Stats(path)
     stats.print_stats()
 
-@pytest.mark.asyncio
 async def test_npserializer(client):
     """Tests fetching a non-standard type"""
     task = gts.arange(10)
@@ -259,7 +212,6 @@ async def test_npserializer(client):
     assert isinstance(ans, np.ndarray)
     np.testing.assert_array_equal(ans, np.arange(10))
 
-@pytest.mark.asyncio
 async def test_npargserializer(disjoined_client_pair):
     """Tests passing a non-standard type between tasks.
 
@@ -275,7 +227,6 @@ async def test_npargserializer(disjoined_client_pair):
 
     assert ans2 == [45]
 
-@pytest.mark.asyncio
 async def test_sync_client(async_sync_client_pair):
     """
     Tests the sync client's get functionnality
@@ -289,7 +240,6 @@ async def test_sync_client(async_sync_client_pair):
 
     assert async_ans == [sync_ans] == [42]
 
-@pytest.mark.asyncio
 async def test_serialize_df(client):
     """
     Tests basic transfer of dataframe or tables
@@ -304,7 +254,6 @@ async def test_serialize_df(client):
     assert ans[0].num_rows == 3
     assert ans[0] == the_table
 
-@pytest.mark.asyncio
 async def test_tuple(client):
     """
     Test tasks yielding a splittable handle.
@@ -326,7 +275,6 @@ async def test_tuple(client):
 
     assert ans2[0] == sum(ans_a[0])
 
-@pytest.mark.asyncio
 async def test_collect_tuple(client):
     """
     Test collecting a composite resource
@@ -337,52 +285,12 @@ async def test_collect_tuple(client):
 
     assert ans[0] == task.step.function()
 
-@pytest.mark.asyncio
 async def test_cache_tuple(client_pair):
     """
     Test caching behavior for composite resources.
     """
     await assert_cache(client_pair, gts.native_tuple())
 
-@pytest.mark.asyncio
-async def test_step_error(client):
-    """
-    Test running a task containing a bug
-    """
-    with pytest.raises(galp.TaskFailedError):
-        await asyncio.wait_for(client.collect(gts.raises_error()), 3)
-
-async def test_suicide(client):
-    """
-    Test running a task triggering a signal
-    """
-    with pytest.raises(galp.TaskFailedError):
-        await asyncio.wait_for(client.collect(gts.suicide(signal.SIGKILL)), 3)
-
-@pytest.mark.asyncio
-async def test_step_error_multiple(client):
-    """
-    Test running a multiple task containing a bug
-    """
-    with pytest.raises(galp.TaskFailedError):
-        await asyncio.wait_for(client.collect(*gts.raises_error_multiple()), 3)
-
-@pytest.mark.asyncio
-async def test_missing_step_error(client):
-    """
-    Test running a unexisting step
-    """
-
-    # Define a step locally that is invisible to the worker
-    local_export = galp.StepSet()
-    @local_export.step
-    def missing():
-        pass
-
-    with pytest.raises(galp.TaskFailedError):
-        await asyncio.wait_for(client.collect(missing()), 3)
-
-@pytest.mark.asyncio
 async def test_light_syntax(client):
     task = gts.light_syntax()
 
@@ -390,8 +298,10 @@ async def test_light_syntax(client):
 
     assert tuple(ans) == task.step.function()
 
-@pytest.mark.asyncio
 async def test_parallel_tasks(client_pool):
+    """
+    Runs several long tasks in parallel in a big pool
+    """
     pre_task = galp.steps.galp_hello()
 
     # Run a first task to warm the pool
@@ -408,7 +318,6 @@ async def test_parallel_tasks(client_pool):
 
     assert set(ans) == set(range(10))
 
-@pytest.mark.asyncio
 async def test_variadic(client):
     args = [1, 2, 3]
 
@@ -417,158 +326,6 @@ async def test_variadic(client):
     ans, = await asyncio.wait_for(client.collect(task), 3)
 
     assert ans == sum(args)
-
-@pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
-async def test_signals_busyloop(client, galp_set_one, sig):
-    """Tests that worker terminate on signal when stuck in busy loop"""
-    client_endoint, all_handles = galp_set_one
-    broker_handle, pool_handle = all_handles
-
-    # This is only supposed to kill the pool and its one child
-    handles = [pool_handle]
-
-    task = gts.busy_loop()
-
-    bg = asyncio.create_task(client.collect(task))
-
-
-    #FIXME: we should wait for the DOING message instead
-    await asyncio.sleep(1)
-
-    # List all processes and children
-    # Under the current implementation we should have started one pool manager
-    # and one worker
-    processes = [
-        psutil.Process(handle.pid)
-        for handle in handles
-        ]
-    children = []
-    for process in processes:
-        assert process.status() != psutil.STATUS_ZOMBIE
-        children.extend(process.children(recursive=True))
-    assert len(processes + children) == 2
-
-    # Send signal to the pool manager
-    for handle in handles:
-        handle.send_signal(sig)
-
-    # Check everyone died
-    gone, alive = psutil.wait_procs(processes + children, timeout=4)
-    assert not alive
-
-    bg.cancel()
-    try:
-        await bg
-    except asyncio.CancelledError:
-        pass
-
-async def test_return_exceptions(client):
-    """
-    Test keeping on collecting tasks after first failure
-    """
-    task_fail = gts.raises_error()
-    task_ok = gts.plugin_hello()
-
-    # Ensure the first task fails before we run the second
-    with pytest.raises(galp.TaskFailedError):
-        ans_fail, = await asyncio.wait_for(client.collect(task_fail), 3)
-
-    ans_fail, ans_ok = await asyncio.wait_for(
-        client.collect(task_fail, task_ok, return_exceptions=True),
-        3)
-
-    assert isinstance(ans_fail, galp.TaskFailedError)
-    assert ans_ok == task_ok.step.function() # pylint: disable=no-member
-
-async def test_cache_corruption_get(poisoned_cache, client):
-    """
-    Raise a TaskFailed if we cannot fetch a corrupted entry
-    """
-    task = poisoned_cache
-
-    with pytest.raises(galp.TaskFailedError):
-        ans, = await asyncio.wait_for(
-            client.collect(task),
-            3)
-
-    # Test that the worker recovered
-    task3 = gts.plugin_hello()
-    ans, = await asyncio.wait_for(
-        client.collect(task3),
-        3)
-
-    assert ans == task3.step.function()
-
-async def test_remote_cache_corruption(poisoned_cache, client):
-    """
-    Raise a TaskFailed if we cannot re-use a corrupted entry as input
-    """
-    task = poisoned_cache
-
-    task2 = gts.npsum(task)
-
-    with pytest.raises(galp.TaskFailedError):
-        ans, = await asyncio.wait_for(
-            client.collect(task2),
-            3)
-
-    # Test that the worker recovered
-    task3 = gts.plugin_hello()
-    ans, = await asyncio.wait_for(
-        client.collect(task3),
-        3)
-
-    assert ans == task3.step.function()
-
-async def test_refcount(client):
-    """
-    Test that resources used by a failed tasks are cleaned up before the next
-    one executes
-    """
-    obj1, obj2 = gts.RefCounted(), gts.RefCounted()
-    assert obj1.last_count == 0
-    assert obj2.last_count == 1
-
-    fail_tasks = [
-        gts.refcount(i, fail=True)
-        for i in range(2)
-        ]
-    ok_task = gts.refcount(0, fail=False)
-
-
-    fails = await asyncio.wait_for(
-        client.collect(*fail_tasks, return_exceptions=True),
-        3)
-    assert all(type(fail) == galp.TaskFailedError for fail in fails)
-
-    ok, = await asyncio.wait_for(
-        client.collect(ok_task, return_exceptions=True),
-        3)
-
-    assert ok == 1
-
-async def test_timeout(client):
-    task = gts.busy_loop()
-
-    async def _collect():
-        with pytest.raises(asyncio.TimeoutError):
-            await client.collect(task, timeout=1)
-
-    await asyncio.wait_for(_collect(), 4)
-
-async def test_vmlimit(make_galp_set, make_client):
-    unlimited_ep, _ = make_galp_set(1)
-    limited_ep, _ = make_galp_set(1, extra_pool_args=['--vm', '1G'])
-
-    unlimited_client = make_client(unlimited_ep)
-    limited_client = make_client(limited_ep)
-
-    task_a, task_b = [gts.alloc_mem(2**30, x) for x in 'ab']
-
-    ans = await unlimited_client.collect(task_a, timeout=3)
-
-    with pytest.raises(galp.TaskFailedError):
-        ans = await limited_client.collect(task_b, timeout=3)
 
 async def test_complex_inline(client):
     """
