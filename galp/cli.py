@@ -34,11 +34,11 @@ def log_signal(sig, context, orig_handler):
     """
     Logs the signal received and re-raises it
     """
-    logging.error("Caught signal %s", signal.strsignal(sig))
+    logging.info("Caught signal %s", signal.strsignal(sig))
     if callable(orig_handler):
         return orig_handler(sig, context)
 
-    logging.error("Re-raising signal %s", signal.strsignal(sig))
+    logging.info("Re-raising signal %s", signal.strsignal(sig))
     logging.debug('Re-raising signal from', stack_info=context)
     signal.signal(sig, orig_handler)
     return signal.raise_signal(sig)

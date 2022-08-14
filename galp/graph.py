@@ -2,6 +2,7 @@
 General routines to build and operate on graphs of tasks.
 """
 import hashlib
+import inspect
 
 from dataclasses import dataclass
 
@@ -51,7 +52,6 @@ def ensure_task(obj):
         return obj()
     return LiteralTask(obj)
 
-
 class Step:
     """Object wrapping a function that can be called as a pipeline step
 
@@ -65,16 +65,38 @@ class Step:
             objects, and allows to index or iterate over the task to generate
             handle pointing to the individual items.
     """
-    def __init__(self, function, **task_options):
+    def __init__(self, scope, function, **task_options):
         self.function = function
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
         self.task_options = task_options
+        self.scope = scope
 
     def __call__(self, *args, **kwargs):
         """
-        Symbolically calls the function wrapped by this step, returning a Task
-        object representing the eventual result
+        Symbolically call the function wrapped by this step, returning a Task
+        object representing the eventual result.
+
+        Inject arguments from the scope if any are found.
         """
+        sig = None
+        try:
+            sig = inspect.signature(self.function)
+        except ValueError:
+            pass
+
+        if sig:
+            for name, param in sig.parameters.items():
+                if param.kind not in (
+                    param.POSITIONAL_OR_KEYWORD,
+                    param.KEYWORD_ONLY):
+                    continue
+                injectable = self.scope.injectables.get(name)
+                if injectable:
+                    if name in kwargs:
+                        raise ValueError(f'Duplicate argument {name}, '
+                            'given as an argument but also injectable')
+                    kwargs[name] = injectable
+
         return Task(self, args, kwargs, **self.task_options)
 
     def make_handle(self, name):
@@ -277,6 +299,10 @@ class LiteralTask(TaskType):
 
 class StepSet(EventNamespace):
     """A collection of steps"""
+    def __init__(self, handlers=None):
+        # Note: if we inherit steps, we don't touch their scope
+        super().__init__(handlers)
+        self.injectables = {}
 
     def step(self, *decorated, **options):
         """Decorator to make a function a step.
@@ -309,9 +335,11 @@ class StepSet(EventNamespace):
         """
         def _step_maker(function):
             step = Step(
+                self,
                 function,
                 **options,
                 )
+            self.injectables[function.__name__] = step
             self.on(step.key)(step)
             return step
 

@@ -20,7 +20,7 @@ def on_signal(sig, pool):
     previous is handled, but that should not be a problem: CHLD always does the
     same thing and TERM or INT would supersede CHLD.
     """
-    logging.error("Caught signal %d (%s)", sig, signal.strsignal(sig))
+    logging.info("Caught signal %d (%s)", sig, signal.strsignal(sig))
     pool.set_signal(sig)
 
 async def main(args):

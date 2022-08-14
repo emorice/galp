@@ -379,3 +379,8 @@ async def test_auto_call(client):
         ans = await client.run(step)
 
     assert ans == step.function()
+
+async def test_inject(client):
+    async with timeout(3):
+        ans = await client.run(gts.uses_inject)
+    assert ans == 'Injected 6*7'

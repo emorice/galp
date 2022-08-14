@@ -325,8 +325,6 @@ class Worker:
 
         await self.transport.listen_reply_loop()
 
-
-
     # Task execution logic
     # ====================
 
@@ -336,10 +334,6 @@ class Worker:
         """
         return self.protocol.store.get_native(name)
 
-    async def resolve(self, step, name, arg_names, kwarg_names):
-        """
-        Recover handes from a step specification, the task and argument names.
-        """
     async def run_submission(self, route, name, task_dict):
         """
         Actually run the task
@@ -384,6 +378,8 @@ class Worker:
             try:
                 result = self.profiler.wrap(name, step)(*args, **kwargs)
             except Exception as exc:
+                logging.exception('Submitted task step failed: %s [%s]',
+                step_name.decode('ascii'), name)
                 raise NonFatalTaskError from exc
 
             # Store the result back
@@ -392,7 +388,8 @@ class Worker:
             return route, name, True
 
         except NonFatalTaskError:
-            logging.exception('Submitted task step failed: %s', step_name.decode('ascii'))
+            # All raises include exception logging so it's safe to discard the
+            # exception here
             return route, name, False
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be

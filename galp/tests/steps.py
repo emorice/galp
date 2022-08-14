@@ -205,3 +205,10 @@ def sum_dict(some_dict):
     for key in some_dict:
         tot += some_dict[key]
     return tot
+
+@export
+def uses_inject(hello): # pylint: disable=redefined-outer-name
+    """
+    Has an injectable argument
+    """
+    return 'Injected ' + hello
