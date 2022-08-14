@@ -3,8 +3,9 @@ Handle various common runtime failures nicely
 """
 
 import asyncio
-import psutil
 import signal
+
+import psutil
 
 import pytest
 
@@ -44,10 +45,16 @@ def poisoned_cache(tmpdir, request):
 
 async def test_step_error(client):
     """
-    Test running a task containing a bug
+    Test running a task containing a bug, and test that the error message is
+    somewhat helpful.
     """
     with pytest.raises(galp.TaskFailedError):
-        await asyncio.wait_for(client.collect(gts.raises_error()), 3)
+        try:
+            await asyncio.wait_for(client.collect(gts.raises_error()), 3)
+        except galp.TaskFailedError as exc:
+            # ensure it's written somewhere that this is not a client-side error
+            assert 'worker' in str(exc).lower()
+            raise
 
 async def test_suicide(client):
     """

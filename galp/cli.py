@@ -22,12 +22,13 @@ def setup(name, debug=False):
         "["+name+" %(process)d] " # Identification of the process (type + pid)
         "%(message)s" # Message
     )
+    level = (
+        logging.DEBUG if debug
+        else logging.WARNING
+        )
     # Note the use of force ; this unregisters existing handlers that could have been
     # set by a parent forking process
-    if debug:
-        logging.basicConfig(level=logging.DEBUG, format=log_format, force=True)
-    else:
-        logging.basicConfig(level=logging.INFO, format=log_format, force=True)
+    logging.basicConfig(level=level, format=log_format, force=True)
 
 def log_signal(sig, context, orig_handler):
     """

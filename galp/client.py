@@ -171,9 +171,11 @@ class Client:
             self.schedule(('SUBMIT', task))
 
         try:
-            await asyncio.wait_for(
+            err = await asyncio.wait_for(
                 self.run_collection(tasks, return_exceptions=return_exceptions),
                 timeout=timeout)
+            if err and not return_exceptions:
+                raise TaskFailedError(err)
         except ProtocolEndException:
             pass
 
@@ -221,20 +223,22 @@ class Client:
 
         init_messages = []
 
-        self.protocol.script.callback(
-            self.protocol.script.collect(
+        collect = self.protocol.script.collect(
                 parent=None,
                 names=[t.name for t in tasks],
                 out=init_messages,
                 allow_failures=return_exceptions
-                ),
-            _end
+                )
+        self.protocol.script.callback(
+            collect, _end
             )
 
         logging.info('CMD REP: %s', init_messages)
 
         async with self.process_scheduled():
             await self.transport.listen_reply_loop()
+
+        return collect.result
 
 class BrokerProtocol(ReplyProtocol):
     """
@@ -466,6 +470,9 @@ class BrokerProtocol(ReplyProtocol):
 
         tasks = set([name])
 
+        desc = self._details[name].description
+        msg = f'Failed to execute task {desc} [{name}], check worker logs'
+
         while tasks:
             task = tasks.pop()
             task_desc = self._details[task].description
@@ -480,7 +487,7 @@ class BrokerProtocol(ReplyProtocol):
             # Mark fetch command as failed if pending:
             command = self.script.commands.get(('GET', task))
             if command:
-                command.failed('FAILED')
+                command.failed(msg)
 
             # Fail the dependents
             # Note: this can visit a task several time, not a problem

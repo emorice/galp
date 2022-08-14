@@ -195,6 +195,9 @@ class Rget(Command):
         if self._in_get is None:
             self._in_get = self.script.get(self, out, self.name)
 
+        if self._in_get.is_failed():
+            self.result = self._in_get.result
+
         if self._in_get.status != Status.DONE:
             return self._in_get.status
 
@@ -203,6 +206,11 @@ class Rget(Command):
                 self.script.rget(self, out, child_name)
                 for child_name in self._in_get.result
                 ]
+
+        for child in self._in_rgets:
+            if child.is_failed():
+                self.result = child.result
+
         return status_conj(self._in_rgets)
 
 class Collect(Command):
@@ -226,6 +234,11 @@ class Collect(Command):
                 ]
         if self.allow_failures:
             return status_conj_any(self._in_rgets)
+
+        for child in self._in_rgets:
+            if child.is_failed():
+                self.result = child.result
+
         return status_conj(self._in_rgets)
 
 class Callback(Command):
