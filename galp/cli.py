@@ -8,10 +8,10 @@ import signal
 
 def add_parser_arguments(parser):
     """Add generic arguments to the given parser"""
-    parser.add_argument('-d', '--debug', action='store_true',
+    parser.add_argument('--log-level',
         help='Turn on debug-level logging')
 
-def setup(name, debug=False):
+def setup(name, loglevel=None):
     """
     Common CLI setup steps
     """
@@ -22,10 +22,11 @@ def setup(name, debug=False):
         "["+name+" %(process)d] " # Identification of the process (type + pid)
         "%(message)s" # Message
     )
-    level = (
-        logging.DEBUG if debug
-        else logging.WARNING
-        )
+    level = dict(
+        debug=logging.DEBUG,
+        info=logging.INFO,
+        warning=logging.WARNING
+        ).get(loglevel, logging.WARNING)
     # Note the use of force ; this unregisters existing handlers that could have been
     # set by a parent forking process
     logging.basicConfig(level=level, format=log_format, force=True)

@@ -27,7 +27,7 @@ async def main(args):
     """
     Main CLI entry point
     """
-    galp.cli.setup(" pool ", args.debug)
+    galp.cli.setup(" pool ", args.log_level)
     logging.info("Starting worker pool")
 
     config = {

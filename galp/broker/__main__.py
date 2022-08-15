@@ -14,7 +14,7 @@ async def main(args):
         args: an object whose attributes are the the parsed arguments, as
             returned by argparse.ArgumentParser.parse_args.
     """
-    galp.cli.setup("broker", args.debug)
+    galp.cli.setup("broker", args.log_level)
 
     broker = Broker(
         client_endpoint=args.client_endpoint,

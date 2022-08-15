@@ -221,19 +221,17 @@ class Client:
         def _end(status):
             raise ProtocolEndException(status)
 
-        init_messages = []
 
         collect = self.protocol.script.collect(
                 parent=None,
                 names=[t.name for t in tasks],
-                out=init_messages,
                 allow_failures=return_exceptions
                 )
         self.protocol.script.callback(
             collect, _end
             )
 
-        logging.info('CMD REP: %s', init_messages)
+        self.protocol.script.new_commands.clear()
 
         async with self.process_scheduled():
             await self.transport.listen_reply_loop()
@@ -277,7 +275,6 @@ class BrokerProtocol(ReplyProtocol):
         # Used for reporting and testing cache behavior
         self.submitted_count = defaultdict(int)
         self.run_count = defaultdict(int)
-
 
     def add(self, tasks):
         """
@@ -385,10 +382,9 @@ class BrokerProtocol(ReplyProtocol):
             # Mark any possible GET as completed
             command = self.script.commands.get(('GET', task_name))
             if command:
-                cmd_rep = command.done([dep.name for dep in details.dependencies])
-                logging.info('CMD REP: %s', cmd_rep)
-                for command_key in cmd_rep:
-                    self.schedule(command_key)
+                command.done([dep.name for dep in details.dependencies])
+                self.schedule_new()
+
             return self.on_done(None, task_name)
 
         # Sub-tasks are automatically satisfied when their parent and unique
@@ -426,8 +422,6 @@ class BrokerProtocol(ReplyProtocol):
             # We do not send explicit DONEs for subtasks, so we mark them as
             # done when we receive the parent data.
             self._status[child_name] = TaskStatus.COMPLETED
-            # Schedule it for GET to be sent in the future
-            self.schedule(('GET', child_name))
 
         # Put the parent part
         self.store.put_serial(name, (data, children))
@@ -436,6 +430,8 @@ class BrokerProtocol(ReplyProtocol):
         command = self.script.commands['GET', name]
         # Mark as done and sets result
         command.done(children)
+        # Schedule for sub-GETs to be sent in the future
+        self.schedule_new()
 
     def on_done(self, route, name):
         """Given that done_task just finished, mark it as done, schedule any
@@ -488,6 +484,7 @@ class BrokerProtocol(ReplyProtocol):
             command = self.script.commands.get(('GET', task))
             if command:
                 command.failed(msg)
+                assert not self.script.new_commands
 
             # Fail the dependents
             # Note: this can visit a task several time, not a problem
@@ -508,7 +505,20 @@ class BrokerProtocol(ReplyProtocol):
         # Mark fetch command as failed
         command = self.script.commands.get(('GET', name))
         command.failed('NOTFOUND')
+        assert not self.script.new_commands
 
     def on_illegal(self, route, reason):
         """Should never happen"""
         raise RuntimeError(f'ILLEGAL recevived: {reason}')
+
+    def schedule_new(self):
+        """
+        Transfer the command queue to the scheduler
+        """
+        logging.info('CMD REP: %s', self.script.new_commands)
+        while self.script.new_commands:
+            command_key = self.script.new_commands.popleft()
+            verb, _ = command_key
+            if verb not in ('GET', 'SUBMIT'):
+                continue
+            self.schedule(command_key)

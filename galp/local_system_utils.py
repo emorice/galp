@@ -3,7 +3,6 @@ All-in-one client, broker, worker
 """
 
 import os
-import argparse
 import tempfile
 
 from contextlib import asynccontextmanager, AsyncExitStack
@@ -33,7 +32,7 @@ class LocalSystem:
             }
         self._worker_config = {
                 'endpoint': worker_endpoint,
-                'steps': steps
+                'steps': steps,
             }
 
         self.client = None

@@ -98,7 +98,7 @@ def make_worker_init(config):
             returned by argparse.ArgumentParser.parse_args.
     """
     # Early setup, make sure this work before attempting config
-    galp.cli.setup("worker", config.get('debug'))
+    galp.cli.setup("worker", config.get('log_level'))
     galp.cli.set_sync_handlers()
 
     # Parse configuration
@@ -195,12 +195,11 @@ class WorkerProtocol(ReplyProtocol):
 
         # Schedule the task first. It won't actually start until its inputs are
         # marked as available, and will return the list of GETs that are needed
-        cmd_rep = self.worker.schedule_task(route, name, task_dict)
-        logging.info('CMD REP: %s', cmd_rep)
+        self.worker.schedule_task(route, name, task_dict)
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        more_replies = self.command_keys_to_messages(route, cmd_rep)
+        more_replies = self.new_commands_to_messages(route)
 
         return replies + more_replies
 
@@ -210,34 +209,30 @@ class WorkerProtocol(ReplyProtocol):
         """
         self.store.put_serial(name, serialized)
         _data, children = serialized
-        cmd_rep = self.script.commands['GET', name].done(children)
-        logging.info('CMD REP: %s', cmd_rep)
-        return self.command_keys_to_messages(route, cmd_rep)
+        self.script.commands['GET', name].done(children)
+        return self.new_commands_to_messages(route)
 
     def on_not_found(self, route, name):
         self.script.commands['GET', name].failed('NOTFOUND')
+        assert not self.script.new_commands
 
-    def command_keys_to_messages(self, route, command_keys):
+    def new_commands_to_messages(self, route):
         """
         Generate galp messages from a command reply list
         """
         messages = MessageList()
-        while command_keys:
-            verb, name = command_keys.pop()
+        while self.script.new_commands:
+            verb, name = self.script.new_commands.popleft()
             if verb != 'GET':
-                raise ValueError(f'Unknown command {verb}')
+                continue
             try:
                 children = self.store.get_children(name)
                 logging.info('DEP found %s', name)
-                command_keys.extend(
-                    self.script.commands[verb, name].done(children)
-                    )
+                self.script.commands[verb, name].done(children)
                 continue
             except StoreReadError:
                 logging.exception('DEP error %s', name)
-                command_keys.extend(
-                    self.script.commands[verb, name].failed('StoreReadError')
-                    )
+                self.script.commands[verb, name].failed('StoreReadError')
                 continue
             except KeyError:
                 pass
@@ -302,16 +297,13 @@ class Worker:
                 self.run_submission(client_route, name, task_dict)
                 )
             self.galp_jobs.put_nowait(task)
-        init_messages = []
         self.protocol.script.callback(
             self.protocol.script.collect(
-                None, init_messages, [
+                None, [
                     *task_dict['arg_names'],
                     *task_dict['kwarg_names'].values()
                     ]),
-            callback=_start_task
-            )
-        return init_messages
+            callback=_start_task)
 
     async def listen(self):
         """

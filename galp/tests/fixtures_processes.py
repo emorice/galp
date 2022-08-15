@@ -2,6 +2,7 @@
 Fixtures related to creating galp processes to interact with
 """
 import itertools
+import logging
 import subprocess
 import sys
 
@@ -16,6 +17,9 @@ def port():
         return next(ports)
 
     return _next_port
+
+def log_level():
+    return logging.getLevelName(logging.getLogger().level).lower()
 
 @pytest.fixture
 def make_process():
@@ -58,7 +62,7 @@ def make_worker(make_process, port, tmp_path):
         phandle = make_process(
             '-m', 'galp.worker',
             '-c', 'galp/tests/config.toml',
-            #'--debug',
+            '--log-level', log_level(),
             endpoint, str(tmp_path)
             )
 

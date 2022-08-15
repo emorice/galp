@@ -3,6 +3,8 @@ Lists of internal commands
 """
 
 from enum import Enum
+from collections import deque
+
 import logging
 
 def status_conj(commands):
@@ -25,38 +27,50 @@ def status_conj_any(commands):
         return Status.DONE
     return Status.PENDING
 
-
 class Script:
     """
     A collection of maker methods for Commands
     """
     def __init__(self):
         self.commands = {}
+        self.new_commands = deque()
 
-    def collect(self, parent, out, names, allow_failures=False):
+    def collect(self, parent, names, allow_failures=False):
         """
         Creates a command representing a collection of recursive fetches
         """
-        return Collect(self, parent, out, names, allow_failures)
+        return Collect(self, parent, names, allow_failures)
 
-    def rget(self, parent, out, name):
+    def rget(self, parent, name):
         """
-        Creates a non-unique command representing a recursive resource fetch
+        Creates a unique-by-name command representing a recursive resource fetch
         """
-        return Rget(self, parent, out, name)
+        return self.do_once('RGET', name, parent)
 
-    def get(self, parent, out, name):
+    def get(self, parent, name):
         """
         Creates a unique-by-name command representing the fetch of a single
         resource
         """
-        key = 'GET', name
+        return self.do_once('GET', name, parent)
+
+    def do_once(self, verb, name, parent, *args, **kwargs):
+        """
+        Creates a unique command
+        """
+        key =  verb, name
+        cls = {
+            'GET': Get,
+            'RGET': Rget,
+            }[verb]
+
         if key in self.commands:
             cmd = self.commands[key]
-            cmd.outputs.append(parent)
+            cmd.outputs.add(parent)
             return cmd
-        cmd = Get(self, parent, out, name)
+        cmd = cls(self, parent, name, *args, **kwargs)
         self.commands[key] = cmd
+        self.new_commands.append(key)
         return cmd
 
     def callback(self, command, callback):
@@ -77,20 +91,20 @@ class Command:
     """
     An asynchronous command
     """
-    def __init__(self, script, parent, out):
+    def __init__(self, script, parent):
         self.script = script
         self.status = Status.PENDING
         self.result = None
-        self.outputs = []
-        self.update(out)
+        self.outputs = set()
+        self.update()
 
         if parent:
-            self.outputs.append(parent)
+            self.outputs.add(parent)
 
-    def _eval(self, out):
+    def _eval(self):
         raise NotImplementedError
 
-    def change_status(self, new_status, out):
+    def change_status(self, new_status):
         """
         Updates status, triggering callbacks and collecting replies
         """
@@ -104,15 +118,15 @@ class Command:
             )
         if old_status == Status.PENDING and new_status != Status.PENDING:
             for command in self.outputs:
-                command.update(out)
+                command.update()
 
-    def update(self, out):
+    def update(self):
         """
         Re-evals condition and possibly trigger callbacks, returns a list of
         replies
         """
         if self.status == Status.PENDING:
-            self.change_status(self._eval(out), out)
+            self.change_status(self._eval())
 
     def done(self, result):
         """
@@ -156,90 +170,81 @@ class Command:
 
     def _mark_as(self, status, result):
         self.result = result
-        out = []
-        self.change_status(status, out)
-        return out
+        self.change_status(status)
 
 class Get(Command):
     """
     Get a single resource part
     """
-    def __init__(self, script, parent, out, name):
+    def __init__(self, script, parent, name):
         self.name = name
-        out.append(('GET', name))
-        super().__init__(script, parent, out)
+        super().__init__(script, parent)
 
     def __str__(self):
         return f'get {self.name}'
 
-    def _eval(self, out):
+    def _eval(self):
         return Status.PENDING
 
 class Rget(Command):
     """
     Recursively gets a resource and all its parts
     """
-    def __init__(self, script, parent, out, name):
+    def __init__(self, script, parent, name):
         self.name = name
-        self._in_get = None
-        self._in_rgets = None
-        super().__init__(script, parent, out)
+        super().__init__(script, parent)
 
     def __str__(self):
         return f'rget {self.name}'
 
-    def _eval(self, out):
+    def _eval(self):
         """
         Eval the trigger condition on the given concrete values
         """
-        if self._in_get is None:
-            self._in_get = self.script.get(self, out, self.name)
+        get = self.script.get(self, self.name)
 
-        if self._in_get.is_failed():
-            self.result = self._in_get.result
+        if get.is_failed():
+            self.result = get.result
 
-        if self._in_get.status != Status.DONE:
-            return self._in_get.status
+        if get.status != Status.DONE:
+            return get.status
 
-        if self._in_rgets is None:
-            self._in_rgets = [
-                self.script.rget(self, out, child_name)
-                for child_name in self._in_get.result
-                ]
+        rgets = [
+            self.script.rget(self, child_name)
+            for child_name in get.result
+            ]
 
-        for child in self._in_rgets:
+        for child in rgets:
             if child.is_failed():
                 self.result = child.result
 
-        return status_conj(self._in_rgets)
+        return status_conj(rgets)
 
 class Collect(Command):
     """
     A collection of recursive gets
     """
-    def __init__(self, script, parent, out, names, allow_failures):
+    def __init__(self, script, parent, names, allow_failures):
         self.names = names
         self.allow_failures = allow_failures
-        self._in_rgets = None
-        super().__init__(script, parent, out)
+        super().__init__(script, parent)
 
     def __str__(self):
         return f'collect {self.names}'
 
-    def _eval(self, out):
-        if self._in_rgets is None:
-            self._in_rgets = [
-                self.script.rget(self, out, name)
-                for name in self.names
-                ]
+    def _eval(self):
+        rgets = [
+            self.script.rget(self, name)
+            for name in self.names
+            ]
         if self.allow_failures:
-            return status_conj_any(self._in_rgets)
+            return status_conj_any(rgets)
 
-        for child in self._in_rgets:
+        for child in rgets:
             if child.is_failed():
                 self.result = child.result
 
-        return status_conj(self._in_rgets)
+        return status_conj(rgets)
 
 class Callback(Command):
     """
@@ -248,13 +253,13 @@ class Callback(Command):
     def __init__(self, command, callback):
         self._callback = callback
         self._in = command
-        self._in.outputs.append(self)
-        super().__init__(script=None, parent=None, out=None)
+        self._in.outputs.add(self)
+        super().__init__(script=None, parent=None)
 
     def __str__(self):
         return f'callback {self._callback}'
 
-    def _eval(self, out):
+    def _eval(self):
         if self._in.status != Status.PENDING:
             self._callback(self._in.status)
             return Status.DONE
