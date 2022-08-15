@@ -59,6 +59,7 @@ def make_worker(make_process, port, tmp_path):
         if endpoint is None:
             endpoint = f"tcp://127.0.0.1:{port()}"
 
+        logging.error(log_level())
         phandle = make_process(
             '-m', 'galp.worker',
             '-c', 'galp/tests/config.toml',
@@ -85,7 +86,7 @@ def make_pool(make_process, port, tmp_path):
             '-m', 'galp.pool',
             str(pool_size),
             '-c', 'galp/tests/config.toml',
-            #'--debug',
+            '--log-level', log_level(),
             endpoint, str(tmp_path),
             *extra_args
             )
@@ -107,7 +108,7 @@ def make_broker(make_process, port, tmp_path):
 
         phandle = make_process(
             '-m', 'galp.broker',
-            #'--debug',
+            '--log-level', log_level(),
             client_endpoint,
             worker_endpoint,
             )

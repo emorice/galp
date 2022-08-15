@@ -242,7 +242,6 @@ class WorkerProtocol(ReplyProtocol):
                 )
         return messages
 
-
 class Worker:
     """
     Class representing an an async worker, wrapping transport, protocol and task
@@ -446,6 +445,7 @@ def make_config(args):
         'endpoint': args.endpoint,
         'store': args.storedir,
         'configfile': args.config,
+        'log_level': args.log_level,
         'vm': args.vm
         }
 
