@@ -41,6 +41,19 @@ class Script:
         """
         return Collect(self, parent, names, allow_failures)
 
+    def run(self, parent, name, task):
+        """
+        Creates a unique-by-name command representing a task submission and
+        fetch
+        """
+        return self.do_once('RUN', name, parent, task)
+
+    def rsubmit(self, parent, name, task):
+        """
+        Creates a unique-by-name command representing a task submission
+        """
+        return self.do_once('RSUBMIT', name, parent, task)
+
     def rget(self, parent, name):
         """
         Creates a unique-by-name command representing a recursive resource fetch
@@ -264,3 +277,55 @@ class Callback(Command):
             self._callback(self._in.status)
             return Status.DONE
         return Status.PENDING
+
+class Rsubmit(Command):
+    """
+    A task submission
+    """
+    def __init__(self, script, parent, name, task):
+        self.name = name
+        self.task = task
+        super().__init__(script, parent)
+
+    def __str__(self):
+        return f'submit {self.name}'
+
+    def _eval(self):
+        dep_subs = [
+            self.script.rsubmit(self, dep.name)
+            for dep in self.task.dependencies
+            ]
+
+        for dep in dep_subs:
+            if dep.is_failed():
+                self.result = dep.result
+
+        return status_conj(dep_subs)
+
+class Run(Command):
+    """
+    Combined rsubmit + rget
+    """
+    def __init__(self, script, parent, name, task):
+        self.name = name
+        self.task = task
+        super().__init__(script, parent)
+
+    def __str__(self):
+        return f'run {self.name}'
+
+    def _eval(self):
+        rsub = self.script.rsubmit(self, self.name, self.task)
+
+        if rsub.is_failed():
+            self.result = rsub.result
+
+        if rsub.status != Status.DONE:
+            return rsub.status
+
+        rget = self.script.rget(self, self.name)
+
+        if rget.is_failed():
+            self.result = rget.result
+
+        return rget.status
