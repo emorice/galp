@@ -9,6 +9,8 @@ from contextlib import AsyncExitStack
 from importlib import import_module
 
 import galp
+import galp.cache
+import galp.cli
 
 parser = argparse.ArgumentParser()
 parser.add_argument('module', help='python module containing the target')
@@ -18,6 +20,8 @@ parser.add_argument('-e', '--endpoint', help='zmq endpoint of the broker. '
         'If not given, a local galp system is started')
 parser.add_argument('-q', '--quiet', action='store_true',
         help='do nor print the result on the standard output')
+galp.cache.add_store_argument(parser, optional=True)
+galp.cli.add_parser_arguments(parser)
 
 args = parser.parse_args()
 
@@ -33,7 +37,10 @@ async def run(target):
             client = galp.Client(args.endpoint)
         else:
             client = await stack.enter_async_context(
-                galp.local_system()
+                galp.local_system(**{
+                    k: getattr(args, k)
+                    for k in ['config', 'log_level', 'store']
+                    })
                 )
         return await client.run(target)
 

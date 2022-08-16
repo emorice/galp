@@ -35,7 +35,8 @@ async def main(args):
         'endpoint': args.endpoint,
         }
 
-    pool = Pool(config, galp.worker.worker.make_config(args))
+    # Note: this also gives pool arguments to the worker
+    pool = Pool(config, vars(args))
 
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD):

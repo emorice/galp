@@ -145,3 +145,14 @@ class CacheStack():
 
         self.serialcache[name + b'.data'] = data
         self.serialcache[name + b'.children'] = msgpack.packb(children)
+
+def add_store_argument(parser, optional=False):
+    """
+    Fills argparse ArgumentParser with either optional or mandatory store
+    location
+    """
+    help_msg = 'directory where the steps results will be stored'
+    if optional:
+        parser.add_argument('-s', '--store', help=help_msg)
+    else:
+        parser.add_argument('store', help=help_msg)

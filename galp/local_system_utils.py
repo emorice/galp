@@ -16,7 +16,7 @@ class LocalSystem:
     """
     Asynchronous exit stack encapsulating broker, pool and client management
     """
-    def __init__(self, pool_size=1, steps=None):
+    def __init__(self, pool_size=1, **worker_options):
         self._stack = AsyncExitStack()
 
         self._client_endpoint = b'inproc://galp_cl'
@@ -32,7 +32,7 @@ class LocalSystem:
             }
         self._worker_config = {
                 'endpoint': worker_endpoint,
-                'steps': steps,
+                **worker_options,
             }
 
         self.client = None

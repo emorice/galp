@@ -13,27 +13,22 @@ import asyncio
 import logging
 import argparse
 import resource
-import importlib
 
 import zmq
 import zmq.asyncio
-import toml
 
 import galp.steps
-import galp.cache
 import galp.cli
 
+from galp.config import load_config
 from galp.cache import StoreReadError
-from galp.graph import StepSet
-from galp.config import ConfigError
 from galp.lower_protocol import MessageList
 from galp.protocol import ProtocolEndException, IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.commands import Script
 from galp.profiler import Profiler
-from galp.serializer import Serializer
-from galp.eventnamespace import NoHandlerError
+from galp.graph import NoSuchStep
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -41,28 +36,7 @@ class NonFatalTaskError(RuntimeError):
     running.
     """
 
-def load_steps(plugin_names):
-    """
-    Attempts to import the given modules, and add any public StepSet attribute
-    to the list of currently known steps
-    """
-    step_dir = galp.steps.export
-    for name in plugin_names:
-        try:
-            plugin = importlib.import_module(name)
-            for k, v in vars(plugin).items():
-                if isinstance(v, StepSet) and not k.startswith('_'):
-                    step_dir += v
-            logging.info('Loaded plug-in %s', name)
-        except ModuleNotFoundError as exc:
-            logging.error('No such plug-in: %s', name)
-            raise ConfigError(('No such plugin', name)) from exc
-        except AttributeError as exc:
-            logging.error('Plug-in %s do not expose "export"', name)
-            raise ConfigError(('Bad plugin', name)) from exc
-    return step_dir
-
-def limit_resources(vm=None):
+def limit_resources(vm_limit=None):
     """
     Set resource limits from command line, for now only virtual memory.
 
@@ -74,14 +48,14 @@ def limit_resources(vm=None):
         'M': 6,
         'G': 9
         }
-    if vm:
-        opt_suffix = vm[-1]
+    if vm_limit:
+        opt_suffix = vm_limit[-1]
         exp = suffixes.get(opt_suffix)
         if exp is not None:
             mult = 10**exp
-            size = int(vm[:-1]) * mult
+            size = int(vm_limit[:-1]) * mult
         else:
-            size = int(vm)
+            size = int(vm_limit)
 
         logging.info('Setting virtual memory limit to %d bytes', size)
 
@@ -97,41 +71,30 @@ def make_worker_init(config):
         args: an object whose attributes are the the parsed arguments, as
             returned by argparse.ArgumentParser.parse_args.
     """
+    if config.get('steps'):
+        config['steps'].append('galp.steps')
+    else:
+        config['steps'] = ['galp.steps']
+    logging.info(config['steps'])
+
     # Early setup, make sure this work before attempting config
     galp.cli.setup("worker", config.get('log_level'))
     galp.cli.set_sync_handlers()
 
     # Parse configuration
-    config = config or {}
-    configfile = config.get('configfile')
-    default_configfile = 'galp.cfg'
-
-    if not configfile and os.path.exists(default_configfile):
-        configfile = default_configfile
-
-    if configfile:
-        logging.info("Loading config file %s", configfile)
-        # TOML is utf-8 by spec
-        with open(configfile, encoding='utf-8') as fstream:
-            config.update(toml.load(fstream))
-
-    # Validate config
-    if not config.get('store'):
-        raise ConfigError('No storage directory given')
-    if not config.get('endpoint'):
-        raise ConfigError('No endpoint directory given')
+    setup = load_config(config,
+            mandatory=['endpoint', 'store']
+            )
 
     # Late setup
-    limit_resources(config.get('vm'))
-    step_dir = load_steps(config.get('steps') or [])
+    limit_resources(setup.get('vm'))
 
-    logging.info("Worker connecting to %s", config['endpoint'])
-    logging.info("Storing in %s", config['store'])
+    logging.info("Worker connecting to %s", setup['endpoint'])
 
     def _make_worker():
         return Worker(
-            config['endpoint'], config['store'],
-            step_dir,
+            setup['endpoint'], setup['store'],
+            setup['steps'],
             Profiler(config.get('profile'))
             )
     return _make_worker
@@ -140,10 +103,10 @@ class WorkerProtocol(ReplyProtocol):
     """
     Handler for messages from the broker
     """
-    def __init__(self, worker, store_dir, name, router):
+    def __init__(self, worker, store, name, router):
         super().__init__(name, router)
         self.worker = worker
-        self.store = galp.cache.CacheStack(store_dir, Serializer())
+        self.store = store
         self.script = Script()
 
     def on_invalid(self, route, reason):
@@ -339,7 +302,7 @@ class Worker:
         try:
             try:
                 step = self.step_dir.get(step_name)
-            except NoHandlerError as exc:
+            except NoSuchStep as exc:
                 logging.exception('No such step known to worker: %s', step_name.decode('ascii'))
                 raise NonFatalTaskError from exc
 
@@ -429,25 +392,12 @@ def add_parser_arguments(parser):
         help="Endpoint to bind to, in ZMQ format, e.g. tcp://127.0.0.2:12345 "
             "or ipc://path/to/socket ; see also man zmq_bind."
         )
-    parser.add_argument('storedir')
-    parser.add_argument('-c', '--config',
-        help='Path to optional TOML configuration file')
+    galp.cache.add_store_argument(parser)
+
     parser.add_argument('--vm',
         help='Limit on process virtual memory size, e.g. "2M" or "1G"')
 
     galp.cli.add_parser_arguments(parser)
-
-def make_config(args):
-    """
-    Makes a config dictionary from parsed command-line arguments.
-    """
-    return {
-        'endpoint': args.endpoint,
-        'store': args.storedir,
-        'configfile': args.config,
-        'log_level': args.log_level,
-        'vm': args.vm
-        }
 
 def make_parser():
     """

@@ -59,7 +59,6 @@ def make_worker(make_process, port, tmp_path):
         if endpoint is None:
             endpoint = f"tcp://127.0.0.1:{port()}"
 
-        logging.error(log_level())
         phandle = make_process(
             '-m', 'galp.worker',
             '-c', 'galp/tests/config.toml',

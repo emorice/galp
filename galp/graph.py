@@ -297,11 +297,16 @@ class LiteralTask(TaskType):
         """Return a readable description of task"""
         return '[literal]'
 
-class StepSet(EventNamespace):
+class NoSuchStep(ValueError):
+    """
+    No step with the given name has been registered
+    """
+
+class StepSet:
     """A collection of steps"""
-    def __init__(self, handlers=None):
+    def __init__(self, steps=None):
         # Note: if we inherit steps, we don't touch their scope
-        super().__init__(handlers)
+        self._steps = {} if steps is None else steps
         self._injectables = {}
 
     def step(self, *decorated, **options):
@@ -340,7 +345,7 @@ class StepSet(EventNamespace):
                 **options,
                 )
             self._injectables[function.__name__] = step
-            self.on(step.key)(step)
+            self._steps[step.key] = step
             return step
 
         if decorated:
@@ -354,8 +359,11 @@ class StepSet(EventNamespace):
         return self.step(*decorated, **options)
 
     def get(self, key):
-        """More memorable shortcut for handler"""
-        return self.handler(key)
+        """Return step by full name"""
+        try:
+            return self._steps[key]
+        except KeyError:
+            raise NoSuchStep(key) from None
 
     def bind(self, **kwargs):
         """
@@ -365,6 +373,24 @@ class StepSet(EventNamespace):
             if  key in self._injectables:
                 raise ValueError(f'Duplicate injection of "{key}"')
             self._injectables[key] = value
+
+    @property
+    def all_steps(self):
+        """
+        Dictionary of current steps
+        """
+        return self._steps
+
+    def __contains__(self, key):
+        return key in self._steps
+
+    def __getitem__(self, key):
+        return self.get(key)
+
+    def __iadd__(self, other):
+        self._steps.update(other._steps)
+        # We do not merge the injectables by default
+        return self
 
 class NonIterableHandleError(TypeError):
     """
