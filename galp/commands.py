@@ -35,39 +35,39 @@ class Script:
         self.commands = {}
         self.new_commands = deque()
 
-    def collect(self, parent, names, allow_failures=False):
+    def collect(self, commands, allow_failures=False):
         """
-        Creates a command representing a collection of recursive fetches
+        Creates a command representing a collection of other commands
         """
-        return Collect(self, parent, names, allow_failures)
+        return Collect(self, commands, allow_failures)
 
-    def run(self, parent, name, task):
+    def run(self, name, task):
         """
         Creates a unique-by-name command representing a task submission and
         fetch
         """
-        return self.do_once('RUN', name, parent, task)
+        return self.do_once('RUN', name, task)
 
-    def rsubmit(self, parent, name, task):
+    def rsubmit(self, name, task):
         """
         Creates a unique-by-name command representing a task submission
         """
-        return self.do_once('RSUBMIT', name, parent, task)
+        return self.do_once('RSUBMIT', name, task)
 
-    def rget(self, parent, name):
+    def rget(self, name):
         """
         Creates a unique-by-name command representing a recursive resource fetch
         """
-        return self.do_once('RGET', name, parent)
+        return self.do_once('RGET', name)
 
-    def get(self, parent, name):
+    def get(self, name):
         """
         Creates a unique-by-name command representing the fetch of a single
         resource
         """
-        return self.do_once('GET', name, parent)
+        return self.do_once('GET', name)
 
-    def do_once(self, verb, name, parent, *args, **kwargs):
+    def do_once(self, verb, name, *args, **kwargs):
         """
         Creates a unique command
         """
@@ -79,9 +79,8 @@ class Script:
 
         if key in self.commands:
             cmd = self.commands[key]
-            cmd.outputs.add(parent)
             return cmd
-        cmd = cls(self, parent, name, *args, **kwargs)
+        cmd = cls(self, name, *args, **kwargs)
         self.commands[key] = cmd
         self.new_commands.append(key)
         return cmd
@@ -104,15 +103,19 @@ class Command:
     """
     An asynchronous command
     """
-    def __init__(self, script, parent):
+    def __init__(self, script):
         self.script = script
         self.status = Status.PENDING
         self.result = None
         self.outputs = set()
         self.update()
 
-        if parent:
-            self.outputs.add(parent)
+    def out(self, cmd):
+        """
+        Add command to the set of outputs, returning self
+        """
+        self.outputs.add(cmd)
+        return self
 
     def _eval(self):
         raise NotImplementedError
@@ -189,9 +192,9 @@ class Get(Command):
     """
     Get a single resource part
     """
-    def __init__(self, script, parent, name):
+    def __init__(self, script, name):
         self.name = name
-        super().__init__(script, parent)
+        super().__init__(script)
 
     def __str__(self):
         return f'get {self.name}'
@@ -203,9 +206,9 @@ class Rget(Command):
     """
     Recursively gets a resource and all its parts
     """
-    def __init__(self, script, parent, name):
+    def __init__(self, script, name):
         self.name = name
-        super().__init__(script, parent)
+        super().__init__(script)
 
     def __str__(self):
         return f'rget {self.name}'
@@ -214,7 +217,7 @@ class Rget(Command):
         """
         Eval the trigger condition on the given concrete values
         """
-        get = self.script.get(self, self.name)
+        get = self.script.get(self.name).out(self)
 
         if get.is_failed():
             self.result = get.result
@@ -223,7 +226,7 @@ class Rget(Command):
             return get.status
 
         rgets = [
-            self.script.rget(self, child_name)
+            self.script.rget(child_name).out(self)
             for child_name in get.result
             ]
 
@@ -235,29 +238,27 @@ class Rget(Command):
 
 class Collect(Command):
     """
-    A collection of recursive gets
+    A collection of other commands
     """
-    def __init__(self, script, parent, names, allow_failures):
-        self.names = names
+    def __init__(self, script, commands, allow_failures):
+        self.commands = commands
         self.allow_failures = allow_failures
-        super().__init__(script, parent)
+        for cmd in commands:
+            cmd.out(self)
+        super().__init__(script)
 
     def __str__(self):
-        return f'collect {self.names}'
+        return 'collect'
 
     def _eval(self):
-        rgets = [
-            self.script.rget(self, name)
-            for name in self.names
-            ]
         if self.allow_failures:
-            return status_conj_any(rgets)
+            return status_conj_any(self.commands)
 
-        for child in rgets:
+        for child in self.commands:
             if child.is_failed():
                 self.result = child.result
 
-        return status_conj(rgets)
+        return status_conj(self.commands)
 
 class Callback(Command):
     """
@@ -266,8 +267,8 @@ class Callback(Command):
     def __init__(self, command, callback):
         self._callback = callback
         self._in = command
-        self._in.outputs.add(self)
-        super().__init__(script=None, parent=None)
+        self._in.out(self)
+        super().__init__(script=None)
 
     def __str__(self):
         return f'callback {self._callback}'
@@ -282,17 +283,17 @@ class Rsubmit(Command):
     """
     A task submission
     """
-    def __init__(self, script, parent, name, task):
+    def __init__(self, script, name, task):
         self.name = name
         self.task = task
-        super().__init__(script, parent)
+        super().__init__(script)
 
     def __str__(self):
         return f'submit {self.name}'
 
     def _eval(self):
         dep_subs = [
-            self.script.rsubmit(self, dep.name)
+            self.script.rsubmit(dep.name).out(self)
             for dep in self.task.dependencies
             ]
 
@@ -306,16 +307,16 @@ class Run(Command):
     """
     Combined rsubmit + rget
     """
-    def __init__(self, script, parent, name, task):
+    def __init__(self, script, name, task):
         self.name = name
         self.task = task
-        super().__init__(script, parent)
+        super().__init__(script)
 
     def __str__(self):
         return f'run {self.name}'
 
     def _eval(self):
-        rsub = self.script.rsubmit(self, self.name, self.task)
+        rsub = self.script.rsubmit(self.name, self.task).out(self)
 
         if rsub.is_failed():
             self.result = rsub.result
@@ -323,7 +324,7 @@ class Run(Command):
         if rsub.status != Status.DONE:
             return rsub.status
 
-        rget = self.script.rget(self, self.name)
+        rget = self.script.rget(self.name).out(self)
 
         if rget.is_failed():
             self.result = rget.result

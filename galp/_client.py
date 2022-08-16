@@ -222,12 +222,12 @@ class Client:
             raise ProtocolEndException(status)
 
 
-        collect = self.protocol.script.collect(
-                parent=None,
-                names=[t.name for t in tasks],
+        script = self.protocol.script
+        collect = script.collect(
+                commands=[script.rget(t.name) for t in tasks],
                 allow_failures=return_exceptions
                 )
-        self.protocol.script.callback(
+        script.callback(
             collect, _end
             )
 

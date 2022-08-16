@@ -95,7 +95,7 @@ def make_worker_init(config):
         return Worker(
             setup['endpoint'], setup['store'],
             setup['steps'],
-            Profiler(config.get('profile'))
+            Profiler(setup.get('profile'))
             )
     return _make_worker
 
@@ -259,13 +259,16 @@ class Worker:
                 self.run_submission(client_route, name, task_dict)
                 )
             self.galp_jobs.put_nowait(task)
-        self.protocol.script.callback(
-            self.protocol.script.collect(
-                None, [
+
+        script = self.protocol.script
+        collect = script.collect(
+                commands=[script.rget(t) for t in [
                     *task_dict['arg_names'],
                     *task_dict['kwarg_names'].values()
-                    ]),
-            callback=_start_task)
+                    ]],
+                allow_failures=True
+                )
+        script.callback(collect, _start_task)
 
     async def listen(self):
         """
