@@ -27,70 +27,6 @@ def status_conj_any(commands):
         return Status.DONE
     return Status.PENDING
 
-class Script:
-    """
-    A collection of maker methods for Commands
-    """
-    def __init__(self):
-        self.commands = {}
-        self.new_commands = deque()
-
-    def collect(self, commands, allow_failures=False):
-        """
-        Creates a command representing a collection of other commands
-        """
-        return Collect(self, commands, allow_failures)
-
-    def run(self, name, task):
-        """
-        Creates a unique-by-name command representing a task submission and
-        fetch
-        """
-        return self.do_once('RUN', name, task)
-
-    def rsubmit(self, name, task):
-        """
-        Creates a unique-by-name command representing a task submission
-        """
-        return self.do_once('RSUBMIT', name, task)
-
-    def rget(self, name):
-        """
-        Creates a unique-by-name command representing a recursive resource fetch
-        """
-        return self.do_once('RGET', name)
-
-    def get(self, name):
-        """
-        Creates a unique-by-name command representing the fetch of a single
-        resource
-        """
-        return self.do_once('GET', name)
-
-    def do_once(self, verb, name, *args, **kwargs):
-        """
-        Creates a unique command
-        """
-        key =  verb, name
-        cls = {
-            'GET': Get,
-            'RGET': Rget,
-            }[verb]
-
-        if key in self.commands:
-            cmd = self.commands[key]
-            return cmd
-        cmd = cls(self, name, *args, **kwargs)
-        self.commands[key] = cmd
-        self.new_commands.append(key)
-        return cmd
-
-    def callback(self, command, callback):
-        """
-        Adds an arbitrary callback to an existing command
-        """
-        return Callback(command, callback)
-
 class Status(Enum):
     """
     Command status
@@ -112,10 +48,9 @@ class Command:
 
     def out(self, cmd):
         """
-        Add command to the set of outputs, returning self
+        Add command to the set of outputs
         """
         self.outputs.add(cmd)
-        return self
 
     def _eval(self):
         raise NotImplementedError
@@ -188,6 +123,77 @@ class Command:
         self.result = result
         self.change_status(status)
 
+    def do_once(self, verb, name, *args, **kwargs):
+        """
+        Creates a unique command
+        """
+        key =  verb, name
+        cls = {
+            'GET': Get,
+            'RGET': Rget,
+            }[verb]
+
+        if key in self.script.commands:
+            cmd = self.script.commands[key]
+            cmd.out(self)
+            return cmd
+        cmd = cls(self.script, name, *args, **kwargs)
+        cmd.out(self)
+        self.script.commands[key] = cmd
+        self.script.new_commands.append(key)
+        return cmd
+
+    def run(self, name, task):
+        """
+        Creates a unique-by-name command representing a task submission and
+        fetch
+        """
+        return self.do_once('RUN', name, task)
+
+    def rsubmit(self, name, task):
+        """
+        Creates a unique-by-name command representing a task submission
+        """
+        return self.do_once('RSUBMIT', name, task)
+
+    def rget(self, name):
+        """
+        Creates a unique-by-name command representing a recursive resource fetch
+        """
+        return self.do_once('RGET', name)
+
+    def get(self, name):
+        """
+        Creates a unique-by-name command representing the fetch of a single
+        resource
+        """
+        return self.do_once('GET', name)
+
+
+class Script(Command):
+    """
+    A collection of maker methods for Commands
+    """
+    def __init__(self):
+        super().__init__(self)
+        self.commands = {}
+        self.new_commands = deque()
+
+    def collect(self, commands, allow_failures=False):
+        """
+        Creates a command representing a collection of other commands
+        """
+        return Collect(self, commands, allow_failures)
+
+    def callback(self, command, callback):
+        """
+        Adds an arbitrary callback to an existing command
+        """
+        return Callback(command, callback)
+
+    def _eval(self):
+        return Status.PENDING
+
 class Get(Command):
     """
     Get a single resource part
@@ -217,7 +223,7 @@ class Rget(Command):
         """
         Eval the trigger condition on the given concrete values
         """
-        get = self.script.get(self.name).out(self)
+        get = self.get(self.name)
 
         if get.is_failed():
             self.result = get.result
@@ -226,7 +232,7 @@ class Rget(Command):
             return get.status
 
         rgets = [
-            self.script.rget(child_name).out(self)
+            self.rget(child_name)
             for child_name in get.result
             ]
 
@@ -293,7 +299,7 @@ class Rsubmit(Command):
 
     def _eval(self):
         dep_subs = [
-            self.script.rsubmit(dep.name).out(self)
+            self.rsubmit(dep.name, dep)
             for dep in self.task.dependencies
             ]
 
@@ -316,7 +322,7 @@ class Run(Command):
         return f'run {self.name}'
 
     def _eval(self):
-        rsub = self.script.rsubmit(self.name, self.task).out(self)
+        rsub = self.rsubmit(self.name, self.task)
 
         if rsub.is_failed():
             self.result = rsub.result
@@ -324,7 +330,7 @@ class Run(Command):
         if rsub.status != Status.DONE:
             return rsub.status
 
-        rget = self.script.rget(self.name).out(self)
+        rget = self.rget(self.name)
 
         if rget.is_failed():
             self.result = rget.result
