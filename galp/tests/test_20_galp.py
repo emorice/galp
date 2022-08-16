@@ -381,6 +381,17 @@ async def test_auto_call(client):
     assert ans == step.function()
 
 async def test_inject(client):
+    """
+    Run a task with injected input
+    """
     async with timeout(3):
         ans = await client.run(gts.uses_inject)
     assert ans == 'Injected 6*7'
+
+async def test_inject_bind(client):
+    """
+    Run a task with an explicitely injected input
+    """
+    async with timeout(3):
+        ans = await client.run(gts.sum_inject)
+    assert ans == 12

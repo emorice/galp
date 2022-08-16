@@ -212,3 +212,12 @@ def uses_inject(hello): # pylint: disable=redefined-outer-name
     Has an injectable argument
     """
     return 'Injected ' + hello
+
+@export
+def sum_inject(injected_list):
+    """
+    Sums over an injected list
+    """
+    return sum(injected_list)
+
+export.bind(injected_list=[identity(5), identity(7)])

@@ -90,7 +90,7 @@ class Step:
                     param.POSITIONAL_OR_KEYWORD,
                     param.KEYWORD_ONLY):
                     continue
-                injectable = self.scope.injectables.get(name)
+                injectable = self.scope._injectables.get(name)
                 if injectable:
                     if name in kwargs:
                         raise ValueError(f'Duplicate argument {name}, '
@@ -302,7 +302,7 @@ class StepSet(EventNamespace):
     def __init__(self, handlers=None):
         # Note: if we inherit steps, we don't touch their scope
         super().__init__(handlers)
-        self.injectables = {}
+        self._injectables = {}
 
     def step(self, *decorated, **options):
         """Decorator to make a function a step.
@@ -339,7 +339,7 @@ class StepSet(EventNamespace):
                 function,
                 **options,
                 )
-            self.injectables[function.__name__] = step
+            self._injectables[function.__name__] = step
             self.on(step.key)(step)
             return step
 
@@ -356,6 +356,15 @@ class StepSet(EventNamespace):
     def get(self, key):
         """More memorable shortcut for handler"""
         return self.handler(key)
+
+    def bind(self, **kwargs):
+        """
+        Add the given objects to the injectables dictionnary of the scope
+        """
+        for key, value in kwargs.items():
+            if  key in self._injectables:
+                raise ValueError(f'Duplicate injection of "{key}"')
+            self._injectables[key] = value
 
 class NonIterableHandleError(TypeError):
     """
