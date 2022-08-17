@@ -7,6 +7,7 @@ import asyncio
 import pstats
 
 import numpy as np
+#import pytest
 from async_timeout import timeout
 
 import galp.steps
@@ -226,6 +227,7 @@ async def test_npargserializer(disjoined_client_pair):
 
     assert ans2 == [45]
 
+#@pytest.mark.xfail
 async def test_sync_client(async_sync_client_pair):
     """
     Tests the sync client's get functionnality

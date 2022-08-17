@@ -89,6 +89,7 @@ async def test_unique_submission(peer_client):
     """
     peer, client = peer_client
     task = gts.sleeps(1, 42)
+    print(task.name)
 
     submit_counter = [0]
     def _count(*_):

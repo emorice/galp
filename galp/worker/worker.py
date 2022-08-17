@@ -260,20 +260,18 @@ class Worker:
         Callback to schedule a task for execution.
         """
         def _start_task(status):
-            del status
             task = asyncio.create_task(
-                self.run_submission(client_route, name, task_dict)
+                self.run_submission(status, client_route, name, task_dict)
                 )
             self.galp_jobs.put_nowait(task)
 
         script = self.protocol.script
-        collect = script.collect(
-                commands=[script.rget(t) for t in [
+        collect = script.collect([
+                script.rget(t) for t in [
                     *task_dict['arg_names'],
                     *task_dict['kwarg_names'].values()
-                    ]],
-                allow_failures=True
-                )
+                    ]
+                ])
         script.callback(collect, _start_task)
 
     async def listen(self):
@@ -297,18 +295,24 @@ class Worker:
         """
         return self.protocol.store.get_native(name)
 
-    async def run_submission(self, route, name, task_dict):
+    async def run_submission(self, status, route, name, task_dict):
         """
         Actually run the task
         """
+
         step_name = task_dict['step_name']
         arg_names = task_dict['arg_names']
         kwarg_names = task_dict['kwarg_names']
 
-        logging.info('Executing step %s (%s)',
-            name, step_name.decode('ascii'))
-
         try:
+            if status:
+                logging.error('Could not gather task inputs'
+                        ' for step %s (%s)', name, step_name)
+                raise NonFatalTaskError
+
+            logging.info('Executing step %s (%s)',
+                name, step_name.decode('ascii'))
+
             try:
                 step = self.step_dir.get(step_name)
             except NoSuchStep as exc:

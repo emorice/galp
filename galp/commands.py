@@ -31,9 +31,20 @@ class Status(Enum):
     """
     Command status
     """
-    PENDING ='P'
+    PENDING = 'P'
     DONE = 'D'
     FAILED = 'F'
+
+    def __bool__(self):
+        return self != Status.DONE
+
+_once_commands = {}
+def once(cls):
+    """
+    Register a class for use by `do_once`
+    """
+    _once_commands[cls.__name__.upper()] = cls
+    return cls
 
 class Command:
     """
@@ -79,7 +90,7 @@ class Command:
         if self.status == Status.PENDING:
             self.change_status(self._eval())
 
-    def done(self, result):
+    def done(self, result=None):
         """
         Mark the future as done and runs callbacks.
 
@@ -108,7 +119,7 @@ class Command:
         """
         return self.status == Status.PENDING
 
-    def failed(self, result):
+    def failed(self, result=None):
         """
         Mark the future as failed and runs callbacks.
 
@@ -128,10 +139,7 @@ class Command:
         Creates a unique command
         """
         key =  verb, name
-        cls = {
-            'GET': Get,
-            'RGET': Rget,
-            }[verb]
+        cls = _once_commands[verb]
 
         if key in self.script.commands:
             cmd = self.script.commands[key]
@@ -143,18 +151,24 @@ class Command:
         self.script.new_commands.append(key)
         return cmd
 
-    def run(self, name, task):
+    def run(self, task):
         """
         Creates a unique-by-name command representing a task submission and
         fetch
         """
-        return self.do_once('RUN', name, task)
+        return self.do_once('RUN', task.name, task)
 
-    def rsubmit(self, name, task):
+    def rsubmit(self, task):
+        """
+        Creates a unique-by-name command representing a recursive task submission
+        """
+        return self.do_once('RSUBMIT', task.name, task)
+
+    def submit(self, task):
         """
         Creates a unique-by-name command representing a task submission
         """
-        return self.do_once('RSUBMIT', name, task)
+        return self.do_once('SUBMIT', task.name, task)
 
     def rget(self, name):
         """
@@ -168,6 +182,18 @@ class Command:
         resource
         """
         return self.do_once('GET', name)
+
+    def req(self, *commands):
+        """
+        Propagate result on failure
+        """
+
+        for command in commands:
+            if command.is_failed():
+                self.result = command.result
+                break
+
+        return status_conj(commands)
 
 
 class Script(Command):
@@ -194,6 +220,7 @@ class Script(Command):
     def _eval(self):
         return Status.PENDING
 
+@once
 class Get(Command):
     """
     Get a single resource part
@@ -208,6 +235,7 @@ class Get(Command):
     def _eval(self):
         return Status.PENDING
 
+@once
 class Rget(Command):
     """
     Recursively gets a resource and all its parts
@@ -225,22 +253,14 @@ class Rget(Command):
         """
         get = self.get(self.name)
 
-        if get.is_failed():
-            self.result = get.result
+        sta = self.req(get)
+        if sta:
+            return sta
 
-        if get.status != Status.DONE:
-            return get.status
-
-        rgets = [
+        return self.req(*[
             self.rget(child_name)
             for child_name in get.result
-            ]
-
-        for child in rgets:
-            if child.is_failed():
-                self.result = child.result
-
-        return status_conj(rgets)
+            ])
 
 class Collect(Command):
     """
@@ -260,11 +280,7 @@ class Collect(Command):
         if self.allow_failures:
             return status_conj_any(self.commands)
 
-        for child in self.commands:
-            if child.is_failed():
-                self.result = child.result
-
-        return status_conj(self.commands)
+        return self.req(*self.commands)
 
 class Callback(Command):
     """
@@ -285,6 +301,7 @@ class Callback(Command):
             return Status.DONE
         return Status.PENDING
 
+@once
 class Rsubmit(Command):
     """
     A task submission
@@ -295,20 +312,24 @@ class Rsubmit(Command):
         super().__init__(script)
 
     def __str__(self):
-        return f'submit {self.name}'
+        return f'rsubmit {self.name}'
 
     def _eval(self):
-        dep_subs = [
-            self.rsubmit(dep.name, dep)
+
+        # dependencies
+        sta = self.req(*[
+            self.rsubmit(dep)
             for dep in self.task.dependencies
-            ]
+            ])
+        if sta:
+            return sta
 
-        for dep in dep_subs:
-            if dep.is_failed():
-                self.result = dep.result
+        # task itself
+        head_sub = self.submit(self.task)
 
-        return status_conj(dep_subs)
+        return self.req(head_sub) # later on, add recursive calls here
 
+@once
 class Run(Command):
     """
     Combined rsubmit + rget
@@ -322,17 +343,28 @@ class Run(Command):
         return f'run {self.name}'
 
     def _eval(self):
-        rsub = self.rsubmit(self.name, self.task)
+        rsub = self.rsubmit(self.task)
 
-        if rsub.is_failed():
-            self.result = rsub.result
-
-        if rsub.status != Status.DONE:
-            return rsub.status
+        sta = self.req(rsub)
+        if sta:
+            return sta
 
         rget = self.rget(self.name)
 
-        if rget.is_failed():
-            self.result = rget.result
+        return self.req(rget)
 
-        return rget.status
+@once
+class Submit(Command):
+    """
+    Get a single resource part
+    """
+    def __init__(self, script, name, task):
+        self.name = name
+        self.task = task
+        super().__init__(script)
+
+    def __str__(self):
+        return f'submit {self.name}'
+
+    def _eval(self):
+        return Status.PENDING

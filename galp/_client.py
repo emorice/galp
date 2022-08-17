@@ -9,7 +9,6 @@ import logging
 import asyncio
 import time
 
-from contextlib import asynccontextmanager
 from enum import IntEnum, auto
 from collections import defaultdict
 
@@ -144,12 +143,7 @@ class Client:
         tasks = list(map(ensure_task, tasks))
 
         # Update the task graph
-        new_inputs = self.protocol.add(tasks)
-
-        # Schedule SUBMITs for all possibly new and ready downstream tasks
-        # This should be handled by the Script
-        for task in new_inputs:
-            self.schedule(('SUBMIT', task))
+        self.protocol.add(tasks)
 
         try:
             err = await asyncio.wait_for(
@@ -194,10 +188,6 @@ class Client:
         Processes messages until the collection target is achieved
         """
 
-        # Schedule GETs for tasks that were already done in a previous
-        # collection run
-        self.protocol.get_done(tasks)
-
         # Register the termination command
         def _end(status):
             raise ProtocolEndException(status)
@@ -205,14 +195,13 @@ class Client:
 
         script = self.protocol.script
         collect = script.collect(
-                commands=[script.rget(t.name) for t in tasks],
+                commands=[script.run(t) for t in tasks],
                 allow_failures=return_exceptions
                 )
         script.callback(
             collect, _end
             )
-
-        self.protocol.script.new_commands.clear()
+        self.protocol.schedule_new()
 
         await async_utils.run(
             self.process_scheduled(),
@@ -234,19 +223,20 @@ class BrokerProtocol(ReplyProtocol):
         # default.
         self.route = self.default_route()
 
-
-        ## Replacement for status tracker
-        # repo of keys, only for prototyping
-        self._command_keys = {}
-        # command defs
+        # Commands
         self.script = Script()
 
-        ## Current task status
+        # Should be phased out, currently used only with the RUNNING state to
+        # prevent re-sending a submit after receiving a done
         self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
 
+        # Task object by task name
+        # Used, most importantly, to generate full messages when processing a
+        # submit command (from only the task name)
         self._details = {}
+
+        # Should be phased out, currently used only to log failure propagation
         self._dependents = defaultdict(set)
-        self._dependencies = defaultdict(set)
 
         # Memory only native+serial cache
         self.store = CacheStack(
@@ -282,7 +272,6 @@ class BrokerProtocol(ReplyProtocol):
 
         oset, cset = set(tasks), set()
 
-        new_top_level = set()
         while oset:
             # Get a task
             task_details = oset.pop()
@@ -296,39 +285,12 @@ class BrokerProtocol(ReplyProtocol):
             # Add the links
             for dep_details in task_details.dependencies:
                 dep = dep_details.name
-                self._dependencies[task].add(dep)
                 self._dependents[dep].add(task)
                 if dep not in cset:
                     oset.add(dep_details)
 
             # Save details, and mark as seen
             self._details[task] = task_details
-
-            # Check unseen input tasks
-            # Note: True if no dependencies at all
-            if all(
-                    self._status[dep] >= TaskStatus.COMPLETED
-                    for dep in self._dependencies[task]
-                ):
-                new_top_level.add(task)
-
-        return new_top_level
-
-    def get_done(self, tasks):
-        """
-        Schedule for collection any new task that was already done.
-        """
-
-        for task_details in tasks:
-            get_key = 'GET', task_details.name
-            if (
-                get_key not in self.script.commands
-                and
-                self._status[task_details.name] is TaskStatus.COMPLETED
-                ):
-                logging.debug("Scheduling extra GET for upgraded %s",
-                    task_details.name.hex())
-                self.schedule(get_key)
 
     def write_next(self, command_key):
         """
@@ -359,15 +321,11 @@ class BrokerProtocol(ReplyProtocol):
             raise ValueError(f"Task {task_name.hex()} is unknown")
         details = self._details[task_name]
 
+        # Literals are always satisfied
         if hasattr(details, 'literal'):
-            # Reference the literal
+            # Make the literal reachable by name
+            # This is needed at submit time to make them available to workers
             self.store.put_native(details.handle, details.literal)
-            # Mark any possible GET as completed
-            command = self.script.commands.get(('GET', task_name))
-            if command:
-                command.done([dep.name for dep in details.dependencies])
-                self.schedule_new()
-
             return self.on_done(None, task_name)
 
         # Sub-tasks are automatically satisfied when their parent and unique
@@ -378,6 +336,31 @@ class BrokerProtocol(ReplyProtocol):
         self.submitted_count[task_name] += 1
         return self.submit_task(self.route, details)
 
+    def get(self, route, name):
+        """
+        Filter out literal tasks and send GETs for others
+        """
+        details = self._details.get(name)
+
+        if details and hasattr(details, 'literal'):
+            # Make the literal reachable by name
+            # This is needed at get time to make them available to ourselves
+            self.store.put_native(details.handle, details.literal)
+            # Mark command as done and pass on children
+            self.script.commands[
+                    'GET', name
+                ].done([
+                    dep.name for dep in details.dependencies
+                    ])
+            # Schedule downstream
+            self.schedule_new()
+            # Supress normal output, removing task from queue
+            return None
+
+        # Send a normal GET
+        return super().get(route, name)
+
+
     # Protocol callbacks
     # ==================
     def on_get(self, route, name):
@@ -386,7 +369,7 @@ class BrokerProtocol(ReplyProtocol):
             logging.debug('Client GET on %s', name.hex())
         except KeyError:
             reply = self.not_found(route, name)
-            logging.warning('Client missed GET on %s', name.hex())
+            logging.warning('Client missed GET on %s', name)
 
         return reply
 
@@ -409,10 +392,8 @@ class BrokerProtocol(ReplyProtocol):
         # Put the parent part
         self.store.put_serial(name, (data, children))
 
-        # Fetch command
-        command = self.script.commands['GET', name]
         # Mark as done and sets result
-        command.done(children)
+        self.script.commands['GET', name].done(children)
         # Schedule for sub-GETs to be sent in the future
         self.schedule_new()
 
@@ -423,19 +404,9 @@ class BrokerProtocol(ReplyProtocol):
 
         self._status[name] = TaskStatus.COMPLETED
 
-        # check if we have ready pending outputs, if yes schedule them
-        for dept in self._dependents[name]:
-            if all(
-                self._status[sister_dep] >= TaskStatus.COMPLETED
-                for sister_dep in self._dependencies[dept]
-                ):
-                self.schedule(('SUBMIT', dept))
-
-        # check if we have a pending get, if yes schedule it
-        command_key = 'GET', name
-        command = self.script.commands.get(command_key)
-        if command:
-            self.schedule(command_key)
+        # trigger downstream commands
+        self.script.commands['SUBMIT', name].done()
+        self.schedule_new()
 
     def on_doing(self, route, name):
         """Just updates statistics"""
@@ -446,12 +417,15 @@ class BrokerProtocol(ReplyProtocol):
         """
         Mark a task and all its dependents as failed.
         """
-
-        tasks = set([name])
-
         desc = self._details[name].description
         msg = f'Failed to execute task {desc} [{name}], check worker logs'
 
+        # Mark fetch command as failed if pending
+        self.script.commands['SUBMIT', name].failed(msg)
+        assert not self.script.new_commands
+
+        # Legacy propagating logic, only used for logging now
+        tasks = set([name])
         while tasks:
             task = tasks.pop()
             task_desc = self._details[task].description
@@ -461,15 +435,7 @@ class BrokerProtocol(ReplyProtocol):
             else:
                 logging.error('Propagating failure: %s [%s]', task_desc, task)
 
-            # Mark as failed
-            self._status[task] = TaskStatus.FAILED
-            # Mark fetch command as failed if pending:
-            command = self.script.commands.get(('GET', task))
-            if command:
-                command.failed(msg)
-                assert not self.script.new_commands
-
-            # Fail the dependents
+            # Log the dependents
             # Note: this can visit a task several time, not a problem
             for subtask in self._dependents[task]:
                 tasks.add(subtask)
