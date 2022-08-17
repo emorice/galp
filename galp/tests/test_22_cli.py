@@ -1,8 +1,13 @@
 """
-Diverse command line interfaces
+Command line and file-oriented features.
+
+These bridge the gap with tools like make.
 """
 
 import subprocess
+
+from async_timeout import timeout
+
 import galp.tests.steps as gts
 
 def test_cli_run(galp_set_one):
@@ -28,3 +33,15 @@ def test_cli_run_noprint(galp_set_one):
     out = subprocess.getoutput(command)
 
     assert out == ''
+
+async def test_path(client):
+    """
+    Store a resource to a provided path
+    """
+
+    upstream = gts.write_file('42')
+    downstream = gts.read_file(upstream)
+
+    async with timeout(3):
+        res = await client.run(downstream)
+        assert res == '42'

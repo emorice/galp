@@ -14,6 +14,8 @@ import logging
 import argparse
 import resource
 
+from dataclasses import dataclass
+
 import zmq
 import zmq.asyncio
 
@@ -89,6 +91,8 @@ def make_worker_init(config):
     # Late setup
     limit_resources(setup.get('vm'))
 
+    os.makedirs(os.path.join(setup['store'].dirpath, 'galp'), exist_ok=True)
+
     logging.info("Worker connecting to %s", setup['endpoint'])
 
     def _make_worker():
@@ -98,6 +102,8 @@ def make_worker_init(config):
             Profiler(setup.get('profile'))
             )
     return _make_worker
+
+
 
 class WorkerProtocol(ReplyProtocol):
     """
@@ -331,6 +337,15 @@ class Worker:
                     f'Cannot decode keyword {exc.object}'
                     f' for step {name} ({step_name})'
                     ) from exc
+
+            # Inject path maker if requested
+            if '_new_path' in step.kw_names:
+                path_maker = PathMaker(
+                    self.protocol.store.dirpath,
+                    name.hex()
+                    )
+                kwargs['_new_path'] = path_maker.make
+
             # This may block for a long time, by design
             try:
                 result = self.profiler.wrap(name, step)(*args, **kwargs)
@@ -354,6 +369,27 @@ class Worker:
             logging.exception('An unhandled error has occured within a step-'
                 'running asynchronous task. This signals a bug in GALP itself.')
             raise
+
+@dataclass
+class PathMaker:
+    """
+    State keeping path to generate new paths inside steps
+    """
+    dirpath: str
+    task: str
+    fileno: int = 0
+
+    def make(self):
+        """
+        Returns a new unique path
+        """
+        fileno = self.fileno
+        self.fileno += 1
+        return os.path.join(
+            self.dirpath,
+            'galp',
+            f'{self.task}_{fileno}'
+            )
 
 def fork(config):
     """

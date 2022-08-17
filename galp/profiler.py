@@ -22,12 +22,10 @@ class Profiler:
         if config is not None:
             try:
                 self.dir = config['dir']
-                os.mkdir(config['dir'])
             except KeyError:
                 raise ConfigError('Profiler is none but no profile.dir '
                     'was specified')
-            except FileExistsError:
-                pass
+            os.makedirs(config['dir'], exist_ok=True)
 
             if 'steps' in config:
                 try:

@@ -65,11 +65,23 @@ class Step:
             objects, and allows to index or iterate over the task to generate
             handle pointing to the individual items.
     """
+
     def __init__(self, scope, function, **task_options):
         self.function = function
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
         self.task_options = task_options
         self.scope = scope
+        self.kw_names = []
+        try:
+            sig = inspect.signature(self.function)
+            for name, param in sig.parameters.items():
+                if param.kind not in (
+                    param.POSITIONAL_OR_KEYWORD,
+                    param.KEYWORD_ONLY):
+                    continue
+                self.kw_names.append(name)
+        except ValueError:
+            pass
 
     def __call__(self, *args, **kwargs):
         """
@@ -78,24 +90,17 @@ class Step:
 
         Inject arguments from the scope if any are found.
         """
-        sig = None
-        try:
-            sig = inspect.signature(self.function)
-        except ValueError:
-            pass
-
-        if sig:
-            for name, param in sig.parameters.items():
-                if param.kind not in (
-                    param.POSITIONAL_OR_KEYWORD,
-                    param.KEYWORD_ONLY):
+        for name in self.kw_names:
+            injectable = self.scope._injectables.get(name)
+            if injectable:
+                if name in kwargs:
+                    raise ValueError(f'Duplicate argument {name}, '
+                        'given as an argument but also injectable')
+                if isinstance(injectable, WorkerSideInject):
+                    # We raise error on naming conflicts, but fall short of
+                    # actually injecting the object
                     continue
-                injectable = self.scope._injectables.get(name)
-                if injectable:
-                    if name in kwargs:
-                        raise ValueError(f'Duplicate argument {name}, '
-                            'given as an argument but also injectable')
-                    kwargs[name] = injectable
+                kwargs[name] = injectable
 
         return Task(self, args, kwargs, **self.task_options)
 
@@ -302,12 +307,22 @@ class NoSuchStep(ValueError):
     No step with the given name has been registered
     """
 
+# Placholder type for an object injected by the worker
+WorkerSideInject = type('WorkerSideInject', tuple(), {})
+
 class StepSet:
     """A collection of steps"""
     def __init__(self, steps=None):
         # Note: if we inherit steps, we don't touch their scope
         self._steps = {} if steps is None else steps
-        self._injectables = {}
+
+        self._injectables = {
+                k: WorkerSideInject()
+                for k in self._worker_injectables
+                }
+
+    # Keys reserved for resources injected by the worker at runtime.
+    _worker_injectables = ['_new_path']
 
     def step(self, *decorated, **options):
         """Decorator to make a function a step.

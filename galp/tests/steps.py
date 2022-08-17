@@ -9,6 +9,7 @@ import psutil
 import numpy as np
 import pyarrow as pa
 
+import galp
 from galp.graph import StepSet
 
 export = StepSet()
@@ -221,3 +222,25 @@ def sum_inject(injected_list):
     return sum(injected_list)
 
 export.bind(injected_list=[identity(5), identity(7)])
+
+@export
+def write_file(string, _new_path):
+    """
+    Write to a unique file
+    """
+    path = _new_path()
+    with open(path, 'w', encoding='utf8') as stream:
+        stream.write(string)
+
+    with open(_new_path(), 'w', encoding='utf8') as stream:
+        stream.write('clobber !')
+
+    return path
+
+@export
+def read_file(path):
+    """
+    Return content of an utf8 text file
+    """
+    with open(path, encoding='utf8') as stream:
+        return stream.read()
