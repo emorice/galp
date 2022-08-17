@@ -16,6 +16,7 @@ from collections import defaultdict
 import zmq
 import zmq.asyncio
 
+from galp import async_utils
 from galp.graph import ensure_task
 from galp.cache import CacheStack
 from galp.serializer import Serializer, DeserializeError
@@ -78,27 +79,7 @@ class Client:
         self.command_queue = CommandQueue()
         self.new_command = asyncio.Event()
 
-    @asynccontextmanager
     async def process_scheduled(self):
-        """
-        Async context manager running process_scheduled in the background and
-        cancelling it at the end.
-
-        Meant to ensure the scheduling loop is correctly cancelled even on
-        exceptions, cancellations or timeouts
-        """
-        scheduler = asyncio.create_task(self._process_scheduled())
-        try:
-            yield
-        finally:
-            logging.info('Stopping outgoing message scheduler')
-            scheduler.cancel()
-            try:
-                await scheduler
-            except asyncio.CancelledError:
-                pass
-
-    async def _process_scheduled(self):
         """
         Send submit/get requests from the queue.
 
@@ -233,8 +214,10 @@ class Client:
 
         self.protocol.script.new_commands.clear()
 
-        async with self.process_scheduled():
-            await self.transport.listen_reply_loop()
+        await async_utils.run(
+            self.process_scheduled(),
+            self.transport.listen_reply_loop()
+            )
 
         return collect.result
 

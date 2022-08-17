@@ -4,6 +4,7 @@ Command line interface to the galp client
 
 import argparse
 import asyncio
+import logging
 
 from contextlib import AsyncExitStack
 from importlib import import_module
@@ -25,8 +26,11 @@ galp.cli.add_parser_arguments(parser)
 
 args = parser.parse_args()
 
+galp.cli.setup('client', args.log_level)
+
 module = import_module(args.module)
 _target = getattr(module, args.target)
+
 
 async def run(target):
     """

@@ -244,3 +244,5 @@ def read_file(path):
     """
     with open(path, encoding='utf8') as stream:
         return stream.read()
+
+empty = []

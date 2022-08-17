@@ -395,3 +395,11 @@ async def test_inject_bind(client):
     async with timeout(3):
         ans = await client.run(gts.sum_inject)
     assert ans == 12
+
+async def test_collect_empty(client):
+    """
+    Handle it gracefully if we collect a constant structure
+    """
+    async with timeout(3):
+        ans = await client.run(gts.empty)
+    assert len(ans) == 0
