@@ -224,15 +224,15 @@ def sum_inject(injected_list):
 export.bind(injected_list=[identity(5), identity(7)])
 
 @export
-def write_file(string, _new_path):
+def write_file(string, _galp):
     """
     Write to a unique file
     """
-    path = _new_path()
+    path = _galp.new_path()
     with open(path, 'w', encoding='utf8') as stream:
         stream.write(string)
 
-    with open(_new_path(), 'w', encoding='utf8') as stream:
+    with open(_galp.new_path(), 'w', encoding='utf8') as stream:
         stream.write('clobber !')
 
     return path

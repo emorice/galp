@@ -339,12 +339,12 @@ class Worker:
                     ) from exc
 
             # Inject path maker if requested
-            if '_new_path' in step.kw_names:
+            if '_galp' in step.kw_names:
                 path_maker = PathMaker(
                     self.protocol.store.dirpath,
                     name.hex()
                     )
-                kwargs['_new_path'] = path_maker.make
+                kwargs['_galp'] = path_maker
 
             # This may block for a long time, by design
             try:
@@ -379,7 +379,7 @@ class PathMaker:
     task: str
     fileno: int = 0
 
-    def make(self):
+    def new_path(self):
         """
         Returns a new unique path
         """

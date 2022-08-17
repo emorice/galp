@@ -322,7 +322,7 @@ class StepSet:
                 }
 
     # Keys reserved for resources injected by the worker at runtime.
-    _worker_injectables = ['_new_path']
+    _worker_injectables = ['_galp']
 
     def step(self, *decorated, **options):
         """Decorator to make a function a step.
