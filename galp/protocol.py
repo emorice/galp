@@ -4,6 +4,9 @@ GALP protocol implementation
 
 import logging
 
+# FIXME: implement a safe, cross-language serialization
+import dill
+
 from galp.graph import Task, TaskName
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
@@ -44,7 +47,7 @@ class Protocol(LowerProtocol):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
 
-    def on_done(self, route, name):
+    def on_done(self, route, name, children):
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
@@ -110,14 +113,16 @@ class Protocol(LowerProtocol):
         """
         return route, [b'DOING', name]
 
-    def done(self, route, name):
+    def done(self, route, name, children):
         """
         Builds a DONE message
 
         Args:
             name: the name of the task
         """
-        return route, [b'DONE', name]
+        # FIXME: implement a safe, cross-language serialization
+        payload = dill.dumps(children)
+        return route, [b'DONE', name, payload]
 
     def exited(self, route, peer):
         """Signal the given peer has exited"""
@@ -304,12 +309,16 @@ class Protocol(LowerProtocol):
 
     @event.on('DONE')
     def _on_done(self, route, msg):
-        self._validate(len(msg) >= 2, route, 'DONE without a name')
-        self._validate(len(msg) <= 2, route, 'DONE with too many names')
+        self._validate(len(msg) >= 3, route, 'DONE without a name or subgraph')
+        self._validate(len(msg) <= 3, route, 'DONE without extra data')
 
         name = TaskName(msg[1])
+        payload = msg[2]
 
-        return self.on_done(route, name)
+        # FIXME: implement a safe, cross-language serialization
+        children = dill.loads(payload)
+
+        return self.on_done(route, name, children)
 
     @event.on('FAILED')
     def _on_failed(self, route, msg):

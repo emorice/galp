@@ -139,7 +139,11 @@ class LowerProtocol(BaseSplitProtocol):
         msg_log_str, meta_log_str = self._log_str(
             route, msg_body,
             sent, block)
-        logging.info('<- %s', msg_log_str)
+        if route[1]:
+            # Just forwarding
+            logging.debug('<- %s', msg_log_str)
+        else:
+            logging.info('<- %s', msg_log_str)
         logging.debug('<- %s', meta_log_str)
 
         # Note: we do not call on_verb for ping, even if it could be treated as
@@ -168,7 +172,11 @@ class LowerProtocol(BaseSplitProtocol):
         msg_log_str, meta_log_str = self._log_str(
             (incoming_route, forward_route), msg_body,
             self._next_send_idx, self._next_peer_block_idx)
-        logging.info('-> %s', msg_log_str)
+        if incoming_route:
+            # Forwarding only
+            logging.debug('-> %s', msg_log_str)
+        else:
+            logging.info('-> %s', msg_log_str)
         logging.debug('-> %s', meta_log_str)
 
         # Note: this part is synchronous, so we can never build two messages

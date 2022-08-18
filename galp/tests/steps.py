@@ -246,3 +246,12 @@ def read_file(path):
         return stream.read()
 
 empty = []
+
+@export
+def meta(values):
+    """
+    A list of tasks
+    """
+    return [
+        identity(value) for value in values
+        ]

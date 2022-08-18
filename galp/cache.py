@@ -107,7 +107,9 @@ class CacheStack():
         """Puts a native object in the cache.
 
         For now this eagerly serializes it and commits it to persistent cache.
-        Recursive call if handle is iterable.
+        Recursive call if handle is iterable. Returns the child tasks
+        encountered when serializing (the true Task objects inside obj, not the
+        "virtual" tasks of iterable handles)
         """
         try:
             # Logical composite handle
@@ -125,12 +127,14 @@ class CacheStack():
                     )
             payload = msgpack.packb(struct)
             self.put_serial(handle.name, (payload, children))
-            return
+            return []
         except NonIterableHandleError:
             pass
 
         data, children = self.serializer.dumps(obj)
-        self.put_serial(handle.name, (data, children))
+        child_names = [ c.name for c in children ]
+        self.put_serial(handle.name, (data, child_names))
+        return children
 
 
     def put_serial(self, name, serialized):

@@ -185,10 +185,8 @@ class Task(TaskType):
     def __getitem__(self, index):
         return SubTask(self, self.handle[index])
 
-    @property
-    def description(self):
-        """Return a readable description of task"""
-        return str(self.step.key, 'ascii')
+    def __str__(self):
+        return f'{self.name} {str(self.step.key, "ascii")}'
 
 class SubTask(TaskType):
     """
@@ -224,10 +222,8 @@ class SubTask(TaskType):
         """
         return [self.parent]
 
-    @property
-    def description(self):
-        """Return a readable description of task"""
-        return self.parent.description + '[sub]'
+    def __str__(self):
+        return '{self.name} [sub] {self.parent}'
 
 @dataclass
 class Handle():
@@ -286,7 +282,7 @@ class LiteralTask(TaskType):
         # Todo: more robust hashing, but this is enough for most case where
         # literal resources are a good fit (more complex objects would tend to be
         # actual step outputs)
-        self.data, self.dependencies = _serializer.dumps(obj, child_objects=True)
+        self.data, self.dependencies = _serializer.dumps(obj)
 
         rep = [
             self.__class__.__name__, self.data,
@@ -296,10 +292,8 @@ class LiteralTask(TaskType):
         self.name = obj_to_name(rep)
         self.handle = Handle(self.name)
 
-    @property
-    def description(self):
-        """Return a readable description of task"""
-        return '[literal]'
+    def __str__(self):
+        return f'{self.name} [literal] {self.literal}'
 
 class NoSuchStep(ValueError):
     """

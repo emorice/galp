@@ -82,7 +82,7 @@ class Serializer:
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj, child_objects=False) -> bytes:
+    def dumps(self, obj) -> bytes:
         """
         Serialize the data.
 
@@ -93,14 +93,8 @@ class Serializer:
 
         Args:
             obj: object to serialize
-            child_objects: if True, returns the list of Task objects found
-                during the traversal, not just their names
         """
         children = []
         # Modifies children in place
         payload = msgpack.packb(obj, default=default(children), use_bin_type=True)
-        if not child_objects:
-            children = [
-                child.name for child in children
-                ]
         return payload, children

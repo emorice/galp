@@ -55,7 +55,7 @@ class Command:
         self.status = Status.PENDING
         self.result = None
         self.outputs = set()
-        self.update()
+        self.update(init=True)
 
     def out(self, cmd):
         """
@@ -66,29 +66,27 @@ class Command:
     def _eval(self):
         raise NotImplementedError
 
-    def change_status(self, new_status):
+    def change_status(self, new_status, init=False):
         """
         Updates status, triggering callbacks and collecting replies
         """
         old_status = self.status
         self.status = new_status
-        logging.info('%s\t%s',
-            new_status.name + ' ' * (
-                len(Status.FAILED.name) - len(new_status.name)
-                ),
-            self
-            )
+        logging.info('%s %s',
+                ('NEW' if init else new_status.name).ljust(7),
+                self
+                )
         if old_status == Status.PENDING and new_status != Status.PENDING:
             for command in self.outputs:
                 command.update()
 
-    def update(self):
+    def update(self, init=False):
         """
         Re-evals condition and possibly trigger callbacks, returns a list of
         replies
         """
         if self.status == Status.PENDING:
-            self.change_status(self._eval())
+            self.change_status(self._eval(), init)
 
     def done(self, result=None):
         """
@@ -195,6 +193,12 @@ class Command:
 
         return status_conj(commands)
 
+    @property
+    def _str_res(self):
+        return (
+            f' = [{", ".join(str(r) for r in self.result)}]'
+            if self.is_done() else ''
+            )
 
 class Script(Command):
     """
@@ -217,8 +221,11 @@ class Script(Command):
         """
         return Callback(command, callback)
 
-    def _eval(self):
-        return Status.PENDING
+    def update(self, *_, **_k):
+        pass
+
+    def __str__(self):
+        return 'script'
 
 @once
 class Get(Command):
@@ -230,7 +237,7 @@ class Get(Command):
         super().__init__(script)
 
     def __str__(self):
-        return f'get {self.name}'
+        return f' get {self.name}' + self._str_res
 
     def _eval(self):
         return Status.PENDING
@@ -293,7 +300,7 @@ class Callback(Command):
         super().__init__(script=None)
 
     def __str__(self):
-        return f'callback {self._callback}'
+        return f'callback {self._callback.__name__}'
 
     def _eval(self):
         if self._in.status != Status.PENDING:
@@ -312,7 +319,7 @@ class Rsubmit(Command):
         super().__init__(script)
 
     def __str__(self):
-        return f'rsubmit {self.name}'
+        return f'rsubmit {self.task}'
 
     def _eval(self):
 
@@ -325,9 +332,16 @@ class Rsubmit(Command):
             return sta
 
         # task itself
-        head_sub = self.submit(self.task)
+        main_sub = self.submit(self.task)
+        sta = self.req(main_sub)
+        if sta:
+            return sta
 
-        return self.req(head_sub) # later on, add recursive calls here
+        # Recursive children tasks
+        return self.req(*[
+            self.rsubmit(child_name)
+            for child_name in main_sub.result
+            ])
 
 @once
 class Run(Command):
@@ -364,7 +378,7 @@ class Submit(Command):
         super().__init__(script)
 
     def __str__(self):
-        return f'submit {self.name}'
+        return f' submit {self.task}' + self._str_res
 
     def _eval(self):
         return Status.PENDING

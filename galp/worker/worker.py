@@ -157,7 +157,7 @@ class WorkerProtocol(ReplyProtocol):
         # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name)
-            return self.done(route, name)
+            return self.done(route, name, [])
 
         # If not in cache, resolve metadata and run the task
         replies = MessageList([self.doing(route, name)])
@@ -196,16 +196,13 @@ class WorkerProtocol(ReplyProtocol):
                 continue
             try:
                 children = self.store.get_children(name)
-                logging.info('DEP found %s', name)
                 self.script.commands[verb, name].done(children)
                 continue
             except StoreReadError:
-                logging.exception('DEP error %s', name)
                 self.script.commands[verb, name].failed('StoreReadError')
                 continue
             except KeyError:
                 pass
-            logging.info('DEP fetch %s', name)
             messages.append(
                 self.get(route, name)
                 )
@@ -248,9 +245,9 @@ class Worker:
         """
         while True:
             task = await self.galp_jobs.get()
-            route, name, success = await task
+            route, name, success, result = await task
             if success:
-                reply = self.protocol.done(route, name)
+                reply = self.protocol.done(route, name, result)
             else:
                 reply = self.protocol.failed(route, name)
             await self.transport.send_message(reply)
@@ -359,14 +356,14 @@ class Worker:
                 raise NonFatalTaskError from exc
 
             # Store the result back
-            self.protocol.store.put_native(handle, result)
+            children = self.protocol.store.put_native(handle, result)
 
-            return route, name, True
+            return route, name, True, children
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return route, name, False
+            return route, name, False, None
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.

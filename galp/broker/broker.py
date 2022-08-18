@@ -117,7 +117,7 @@ class WorkerProtocol(BrokerProtocol):
             del self.task_from_route[key]
         self.idle_workers.append(worker_route)
 
-    def on_done(self, route, name):
+    def on_done(self, route, name, children):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 

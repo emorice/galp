@@ -321,17 +321,17 @@ class BrokerProtocol(ReplyProtocol):
             raise ValueError(f"Task {task_name.hex()} is unknown")
         details = self._details[task_name]
 
-        # Literals are always satisfied
+        # Literals are always satisfied, and never have recursive children
         if hasattr(details, 'literal'):
             # Make the literal reachable by name
             # This is needed at submit time to make them available to workers
             self.store.put_native(details.handle, details.literal)
-            return self.on_done(None, task_name)
+            return self.on_done(None, task_name, [])
 
         # Sub-tasks are automatically satisfied when their parent and unique
-        # dependency is
+        # dependency is, and never have recursive children
         if hasattr(details, 'parent'):
-            return self.on_done(None, task_name)
+            return self.on_done(None, task_name, [])
 
         self.submitted_count[task_name] += 1
         return self.submit_task(self.route, details)
@@ -397,15 +397,18 @@ class BrokerProtocol(ReplyProtocol):
         # Schedule for sub-GETs to be sent in the future
         self.schedule_new()
 
-    def on_done(self, route, name):
+    def on_done(self, route, name, children):
         """Given that done_task just finished, mark it as done, schedule any
         dependent ready to be submitted, and schedule GETs for final tasks.
         """
 
         self._status[name] = TaskStatus.COMPLETED
 
+        # Add recieved graph to ours
+        self.add(children)
+
         # trigger downstream commands
-        self.script.commands['SUBMIT', name].done()
+        self.script.commands['SUBMIT', name].done(children)
         self.schedule_new()
 
     def on_doing(self, route, name):
@@ -417,8 +420,7 @@ class BrokerProtocol(ReplyProtocol):
         """
         Mark a task and all its dependents as failed.
         """
-        desc = self._details[name].description
-        msg = f'Failed to execute task {desc} [{name}], check worker logs'
+        msg = f'Failed to execute task {self._details[name]}, check worker logs'
 
         # Mark fetch command as failed if pending
         self.script.commands['SUBMIT', name].failed(msg)
@@ -428,12 +430,12 @@ class BrokerProtocol(ReplyProtocol):
         tasks = set([name])
         while tasks:
             task = tasks.pop()
-            task_desc = self._details[task].description
+            task_obj = self._details[task]
 
             if task == name:
-                logging.error('TASK FAILED: %s [%s]', task_desc, task)
+                logging.error('TASK FAILED: %s', task_obj)
             else:
-                logging.error('Propagating failure: %s [%s]', task_desc, task)
+                logging.error('Propagating failure: %s', task_obj)
 
             # Log the dependents
             # Note: this can visit a task several time, not a problem
@@ -449,8 +451,8 @@ class BrokerProtocol(ReplyProtocol):
         already handled by the command dependencies.
         """
 
-        task_desc = self._details[name].description
-        logging.error('TASK RESULT FETCH FAILED: %s [%s]', task_desc, name)
+        task_obj = self._details[name]
+        logging.error('TASK RESULT FETCH FAILED: %s', task_obj)
         # Mark fetch command as failed
         command = self.script.commands.get(('GET', name))
         command.failed('NOTFOUND')
@@ -464,7 +466,6 @@ class BrokerProtocol(ReplyProtocol):
         """
         Transfer the command queue to the scheduler
         """
-        logging.info('CMD REP: %s', self.script.new_commands)
         while self.script.new_commands:
             command_key = self.script.new_commands.popleft()
             verb, _ = command_key
