@@ -405,3 +405,16 @@ async def test_collect_empty(client):
     async with timeout(3):
         ans = await client.run(gts.empty)
     assert len(ans) == 0
+
+async def test_structured_autocalls(client):
+    """
+    Run a structure with some members being Steps to convert
+    """
+    step = gts.hello # not hello()
+
+    struct = {'msg': step}
+
+    async with timeout(3):
+        ans = await client.run(struct)
+
+    assert ans['msg'] == step.function()

@@ -8,8 +8,7 @@ from dataclasses import dataclass
 
 import msgpack
 
-from galp.serializer import Serializer, TaskType
-from galp.eventnamespace import EventNamespace
+from galp.serializer import Serializer, TaskType, StepType
 
 class TaskName(bytes):
     """
@@ -52,7 +51,7 @@ def ensure_task(obj):
         return obj()
     return LiteralTask(obj)
 
-class Step:
+class Step(StepType):
     """Object wrapping a function that can be called as a pipeline step
 
     'Step' refer to the function itself, 'Task' to the function with its

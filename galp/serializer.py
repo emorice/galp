@@ -9,6 +9,7 @@ import msgpack
 import dill
 
 TaskType = type('TaskType', tuple(), {})
+StepType = type('StepType', tuple(), {})
 
 class DeserializeError(ValueError):
     """
@@ -47,6 +48,8 @@ def default(children):
     Modifies children in-place
     """
     def _default(obj):
+        if isinstance(obj, StepType):
+            obj = obj()
         if isinstance(obj, TaskType):
             index = len(children)
             children.append(obj)
