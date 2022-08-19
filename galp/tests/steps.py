@@ -245,6 +245,7 @@ def read_file(path):
     with open(path, encoding='utf8') as stream:
         return stream.read()
 
+# Trivial empty target for CLI galp.client
 empty = []
 
 @export
@@ -255,3 +256,10 @@ def meta(values):
     return [
         identity(value) for value in values
         ]
+
+@export
+def meta_error():
+    """
+    A valid meta step returning a task which itself fails
+    """
+    return raises_error
