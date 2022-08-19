@@ -34,9 +34,18 @@ async def test_explicit():
         assert res == 1234
 
         client2 = gls.client
-        res = await client.run(task)
+        res = await client2.run(task)
         assert res == 1234
 
         await gls.stop()
 
         assert gls.client is None
+
+def test_oneshot(tmpdir):
+    """
+    Run a task through an all-in-one wrapper.
+    """
+    assert galp.run(
+        gts.identity(1234),
+        store=tmpdir, steps=['galp.tests.steps'], timeout=3
+        ) == 1234
