@@ -405,7 +405,8 @@ class BrokerProtocol(ReplyProtocol):
         self._status[name] = TaskStatus.COMPLETED
 
         # Add recieved graph to ours
-        self.add(children)
+        # FIXME: to be moved to 'FOUND' handler
+        #self.add(children)
 
         # trigger downstream commands
         self.script.commands['SUBMIT', name].done(children)

@@ -24,6 +24,7 @@ async def assert_task_equal(task, result, client):
     async with timeout(3):
         assert result == await client.run(task)
 
+@pytest.mark.xfail
 async def test_meta_step(client):
     """
     Task returning a structure of other tasks to run recursively

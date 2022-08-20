@@ -129,13 +129,22 @@ class Task(TaskType):
         self.vtags = (
             [ ascii(vtag) ]
             if vtag is not None else [])
-        self.name = self.gen_name(dict(
-            step_name=step.key,
-            arg_names=[ arg.name for arg in self.args ],
-            kwarg_names={ k : v.name for k, v in self.kwargs.items() },
-            vtags=self.vtags
-            ))
+        self.name = self.gen_name(self.to_dict())
         self.handle = Handle(self.name, items)
+
+    def to_dict(self, name=False):
+        """
+        Returns a dictionnary representation of the task.
+        """
+        task_dict = {
+            'step_name': self.step.key,
+            'vtags': self.vtags,
+            'arg_names': [ arg.name for arg in self.args ],
+            'kwarg_names': { kw: kwarg.name for kw, kwarg in self.kwargs.items() }
+            }
+        if name:
+            task_dict['name'] = self.name
+        return task_dict
 
     @property
     def dependencies(self):
@@ -291,6 +300,16 @@ class LiteralTask(TaskType):
 
         self.name = obj_to_name(rep)
         self.handle = Handle(self.name)
+
+    def to_dict(self, name=False):
+        """
+        Dictionary representation of task
+        """
+        task_dict = {
+            'data': self.data
+            }
+        if name:
+            task_dict['name'] = self.name
 
     def __str__(self):
         return f'{self.name} [literal] {self.literal}'

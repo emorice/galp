@@ -134,7 +134,11 @@ class CacheStack():
         data, children = self.serializer.dumps(obj)
         child_names = [ c.name for c in children ]
         self.put_serial(handle.name, (data, child_names))
-        return children
+
+        # Recursively store the child task definitions
+        for child in children:
+            self.put_task(child)
+        return child_names
 
 
     def put_serial(self, name, serialized):
@@ -149,6 +153,27 @@ class CacheStack():
 
         self.serialcache[name + b'.data'] = data
         self.serialcache[name + b'.children'] = msgpack.packb(children)
+
+    def put_task(self, task):
+        """
+        Recursively store a task definition
+        """
+        key = task.name + b'.task'
+        if key in self.serialcache:
+            return
+
+        self.serialcache[key] = msgpack.packb(task.to_dict())
+
+        for child in task.dependencies:
+            self.put_task(child)
+
+    def get_task(self, name):
+        """
+        Returns a task definition, non-recursively
+        """
+        return msgpack.unpackb(
+            self.serialcache[name + b'.task']
+            )
 
 def add_store_argument(parser, optional=False):
     """

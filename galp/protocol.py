@@ -4,8 +4,7 @@ GALP protocol implementation
 
 import logging
 
-# FIXME: implement a safe, cross-language serialization
-import dill
+import msgpack
 
 from galp.graph import Task, TaskName
 from galp.lower_protocol import LowerProtocol
@@ -88,6 +87,14 @@ class Protocol(LowerProtocol):
         """A `SUBMIT` message was received"""
         return self.on_unhandled(b'SUBMIT')
 
+    def on_found(self, route, task_dict):
+        """A `FOUND` message was received"""
+        return self.on_unhandled(b'FOUND')
+
+    def on_stat(self, route, name):
+        """A `STAT` message was received"""
+        return self.on_unhandled(b'STAT')
+
     def on_unhandled(self, verb):
         """
         A message without an overriden callback was received.
@@ -120,9 +127,7 @@ class Protocol(LowerProtocol):
         Args:
             name: the name of the task
         """
-        # FIXME: implement a safe, cross-language serialization
-        payload = dill.dumps(children)
-        return route, [b'DONE', name, payload]
+        return route, [b'DONE', name, *children]
 
     def exited(self, route, peer):
         """Signal the given peer has exited"""
@@ -213,13 +218,7 @@ class Protocol(LowerProtocol):
             raise ValueError('Derived tasks must never be passed to '
                 'Protocol layer')
 
-        task_dict = dict(
-            name=task.name,
-            step_name=task.step.key,
-            vtags=task.vtags,
-            arg_names=[ arg.name for arg in task.args ],
-            kwarg_names={ kw: kwarg.name for kw, kwarg in task.kwargs.items() }
-            )
+        task_dict = task.to_dict(name=True)
 
         return self.submit(route, task_dict)
 
@@ -243,6 +242,27 @@ class Protocol(LowerProtocol):
         for keyword, kwarg_name in task_dict['kwarg_names'].items():
             msg += [ keyword , kwarg_name ]
         return route, msg
+
+    def stat(self, route, name):
+        """
+        Builds a STAT message
+
+        Args:
+            name: the name of the task
+        """
+        return route, [b'STAT', name]
+
+    def found(self, route, task_dict):
+        """
+        Builds a FOUND message
+
+        Args:
+            task_dcits: representation of the task including name
+        """
+        name = task_dict['name']
+        payload = msgpack.packb(task_dict)
+
+        return route, [b'FOUND', name, payload]
 
     # Main logic methods
     # ==================
@@ -309,14 +329,10 @@ class Protocol(LowerProtocol):
 
     @event.on('DONE')
     def _on_done(self, route, msg):
-        self._validate(len(msg) >= 3, route, 'DONE without a name or subgraph')
-        self._validate(len(msg) <= 3, route, 'DONE without extra data')
+        self._validate(len(msg) >= 2, route, 'DONE without a name')
 
         name = TaskName(msg[1])
-        payload = msg[2]
-
-        # FIXME: implement a safe, cross-language serialization
-        children = dill.loads(payload)
+        children = msg[2:]
 
         return self.on_done(route, name, children)
 
@@ -382,3 +398,20 @@ class Protocol(LowerProtocol):
                 task_dict['kwarg_names'][keyword] = arg_name
 
         return self.on_submit(route, task_dict)
+
+    @event.on('FOUND')
+    def _on_found(self, route, msg):
+        self._validate(len(msg) == 3, 'FOUND with wrong number of parts')
+        name = TaskName(msg[1])
+        task_dict = msgpack.unpackb(msg[2])
+        task_dict['name'] = name
+        self.on_found(route, task_dict)
+
+    @event.on('STAT')
+    def _on_stat(self, route, msg):
+        self._validate(len(msg) >= 2, route, 'STAT without a name')
+        self._validate(len(msg) <= 2, route, 'STAT with too many names')
+
+        name = TaskName(msg[1])
+
+        return self.on_stat(route, name)
