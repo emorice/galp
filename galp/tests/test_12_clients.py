@@ -91,15 +91,29 @@ async def test_unique_submission(peer_client):
     task = gts.sleeps(1, 42)
 
     submit_counter = [0]
+    stat_counter = [0]
     def _count(*_):
         submit_counter[0] += 1
+    def _count_stat(*_):
+        stat_counter[0] += 1
     peer.protocol.on_submit = _count
+    peer.protocol.on_stat = _count_stat
 
     bg_collect = asyncio.create_task(
         client.collect(task)
         )
     try:
         async with timeout(6):
+            # Process one STAT for the task, two for the args and reply NOTFOUNG
+            for name in (task.name, task.args[0].name, task.args[1].name):
+                await peer.recv_message()
+                await peer.send_message(
+                    peer.protocol.not_found(
+                        peer.protocol.default_route(),
+                        name
+                        )
+                    )
+
             # Process one SUBMIT and drop it
             await peer.recv_message()
             logging.info('Mock dropping')

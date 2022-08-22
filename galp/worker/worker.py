@@ -185,6 +185,40 @@ class WorkerProtocol(ReplyProtocol):
         self.script.commands['GET', name].failed('NOTFOUND')
         assert not self.script.new_commands
 
+    def on_stat(self, route, name):
+        try:
+            return self._on_stat_io_unsafe(route, name)
+        except StoreReadError:
+            logging.exception('STAT: ERROR %s', name)
+        return self.not_found(route, name)
+
+    def _on_stat_io_unsafe(self, route, name):
+        """
+        STAT handler allowed to raise store read errors
+        """
+        children = None
+        try:
+            children = self.store.get_children(name)
+        except KeyError:
+            logging.debug('STAT: MISS %s', name)
+
+        if children is not None:
+            logging.info('STAT: DONE %s', name)
+            return self.done(route, name, children)
+
+        task = None
+        try:
+            task = self.store.get_task(name)
+        except KeyError:
+            pass
+
+        if task is not None:
+            logging.info('STAT: FOUND %s', name)
+            return self.found(route, task)
+
+        logging.info('STAT: NOT FOUND %s', name)
+        return self.not_found(route, name)
+
     def new_commands_to_messages(self, route):
         """
         Generate galp messages from a command reply list

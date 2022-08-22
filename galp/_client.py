@@ -195,7 +195,7 @@ class Client:
 
         script = self.protocol.script
         collect = script.collect(
-                commands=[script.run(t) for t in tasks],
+                commands=[script.run(t.name) for t in tasks],
                 allow_failures=return_exceptions
                 )
         script.callback(
@@ -234,6 +234,9 @@ class BrokerProtocol(ReplyProtocol):
         # Used, most importantly, to generate full messages when processing a
         # submit command (from only the task name)
         self._details = {}
+
+        # Task definitions collected through e.g. STAT/FOUND
+        self._tasks = {}
 
         # Should be phased out, currently used only to log failure propagation
         self._dependents = defaultdict(set)
@@ -309,6 +312,11 @@ class BrokerProtocol(ReplyProtocol):
                 return self.get(self.route, name)
             return None
 
+        if verb == 'STAT':
+            if self.script.commands[command_key].is_pending():
+                return self.stat(self.route, name)
+            return None
+
         raise NotImplementedError(verb)
 
     # Custom protocol sender
@@ -317,6 +325,16 @@ class BrokerProtocol(ReplyProtocol):
 
     def submit_task_by_name(self, task_name):
         """Loads details, handles literals and subtasks, and manage stats"""
+
+        # Task dict was added by a stat call
+        task_dict = self._tasks.get(task_name)
+        if task_dict:
+            if 'step_name' in task_dict:
+                self.submitted_count[task_name] += 1
+                return self.submit(self.route, task_dict)
+            # Literal etc
+            return self.on_done(None, task_name, [])
+
         if task_name not in self._details:
             raise ValueError(f"Task {task_name.hex()} is unknown")
         details = self._details[task_name]
@@ -409,8 +427,15 @@ class BrokerProtocol(ReplyProtocol):
         #self.add(children)
 
         # trigger downstream commands
-        self.script.commands['SUBMIT', name].done(children)
-        self.schedule_new()
+        command = self.script.commands.get(('SUBMIT', name))
+        if command:
+            command.done(children)
+            self.schedule_new()
+
+        command = self.script.commands.get(('STAT', name))
+        if command:
+            command.done((True, children))
+            self.schedule_new()
 
     def on_doing(self, route, name):
         """Just updates statistics"""
@@ -421,7 +446,10 @@ class BrokerProtocol(ReplyProtocol):
         """
         Mark a task and all its dependents as failed.
         """
-        msg = f'Failed to execute task {self._details[name]}, check worker logs'
+        if name in self._details:
+            msg = f'Failed to execute task {self._details[name]}, check worker logs'
+        else:
+            msg = f'Failed to execute task {self._tasks[name]}, check worker logs'
 
         # Mark fetch command as failed if pending
         self.script.commands['SUBMIT', name].failed(msg)
@@ -448,16 +476,39 @@ class BrokerProtocol(ReplyProtocol):
 
     def on_not_found(self, route, name):
         """
-        Mark a fetch as failed. Here no propagation logic is neeeded, it's
-        already handled by the command dependencies.
+        Mark a fetch as failed, or a stat as unfruitful. Here no propagation
+        logic is neeeded, it's already handled by the command dependencies.
         """
 
-        task_obj = self._details[name]
-        logging.error('TASK RESULT FETCH FAILED: %s', task_obj)
-        # Mark fetch command as failed
+        # Mark GET command as failed if issued
         command = self.script.commands.get(('GET', name))
-        command.failed('NOTFOUND')
-        assert not self.script.new_commands
+        if command:
+            task_obj = self._details[name]
+            logging.error('TASK RESULT FETCH FAILED: %s', task_obj)
+            command.failed('NOTFOUND')
+            assert not self.script.new_commands
+
+        # Mark STAT command as done or failed
+        command = self.script.commands.get(('STAT', name))
+        if command:
+            task = self._details.get(name)
+            if task:
+                # Not found remotely, but still found locally
+                command.done((False, task.to_dict()))
+                self.schedule_new()
+            else:
+                # Found neither remotely not locally, hard error
+                command.failed('NOTFOUND')
+                assert not self.script.new_commands
+
+    def on_found(self, route, task_dict):
+        """
+        Mark STAT as completed
+        """
+        name = task_dict['name']
+        self._tasks[name] = task_dict
+        self.script.commands['STAT', name].done((False, task_dict))
+        self.schedule_new()
 
     def on_illegal(self, route, reason):
         """Should never happen"""
@@ -470,6 +521,6 @@ class BrokerProtocol(ReplyProtocol):
         while self.script.new_commands:
             command_key = self.script.new_commands.popleft()
             verb, _ = command_key
-            if verb not in ('GET', 'SUBMIT'):
+            if verb not in ('GET', 'SUBMIT', 'STAT'):
                 continue
             self.schedule(command_key)

@@ -140,7 +140,6 @@ class CacheStack():
             self.put_task(child)
         return child_names
 
-
     def put_serial(self, name, serialized):
         """
         Simply pass the underlying object to the underlying cold cache.
@@ -157,6 +156,9 @@ class CacheStack():
     def put_task(self, task):
         """
         Recursively store a task definition
+
+        If the task is a literal, this also stores the included task result as a
+        resource.
         """
         key = task.name + b'.task'
         if key in self.serialcache:
@@ -167,13 +169,18 @@ class CacheStack():
         for child in task.dependencies:
             self.put_task(child)
 
+        if hasattr(task, 'literal'):
+            self.put_native(task.handle, task.literal)
+
     def get_task(self, name):
         """
         Returns a task definition, non-recursively
         """
-        return msgpack.unpackb(
+        task_dict = msgpack.unpackb(
             self.serialcache[name + b'.task']
             )
+        task_dict['name'] = name
+        return task_dict
 
 def add_store_argument(parser, optional=False):
     """

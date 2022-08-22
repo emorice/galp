@@ -30,7 +30,6 @@ def hash_one(payload):
     return hashlib.sha256(payload).digest()
 
 def obj_to_name(canon_rep):
-
     """
     Generate a task name from a canonical representation of task made from basic
     types
@@ -50,6 +49,27 @@ def ensure_task(obj):
     if isinstance(obj, Step):
         return obj()
     return LiteralTask(obj)
+
+def task_deps(task_dict):
+    """
+    Gather the list of dependencies names from a task dictionnary
+    """
+    # Step-style Task, the dependencies are the tasks given as arguments
+    if 'arg_names' in task_dict:
+        return [ TaskName(dep) for dep in [
+            *task_dict['arg_names'],
+            *task_dict['kwarg_names'].values()
+            ]]
+    # SubTask, the dependency is the parent task
+    if 'parent' in task_dict:
+        return [ task_dict['parent'] ]
+
+    # Literal, the dependencies are the tasks found embedded when walking the
+    # object
+    if 'children' in task_dict:
+        return task_dict['children']
+
+    raise NotImplementedError('task_deps', task_dict)
 
 class Step(StepType):
     """Object wrapping a function that can be called as a pipeline step
@@ -231,6 +251,17 @@ class SubTask(TaskType):
         """
         return [self.parent]
 
+    def to_dict(self, name=False):
+        """
+        Returns a dictionnary representation of the task.
+        """
+        task_dict = {
+            'parent': self.parent.name
+            }
+        if name:
+            task_dict['name'] = self.name
+        return task_dict
+
     def __str__(self):
         return '{self.name} [sub] {self.parent}'
 
@@ -306,10 +337,11 @@ class LiteralTask(TaskType):
         Dictionary representation of task
         """
         task_dict = {
-            'data': self.data
+            'children': [ dep.name for dep in self.dependencies ]
             }
         if name:
             task_dict['name'] = self.name
+        return task_dict
 
     def __str__(self):
         return f'{self.name} [literal] {self.literal}'

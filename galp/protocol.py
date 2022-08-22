@@ -332,7 +332,7 @@ class Protocol(LowerProtocol):
         self._validate(len(msg) >= 2, route, 'DONE without a name')
 
         name = TaskName(msg[1])
-        children = msg[2:]
+        children = [ TaskName(child_name) for child_name in msg[2:] ]
 
         return self.on_done(route, name, children)
 

@@ -98,7 +98,6 @@ class WorkerProtocol(BrokerProtocol):
         # Current task from internal routing id
         self.task_from_route = {}
 
-
     def on_ready(self, route, peer):
         incoming, forward = route
         assert not forward
@@ -126,6 +125,10 @@ class WorkerProtocol(BrokerProtocol):
         self.mark_worker_available(worker_route)
 
     def on_not_found(self, route, name):
+        worker_route, _ = route
+        self.mark_worker_available(worker_route)
+
+    def on_found(self, route, task_dict):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
@@ -162,7 +165,6 @@ class WorkerProtocol(BrokerProtocol):
             peer, command
             )
         return None
-
 
     def write_message(self, msg):
         route, msg_body = msg

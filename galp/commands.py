@@ -7,6 +7,8 @@ from collections import deque
 
 import logging
 
+from .graph import task_deps
+
 def status_conj(commands):
     """
     Ternary conjunction of an iterable of status
@@ -149,24 +151,24 @@ class Command:
         self.script.new_commands.append(key)
         return cmd
 
-    def run(self, task):
+    def run(self, name):
         """
         Creates a unique-by-name command representing a task submission and
         fetch
         """
-        return self.do_once('RUN', task.name, task)
+        return self.do_once('RUN', name)
 
-    def rsubmit(self, task):
+    def rsubmit(self, name):
         """
         Creates a unique-by-name command representing a recursive task submission
         """
-        return self.do_once('RSUBMIT', task.name, task)
+        return self.do_once('RSUBMIT', name)
 
-    def submit(self, task):
+    def submit(self, name):
         """
         Creates a unique-by-name command representing a task submission
         """
-        return self.do_once('SUBMIT', task.name, task)
+        return self.do_once('SUBMIT', name)
 
     def rget(self, name):
         """
@@ -180,6 +182,13 @@ class Command:
         resource
         """
         return self.do_once('GET', name)
+
+    def stat(self, name):
+        """
+        Creates a unique-by-name command representing the fetch of a task's
+        metadata
+        """
+        return self.do_once('STAT', name)
 
     def req(self, *commands):
         """
@@ -313,34 +322,47 @@ class Rsubmit(Command):
     """
     A task submission
     """
-    def __init__(self, script, name, task):
+    def __init__(self, script, name):
         self.name = name
-        self.task = task
         super().__init__(script)
 
     def __str__(self):
-        return f'rsubmit {self.task}'
+        return f'rsubmit {self.name}'
 
     def _eval(self):
-
-        # dependencies
-        sta = self.req(*[
-            self.rsubmit(dep)
-            for dep in self.task.dependencies
-            ])
+        # metadata
+        stat = self.stat(self.name)
+        sta = self.req(stat)
         if sta:
             return sta
 
-        # task itself
-        main_sub = self.submit(self.task)
-        sta = self.req(main_sub)
-        if sta:
-            return sta
+        task_done, stat_result = stat.result
+
+        if not task_done:
+            task_dict = stat_result
+
+            # dependencies
+            sta = self.req(*[
+                self.rsubmit(dep)
+                for dep in task_deps(task_dict)
+                ])
+            if sta:
+                return sta
+
+            # task itself
+            main_sub = self.submit(self.name)
+            sta = self.req(main_sub)
+            if sta:
+                return sta
+
+            children = main_sub.result
+        else:
+            children = stat_result
 
         # Recursive children tasks
         return self.req(*[
             self.rsubmit(child_name)
-            for child_name in main_sub.result
+            for child_name in children
             ])
 
 @once
@@ -348,16 +370,15 @@ class Run(Command):
     """
     Combined rsubmit + rget
     """
-    def __init__(self, script, name, task):
+    def __init__(self, script, name):
         self.name = name
-        self.task = task
         super().__init__(script)
 
     def __str__(self):
         return f'run {self.name}'
 
     def _eval(self):
-        rsub = self.rsubmit(self.task)
+        rsub = self.rsubmit(self.name)
 
         sta = self.req(rsub)
         if sta:
@@ -372,13 +393,27 @@ class Submit(Command):
     """
     Get a single resource part
     """
-    def __init__(self, script, name, task):
+    def __init__(self, script, name):
         self.name = name
-        self.task = task
         super().__init__(script)
 
     def __str__(self):
-        return f' submit {self.task}' + self._str_res
+        return f' submit {self.name}' + self._str_res
+
+    def _eval(self):
+        return Status.PENDING
+
+@once
+class Stat(Command):
+    """
+    Get a task's metadata
+    """
+    def __init__(self, script, name):
+        self.name = name
+        super().__init__(script)
+
+    def __str__(self):
+        return f' stat {self.name}' + self._str_res
 
     def _eval(self):
         return Status.PENDING
