@@ -59,9 +59,6 @@ class Client:
             its own socket and destroy it in the end, using the global sync context.
     """
 
-    # For our sanity, below this point, by 'task' here we need task _name_, except for the
-    # 'tasks' public argument itself. The tasks themselves are called 'details'
-
     def __init__(self, endpoint):
         self.protocol = BrokerProtocol(
             'BK', router=False,
@@ -230,16 +227,8 @@ class BrokerProtocol(ReplyProtocol):
         # prevent re-sending a submit after receiving a done
         self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
 
-        # Task object by task name
-        # Used, most importantly, to generate full messages when processing a
-        # submit command (from only the task name)
-        self._details = {}
-
-        # Task definitions collected through e.g. STAT/FOUND
+        # Task definitions, either given to add() or collected through STAT/FOUND
         self._tasks = {}
-
-        # Should be phased out, currently used only to log failure propagation
-        self._dependents = defaultdict(set)
 
         # Memory only native+serial cache
         self.store = CacheStack(
@@ -263,37 +252,34 @@ class BrokerProtocol(ReplyProtocol):
         tasks depending on already added ones, however, is safe. In other words,
         you can add new downstream steps, but not change the upstream part.
 
-        Return the names of all new tasks without uncompleted dependencies.
-
         This justs updates the client's state, so it can never block and is a
         sync function.
         """
-
-        # Also build the inverse dependencies lookup table, i.e the 'children' task.
-        # child/parent can be ambiguous here (what is the direction of the
-        # arcs ?) so we call them "dependents" as opposed to "dependencies"
 
         oset, cset = set(tasks), set()
 
         while oset:
             # Get a task
             task_details = oset.pop()
-            task = task_details.name
-            cset.add(task)
+            name = task_details.name
+            cset.add(name)
 
             # Check if already added by a previous call to `add`
-            if task in self._details:
+            if name in self._tasks:
                 continue
 
-            # Add the links
+            # Add the deps to the open set
             for dep_details in task_details.dependencies:
                 dep = dep_details.name
-                self._dependents[dep].add(task)
                 if dep not in cset:
                     oset.add(dep_details)
 
-            # Save details, and mark as seen
-            self._details[task] = task_details
+            # Store the embedded object if literal task
+            if hasattr(task_details, 'literal'):
+                self.store.put_native(task_details.handle, task_details.literal)
+
+            # Save the dictionary representation of the task object
+            self._tasks[name] = task_details.to_dict(name=True)
 
     def write_next(self, command_key):
         """
@@ -324,7 +310,7 @@ class BrokerProtocol(ReplyProtocol):
     # For simplicity these set the route inside them
 
     def submit_task_by_name(self, task_name):
-        """Loads details, handles literals and subtasks, and manage stats"""
+        """Loads task dicts, handles literals and subtasks, and manage stats"""
 
         # Task dict was added by a stat call
         task_dict = self._tasks.get(task_name)
@@ -332,44 +318,28 @@ class BrokerProtocol(ReplyProtocol):
             if 'step_name' in task_dict:
                 self.submitted_count[task_name] += 1
                 return self.submit(self.route, task_dict)
-            # Literal etc
+            # Literals and SubTasks are always satisfied, and never have
+            # recursive children
             return self.on_done(None, task_name, [])
 
-        if task_name not in self._details:
-            raise ValueError(f"Task {task_name.hex()} is unknown")
-        details = self._details[task_name]
-
-        # Literals are always satisfied, and never have recursive children
-        if hasattr(details, 'literal'):
-            # Make the literal reachable by name
-            # This is needed at submit time to make them available to workers
-            self.store.put_native(details.handle, details.literal)
-            return self.on_done(None, task_name, [])
-
-        # Sub-tasks are automatically satisfied when their parent and unique
-        # dependency is, and never have recursive children
-        if hasattr(details, 'parent'):
-            return self.on_done(None, task_name, [])
-
-        self.submitted_count[task_name] += 1
-        return self.submit_task(self.route, details)
+        raise ValueError(f"Task {task_name.hex()} is unknown")
 
     def get(self, route, name):
         """
         Filter out literal tasks and send GETs for others
         """
-        details = self._details.get(name)
+        task_dict = self._tasks.get(name)
 
-        if details and hasattr(details, 'literal'):
-            # Make the literal reachable by name
-            # This is needed at get time to make them available to ourselves
-            self.store.put_native(details.handle, details.literal)
+        # Literal task, check if we already have it.
+        # Note that in the case of a remote literal task, we could have the list
+        # of children from a STAT/FOUND call, but still miss the actual object
+        # In the case of a sub-task, we could not have the definition either, so
+        # don't rely on it
+        if task_dict and 'children' in task_dict and name in self.store:
             # Mark command as done and pass on children
-            self.script.commands[
-                    'GET', name
-                ].done([
-                    dep.name for dep in details.dependencies
-                    ])
+            self.script.commands['GET', name].done(
+                    task_dict['children']
+                    )
             # Schedule downstream
             self.schedule_new()
             # Supress normal output, removing task from queue
@@ -446,30 +416,12 @@ class BrokerProtocol(ReplyProtocol):
         """
         Mark a task and all its dependents as failed.
         """
-        if name in self._details:
-            msg = f'Failed to execute task {self._details[name]}, check worker logs'
-        else:
-            msg = f'Failed to execute task {self._tasks[name]}, check worker logs'
+        msg = f'Failed to execute task {self._tasks[name]}, check worker logs'
+        logging.error('TASK FAILED: %s', msg)
 
         # Mark fetch command as failed if pending
         self.script.commands['SUBMIT', name].failed(msg)
         assert not self.script.new_commands
-
-        # Legacy propagating logic, only used for logging now
-        tasks = set([name])
-        while tasks:
-            task = tasks.pop()
-            task_obj = self._details[task]
-
-            if task == name:
-                logging.error('TASK FAILED: %s', task_obj)
-            else:
-                logging.error('Propagating failure: %s', task_obj)
-
-            # Log the dependents
-            # Note: this can visit a task several time, not a problem
-            for subtask in self._dependents[task]:
-                tasks.add(subtask)
 
         # This is not a fatal error to the client, by default processing of
         # messages for other ongoing tasks is still permitted.
@@ -483,18 +435,17 @@ class BrokerProtocol(ReplyProtocol):
         # Mark GET command as failed if issued
         command = self.script.commands.get(('GET', name))
         if command:
-            task_obj = self._details[name]
-            logging.error('TASK RESULT FETCH FAILED: %s', task_obj)
+            logging.error('TASK RESULT FETCH FAILED: %s', name)
             command.failed('NOTFOUND')
             assert not self.script.new_commands
 
         # Mark STAT command as done or failed
         command = self.script.commands.get(('STAT', name))
         if command:
-            task = self._details.get(name)
-            if task:
+            task_dict = self._tasks.get(name)
+            if task_dict:
                 # Not found remotely, but still found locally
-                command.done((False, task.to_dict()))
+                command.done((False, task_dict))
                 self.schedule_new()
             else:
                 # Found neither remotely not locally, hard error
