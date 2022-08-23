@@ -238,6 +238,15 @@ def uses_inject_trans(sum_inject_trans):
     return sum_inject_trans
 
 @export
+def injects_none(none_value):
+    """
+    Step expecting an actual None as value to inject
+    """
+    return none_value is None
+
+export.bind(none_value=None)
+
+@export
 def write_file(string, _galp):
     """
     Write to a unique file

@@ -410,6 +410,16 @@ async def test_inject_transitive(client):
         ans = await client.run(task)
     assert ans == 6
 
+async def test_inject_none(client):
+    """
+    Run a task, providing an argument to an injected dependency in the call
+    """
+    task = gts.injects_none
+
+    async with timeout(3):
+        ans = await client.run(task)
+    assert ans == True
+
 async def test_collect_empty(client):
     """
     Handle it gracefully if we collect a constant structure

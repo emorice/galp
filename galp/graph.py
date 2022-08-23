@@ -109,17 +109,19 @@ class Step(StepType):
 
         Inject arguments from the scope if any are found.
         """
+        _injectables = self.scope._injectables
         for name in self.kw_names:
-            injectable = self.scope._injectables.get(name)
-            if injectable:
-                if name in kwargs:
-                    raise ValueError(f'Duplicate argument {name}, '
-                        'given as an argument but also injectable')
-                if isinstance(injectable, WorkerSideInject):
-                    # We raise error on naming conflicts, but fall short of
-                    # actually injecting the object
-                    continue
-                kwargs[name] = injectable
+            if name not in _injectables:
+                continue
+            if name in kwargs:
+                raise ValueError(f'Duplicate argument {name}, '
+                    'given as an argument but also injectable')
+            injectable = _injectables[name]
+            if isinstance(injectable, WorkerSideInject):
+                # We raise error on naming conflicts, but fall short of
+                # actually injecting the object
+                continue
+            kwargs[name] = injectable
 
         return Task(self, args, kwargs, **self.task_options)
 
