@@ -399,7 +399,6 @@ async def test_inject_bind(client):
         ans = await client.run(gts.sum_inject)
     assert ans == 12
 
-@pytest.mark.xfail
 async def test_inject_transitive(client):
     """
     Run a task, providing an argument to an injected dependency in the call

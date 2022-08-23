@@ -109,20 +109,17 @@ class Step(StepType):
 
         Inject arguments from the scope if any are found.
         """
-        _injectables = self.scope._injectables
-        for name in self.kw_names:
-            if name not in _injectables:
-                continue
-            if name in kwargs:
-                raise ValueError(f'Duplicate argument {name}, '
-                    'given as an argument but also injectable')
-            injectable = _injectables[name]
-            if isinstance(injectable, WorkerSideInject):
-                # We raise error on naming conflicts, but fall short of
-                # actually injecting the object
-                continue
-            kwargs[name] = injectable
+        bound_step = self._inject()
+        injected_tasks = self._call_bound(bound_step, kwargs)
+        all_kwargs = self.collect_kwargs(kwargs, injected_tasks)
+        return self.make_task(args, all_kwargs)
 
+    def make_task(self, args, kwargs):
+        """
+        Create actual Task object from the given args.
+
+        Does not perform the injection
+        """
         return Task(self, args, kwargs, **self.task_options)
 
     def make_handle(self, name):
@@ -131,6 +128,147 @@ class Step(StepType):
         """
         items = self.task_options.get('items')
         return Handle(name, items=items)
+
+    def collect_kwargs(self, given, injected):
+        """
+        Collect dependencies, watching for duplicates
+        """
+        _kwargs = {}
+        for arg_name in self.kw_names:
+            if arg_name in given:
+                if arg_name in injected:
+                    raise TypeError(
+                        f"Got multiple values for argument '{arg_name}' of "
+                        f"step '{self}', once as an injection and once "
+                        "as a keyword argument"
+                        )
+                _kwargs[arg_name] = given[arg_name]
+            if arg_name in injected:
+                _kwargs[arg_name] = injected[arg_name]
+        return _kwargs
+
+    def _inject(self):
+        """
+        Inject a step and then its injected dependencies, repetitively, until
+        everything injectable in the step's scope has been found.
+
+        At this point, the step is made into a bound step, that can still accept
+        arguments to the original step, but also keyword arguments that fulfill a
+        missing injection.
+
+        This does not modify any global state and can be called safely again after
+        registering new steps in the scope.
+        """
+        # FIXME: reimplement this check somewhere
+        # if isinstance(injectable, WorkerSideInject):
+
+        # FIXME: some injectables could be tasks already, or literals
+
+        # Make a copy at call point
+        injectables = dict(self.scope._injectables)
+
+        cset = set()
+
+        first_injectables = [
+                name
+                for name in self.kw_names
+                if name in injectables
+                ]
+        oset = set(first_injectables)
+        pending = list(oset)
+
+        post_order = []
+
+        free_parameters = set()
+        wanted_by = {}
+
+        while pending:
+            # Get a name that still needs to be injected, but leave
+            # it on the stack
+            name = pending[-1]
+
+            # If we've seen it already, unstack and record in post-order
+            if name in cset:
+                pending.pop()
+                post_order.append(name)
+                continue
+
+            # Get the bound object
+            injectable = injectables[name]
+
+            # If not itself a Step, injection stops here
+            # We still add it to the post_order since it is a valid dependency
+            if not isinstance(injectable, Step):
+                pending.pop()
+                post_order.append(name)
+                continue
+
+            # Push its unseen arguments on the stack
+            for dep_name in injectable.kw_names:
+                # Already visited, skip
+                if dep_name in cset:
+                    continue
+                # Not yet visited but already pushed, skip
+                if dep_name in oset:
+                    continue
+
+                # New name, keep the reason why it was pushed for better reporting
+                wanted_by[dep_name] = name
+
+                # Not injectable, add to the unbound parameters and skip
+                if dep_name not in injectables:
+                    free_parameters.add(dep_name)
+                    continue
+
+                # Else, push it
+                pending.append(dep_name)
+                oset.add(dep_name)
+
+            # Mark as visited
+            oset.remove(name)
+            cset.add(name)
+
+        # At this point, we've explored the whole injectable graph, and we have a
+        # post-order on the steps
+        return {
+            'post_order': post_order,
+            'free_parameters': free_parameters,
+            'wanted_by': wanted_by,
+            'injectables': injectables,
+            }
+
+    def _call_bound(self, bound_step, kwargs):
+        """
+        Create a Task graph from a bound (injected) step and provided arguments
+        """
+        wanted_by = bound_step['wanted_by']
+        injectables = bound_step['injectables']
+
+        # Catch missing free parameters early
+        for free in bound_step['free_parameters']:
+            if free not in kwargs:
+                chain = [free]
+                while chain[-1] in wanted_by:
+                    chain.append(wanted_by[chain[-1]])
+                raise TypeError(
+                    "Missing a required keyword-only argument: '"
+                    + "',\n\trequired by '".join(chain)
+                    + f"',\n\trequired by '{self.key.decode('ascii')}'"
+                    )
+
+        tasks = {}
+        # Create tasks for all injected steps
+        for name in bound_step['post_order']:
+            injectable = injectables[name]
+            if isinstance(injectable, Step):
+                _kwargs = injectable.collect_kwargs(kwargs, tasks)
+                # Create actual task
+                tasks[name] = injectable.make_task([], _kwargs)
+            else:
+                # This can be a Task or a literal
+                # FIXME: we can't inject through a literal for now
+                tasks[name] = injectable
+        return tasks
 
 class Task(TaskType):
     """
