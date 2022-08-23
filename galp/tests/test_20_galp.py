@@ -7,7 +7,7 @@ import asyncio
 import pstats
 
 import numpy as np
-#import pytest
+import pytest
 from async_timeout import timeout
 
 import galp.steps
@@ -398,6 +398,17 @@ async def test_inject_bind(client):
     async with timeout(3):
         ans = await client.run(gts.sum_inject)
     assert ans == 12
+
+@pytest.mark.xfail
+async def test_inject_transitive(client):
+    """
+    Run a task, providing an argument to an injected dependency in the call
+    """
+    task = gts.uses_inject_trans(injected_list_trans=[1, 2, 3])
+
+    async with timeout(3):
+        ans = await client.run(task)
+    assert ans == 6
 
 async def test_collect_empty(client):
     """

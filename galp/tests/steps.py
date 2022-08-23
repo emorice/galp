@@ -224,6 +224,20 @@ def sum_inject(injected_list):
 export.bind(injected_list=[identity(5), identity(7)])
 
 @export
+def sum_inject_trans(injected_list_trans):
+    """
+    Sums over an injected list, again
+    """
+    return sum(injected_list_trans)
+
+@export
+def uses_inject_trans(sum_inject_trans):
+    """
+    Downstream step to sum_inject_trans
+    """
+    return sum_inject_trans
+
+@export
 def write_file(string, _galp):
     """
     Write to a unique file
