@@ -8,6 +8,7 @@ from .local_system_utils import temp_system, TempSystem
 from .client import Client, TaskFailedError
 from .graph import StepSet
 from .serializer import DeserializeError
+from . import steps
 
 def run(*tasks, **options):
     """

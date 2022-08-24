@@ -11,6 +11,16 @@ from galp.graph import StepSet
 
 export = StepSet()
 
+@export
+def getitem(obj, index):
+    """
+    Task representing obj[index]
+    """
+    return obj[index]
+
+# The steps below are mostly for testing, they should be moved somewhere else
+# ===
+
 @export.step
 def galp_hello():
     logging.info('Task "Hello" running')

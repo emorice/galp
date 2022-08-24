@@ -9,6 +9,8 @@ from async_timeout import timeout
 import galp
 import galp.tests.steps as gts
 
+# pylint: disable=redefined-outer-name
+
 @pytest.fixture
 def run(tmpdir):
     """
@@ -17,21 +19,24 @@ def run(tmpdir):
     return partial(galp.run, store=tmpdir, steps=['galp.tests.steps'],
             log_level='info')
 
-async def assert_task_equal(task, result, client):
+@pytest.fixture
+def assert_task_equal(client):
     """
     Wraps equality assertion against client return in timeout guard
     """
-    async with timeout(3):
-        assert result == await client.run(task)
+    async def _assert_task_equal(task, result):
+        async with timeout(3):
+            assert result == await client.run(task)
+    return _assert_task_equal
 
-async def test_meta_step(client):
+async def test_meta_step(assert_task_equal):
     """
     Task returning a structure of other tasks to run recursively
     """
     await assert_task_equal(
             gts.meta((1, 2, 3)),
-            (1, 2, 3),
-            client)
+            (1, 2, 3)
+            )
 
 def test_resume_meta(run):
     """
@@ -44,3 +49,9 @@ def test_resume_meta(run):
 
     with pytest.raises(galp.TaskFailedError):
         run(meta_fail)
+
+async def test_index_anything(assert_task_equal):
+    """
+    Subscript a task that was declared as itemizable
+    """
+    await assert_task_equal(gts.arange(3)[2], 2)

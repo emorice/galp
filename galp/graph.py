@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import msgpack
 
+import galp
 from galp.serializer import Serializer, TaskType, StepType
 
 class TaskName(bytes):
@@ -359,7 +360,11 @@ class Task(TaskType):
         return (SubTask(self, sub_handle) for sub_handle in self.handle)
 
     def __getitem__(self, index):
-        return SubTask(self, self.handle[index])
+        if self.handle.has_items:
+            # Soft getitem, the referenced task is a scatter type
+            return SubTask(self, self.handle[index])
+        # Hard getitem, we actually insert an extra task
+        return galp.steps.getitem(self, index)
 
     def __str__(self):
         return f'{self.name} {str(self.step.key, "ascii")}'
