@@ -47,7 +47,7 @@ def ensure_task(obj):
     """
     if isinstance(obj, TaskType):
         return obj
-    if isinstance(obj, Step):
+    if isinstance(obj, StepType):
         return obj()
     return LiteralTask(obj)
 
@@ -208,7 +208,7 @@ class Step(StepType):
             # If not itself a Step, injection stops here
             # We still add it to the post_order we'll need to inject it,
             # unless it's worker-side
-            if not isinstance(injectable, Step):
+            if not isinstance(injectable, StepType):
                 pending.pop()
                 if not isinstance(injectable, WorkerSideInject):
                     post_order.append(name)
@@ -268,7 +268,7 @@ class Step(StepType):
         # Create tasks for all injected steps
         for name in bound_step['post_order']:
             injectable = injectables[name]
-            if isinstance(injectable, Step):
+            if isinstance(injectable, StepType):
                 _kwargs = injectable.collect_kwargs(kwargs, tasks)
                 # Create actual task
                 tasks[name] = injectable.make_task([], _kwargs)
@@ -277,6 +277,46 @@ class Step(StepType):
                 # FIXME: we can't inject through a literal for now
                 tasks[name] = injectable
         return tasks
+
+    def __getitem__(self, index):
+        """
+        Return a new step representing the eventual result of injecting then
+        subscripting this step
+        """
+        return SubStep(self, index)
+
+class SubStep(StepType):
+    """
+    Step representing the indexation of the result of an other step
+    """
+    def __init__(self, parent, index):
+        self.parent = parent
+        self.index = index
+
+    def __call__(self, *args, **kwargs):
+        """
+        Inject and call the parent step, then index the resulting task
+        """
+        return self.parent(*args, **kwargs)[self.index]
+
+    @property
+    def kw_names(self):
+        """
+        Injectable arguments, inherited from the step being indexed
+        """
+        return self.parent.kw_names
+
+    def collect_kwargs(self, given, injected):
+        """
+        See Step
+        """
+        return self.parent.collect_kwargs(given, injected)
+
+    def make_task(self, args, kwargs):
+        """
+        Create parent task and subscript it.
+        """
+        return self.parent.make_task(args, kwargs)[self.index]
 
 class Task(TaskType):
     """

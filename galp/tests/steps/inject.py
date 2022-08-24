@@ -119,3 +119,20 @@ def co_cyclic(cyclic):
     Cyclic injection, not allowed
     """
     del cyclic
+
+
+@export
+def has_free_arg(free_arg):
+    """
+    A step with an argument to fill
+    """
+    return free_arg
+
+@export
+def uses_indexed(indexed):
+    """
+    To inject with an indexed step
+    """
+    return indexed
+
+export.bind(indexed=has_free_arg[3])
