@@ -12,7 +12,14 @@ import pyarrow as pa
 import galp
 from galp.graph import StepSet
 
+from . import utils, inject
+from .utils import identity
+
 export = StepSet()
+
+# Submodules exports
+export += utils.export
+export += inject.export
 
 # Alternative namespaces to register the same function several times
 _export2 = StepSet()
@@ -191,13 +198,6 @@ def alloc_mem(N, dummy): # pylint: disable=invalid-name
     return some_array.sum()
 
 @export
-def identity(arg):
-    """
-    Returns its arg unchanged
-    """
-    return arg
-
-@export
 def sum_dict(some_dict):
     """
     Sums the values in a dict, ignoring keys, by iteration
@@ -206,45 +206,6 @@ def sum_dict(some_dict):
     for key in some_dict:
         tot += some_dict[key]
     return tot
-
-@export
-def uses_inject(hello): # pylint: disable=redefined-outer-name
-    """
-    Has an injectable argument
-    """
-    return 'Injected ' + hello
-
-@export
-def sum_inject(injected_list):
-    """
-    Sums over an injected list
-    """
-    return sum(injected_list)
-
-export.bind(injected_list=[identity(5), identity(7)])
-
-@export
-def sum_inject_trans(injected_list_trans):
-    """
-    Sums over an injected list, again
-    """
-    return sum(injected_list_trans)
-
-@export
-def uses_inject_trans(sum_inject_trans):
-    """
-    Downstream step to sum_inject_trans
-    """
-    return sum_inject_trans
-
-@export
-def injects_none(none_value):
-    """
-    Step expecting an actual None as value to inject
-    """
-    return none_value is None
-
-export.bind(none_value=None)
 
 @export
 def write_file(string, _galp):
