@@ -58,6 +58,8 @@ async def test_path(client):
     upstream = gts.write_file('42')
     downstream = gts.read_file(upstream)
 
+    assert b'_galp' not in upstream.to_dict()['kwarg_names']
+
     async with timeout(3):
         res = await client.run(downstream)
         assert res == '42'

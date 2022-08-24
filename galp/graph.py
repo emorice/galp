@@ -159,11 +159,6 @@ class Step(StepType):
         This does not modify any global state and can be called safely again after
         registering new steps in the scope.
         """
-        # FIXME: reimplement this check somewhere
-        # if isinstance(injectable, WorkerSideInject):
-
-        # FIXME: some injectables could be tasks already, or literals
-
         # Make a copy at call point
         injectables = dict(self.scope._injectables)
 
@@ -197,10 +192,12 @@ class Step(StepType):
             injectable = injectables[name]
 
             # If not itself a Step, injection stops here
-            # We still add it to the post_order since it is a valid dependency
+            # We still add it to the post_order we'll need to inject it,
+            # unless it's worker-side
             if not isinstance(injectable, Step):
                 pending.pop()
-                post_order.append(name)
+                if not isinstance(injectable, WorkerSideInject):
+                    post_order.append(name)
                 continue
 
             # Push its unseen arguments on the stack
