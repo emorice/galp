@@ -55,3 +55,19 @@ def injects_none(none_value):
     return none_value is None
 
 export.bind(none_value=None)
+
+@export
+def has_default(value=42):
+    """
+    Step with a default argument value
+
+    Injection should detect that nothing is missing
+    """
+    return value
+
+@export
+def uses_has_default(has_default):
+    """
+    Step using a step with a default through injection
+    """
+    return has_default

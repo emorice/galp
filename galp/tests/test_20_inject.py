@@ -41,3 +41,10 @@ async def test_inject_none(client):
     async with timeout(3):
         ans = await client.run(task)
     assert ans is True
+
+async def test_inject_default(client):
+    """
+    Run a task with a default argument
+    """
+    async with timeout(3):
+        assert await client.run(gts.uses_has_default) == 42

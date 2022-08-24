@@ -90,7 +90,7 @@ class Step(StepType):
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
         self.task_options = task_options
         self.scope = scope
-        self.kw_names = []
+        self.kw_names = {}
         try:
             sig = inspect.signature(self.function)
             for name, param in sig.parameters.items():
@@ -98,7 +98,7 @@ class Step(StepType):
                     param.POSITIONAL_OR_KEYWORD,
                     param.KEYWORD_ONLY):
                     continue
-                self.kw_names.append(name)
+                self.kw_names[name] = param.default != param.empty
         except ValueError:
             pass
 
@@ -204,7 +204,7 @@ class Step(StepType):
                 continue
 
             # Push its unseen arguments on the stack
-            for dep_name in injectable.kw_names:
+            for dep_name, has_default in injectable.kw_names.items():
                 # Already visited, skip
                 if dep_name in cset:
                     continue
@@ -217,7 +217,8 @@ class Step(StepType):
 
                 # Not injectable, add to the unbound parameters and skip
                 if dep_name not in injectables:
-                    free_parameters.add(dep_name)
+                    if not has_default:
+                        free_parameters.add(dep_name)
                     continue
 
                 # Else, push it
@@ -251,7 +252,7 @@ class Step(StepType):
                 while chain[-1] in wanted_by:
                     chain.append(wanted_by[chain[-1]])
                 raise TypeError(
-                    "Missing a required keyword-only argument: '"
+                    "No value given for argument: '"
                     + "',\n\trequired by '".join(chain)
                     + f"',\n\trequired by '{self.key.decode('ascii')}'"
                     )
