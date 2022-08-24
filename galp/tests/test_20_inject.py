@@ -2,6 +2,7 @@
 Tests related to the dependency injection API
 """
 
+import pytest
 from async_timeout import timeout
 
 import galp.tests.steps.inject as gts
@@ -48,3 +49,21 @@ async def test_inject_default(client):
     """
     async with timeout(3):
         assert await client.run(gts.uses_has_default) == 42
+
+async def test_inject_nontree(client):
+    """
+    Run a task with a non-trivial DAG
+    """
+    async with timeout(3):
+        assert await client.run(gts.uses_a_and_ua) is None
+        assert await client.run(gts.uses_ua_and_a) is None
+
+async def test_inject_cycle(client):
+    """
+    Check that we detect cyclic dependencies
+    """
+    async with timeout(3):
+        with pytest.raises(TypeError):
+            await client.run(gts.recursive)
+        with pytest.raises(TypeError):
+            await client.run(gts.cyclic)

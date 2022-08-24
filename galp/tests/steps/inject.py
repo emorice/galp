@@ -71,3 +71,51 @@ def uses_has_default(has_default):
     Step using a step with a default through injection
     """
     return has_default
+
+@export
+def step_a():
+    """
+    Nothing
+    """
+
+@export
+def uses_a(step_a):
+    """
+    Nothing
+    """
+    _ = step_a
+
+@export
+def uses_a_and_ua(step_a, uses_a):
+    """
+    Nothing
+    """
+    _ = step_a, uses_a
+
+@export
+def uses_ua_and_a(uses_a, step_a):
+    """
+    Nothing
+    """
+    _ = step_a, uses_a
+
+@export
+def recursive(recursive):
+    """
+    Recursive injection, not allowed
+    """
+    del recursive
+
+@export
+def cyclic(co_cyclic):
+    """
+    Cyclic injection, not allowed
+    """
+    del co_cyclic
+
+@export
+def co_cyclic(cyclic):
+    """
+    Cyclic injection, not allowed
+    """
+    del cyclic

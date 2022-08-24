@@ -162,15 +162,17 @@ class Step(StepType):
         # Make a copy at call point
         injectables = dict(self.scope._injectables)
 
+        # Closed set: steps already recursively visited and added to post_order
         cset = set()
+        # Open set: steps visited but with children yet to be visited
+        oset = set()
 
         first_injectables = [
                 name
                 for name in self.kw_names
                 if name in injectables
                 ]
-        oset = set(first_injectables)
-        pending = list(oset)
+        pending = list(first_injectables)
 
         post_order = []
 
@@ -182,11 +184,22 @@ class Step(StepType):
             # it on the stack
             name = pending[-1]
 
-            # If we've seen it already, unstack and record in post-order
+            # If closed already, nothing left to do
             if name in cset:
                 pending.pop()
-                post_order.append(name)
                 continue
+
+            # If open, it's the second visit, we close the node
+            if name in oset:
+                oset.remove(name)
+                cset.add(name)
+                post_order.append(name)
+                pending.pop()
+                continue
+
+            # Else, we visit it
+            # Mark as visited but still open
+            oset.add(name)
 
             # Get the bound object
             injectable = injectables[name]
@@ -202,12 +215,13 @@ class Step(StepType):
 
             # Push its unseen arguments on the stack
             for dep_name, has_default in injectable.kw_names.items():
-                # Already visited, skip
+                # Already fully processed, skip
                 if dep_name in cset:
                     continue
-                # Not yet visited but already pushed, skip
+
+                # If in open set, we have a cycle
                 if dep_name in oset:
-                    continue
+                    raise TypeError(f'Cyclic dependency of {name} on {dep_name}')
 
                 # New name, keep the reason why it was pushed for better reporting
                 wanted_by[dep_name] = name
@@ -220,11 +234,6 @@ class Step(StepType):
 
                 # Else, push it
                 pending.append(dep_name)
-                oset.add(dep_name)
-
-            # Mark as visited
-            oset.remove(name)
-            cset.add(name)
 
         # At this point, we've explored the whole injectable graph, and we have a
         # post-order on the steps
