@@ -4,3 +4,5 @@ async-timeout
 psutil
 numpy
 pyarrow
+plotly
+beautifulsoup4

@@ -12,7 +12,7 @@ import pyarrow as pa
 import galp
 from galp.graph import StepSet
 
-from . import utils, inject
+from . import utils, inject, dashboard
 from .utils import identity
 
 export = StepSet()
@@ -20,6 +20,7 @@ export = StepSet()
 # Submodules exports
 export += utils.export
 export += inject.export
+export += dashboard.export
 
 # Alternative namespaces to register the same function several times
 _export2 = StepSet()

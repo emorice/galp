@@ -86,12 +86,13 @@ class Step(StepType):
             handle pointing to the individual items.
     """
 
-    def __init__(self, scope, function, **task_options):
+    def __init__(self, scope, function, is_view=False, **task_options):
         self.function = function
         self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
         self.task_options = task_options
         self.scope = scope
         self.kw_names = {}
+        self.is_view = is_view
         try:
             sig = inspect.signature(self.function)
             for name, param in sig.parameters.items():
@@ -602,6 +603,13 @@ class StepSet:
         if decorated:
             return _step_maker(*decorated)
         return _step_maker
+
+    def view(self, *decorated, **options):
+        """
+        Shortcut to register a view step
+        """
+        options['is_view'] = True
+        return self.step(*decorated, **options)
 
     def __call__(self, *decorated, **options):
         """

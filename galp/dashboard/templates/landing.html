@@ -1,12 +1,10 @@
-<!DOCTYPE html>
-	<html>
-		<body>
-			<ul>
-			{% for name in steps %}
-			<li><a href="{{ url_for('run', step_name=name) }}">
-				{{ name.decode('ascii') }}
-				</a></li>
-			{% endfor %}
-			<ul>
-		</body>
-	</html>
+{% extends "base.html" %}
+{% block main %}
+<ul>
+{% for name in steps %}
+<li><a href="{{ url_for('run', step_name=name) }}">
+	{{ name.decode('ascii') }}
+	</a></li>
+{% endfor %}
+<ul>
+{% endblock %}
