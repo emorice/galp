@@ -3,6 +3,6 @@
 {% if safe_obj %}
 	{{ obj | safe }}
 	{% else %}
-	{{ obj }}
+	<pre>{{ obj }}</pre>
 	{% endif %}
 {% endblock %}
