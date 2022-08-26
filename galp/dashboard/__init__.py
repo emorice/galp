@@ -71,7 +71,18 @@ def create_app(config):
 
 
         if step.is_view:
-            result = step.function()
+            # inject deps and check for missing args
+            task = step().to_dict()
+            # collect args from store. Since we don't pass any argument to the
+            # step, all arguments are injected, and therefore keyword arguments
+            assert not task['arg_names']
+            kwargs = {
+                keyword.decode('ascii'): store.get_native(name)
+                for keyword, name in task['kwarg_names'].items()
+                }
+            # Run the step
+            result = step.function(**kwargs)
+            # Render the result
             is_safe, rep = render_object(result)
             return render_template('step.html', safe_obj=is_safe, obj=rep)
 

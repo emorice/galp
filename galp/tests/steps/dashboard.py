@@ -8,6 +8,8 @@ from galp import StepSet
 
 export = StepSet()
 
+# pylint: disable=redefined-outer-name
+
 @export.view
 def plotly_figure():
     """
@@ -19,3 +21,17 @@ def plotly_figure():
                 y=[9, 7, 8, 6]
                 )
             )
+
+@export
+def fortytwo():
+    """
+    Constant step
+    """
+    return 42
+
+@export.view
+def view_with_inject(fortytwo):
+    """
+    View requiring the output of an other step
+    """
+    return {'data': fortytwo}
