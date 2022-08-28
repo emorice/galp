@@ -25,6 +25,9 @@ def render_object(obj):
         except ModuleNotFoundError:
             logging.warning('Found a plotly object but cannot load plotly')
 
+    if modname.startswith('pandas'):
+        if hasattr(obj, 'to_string'):
+            return False, obj.to_string()
     # Anything pretty-printable as json
     try:
         return False, json.dumps(obj, indent=4)
