@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "wdl-galp"
+version = "0.1.0"
+description = "Run wdl pipelines in galp"
+authors = ["Étienne Morice <etienne.morice@mpibpc.mpg.de>"]
+readme = "README.md"
+packages = [{include = "wdl_galp"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+miniwdl = "^1.7.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
