@@ -1,0 +1,3 @@
+[submodule "wdl-galp"]
+	path = wdl-galp
+	url = git@github.com:emorice/wdl-galp.git
