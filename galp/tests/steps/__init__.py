@@ -146,6 +146,13 @@ def sum_variadic(*args):
     return sum(args)
 
 @export
+def sum_variadic_dict(**kwargs):
+    """
+    Step that takes variadic keyword args
+    """
+    return sum(kwargs.values())
+
+@export
 def busy_loop():
     """
     Infinite pure python loop

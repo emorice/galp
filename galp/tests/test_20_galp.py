@@ -320,6 +320,9 @@ async def test_parallel_tasks(client_pool):
     assert set(ans) == set(range(10))
 
 async def test_variadic(client):
+    """
+    Run a task accepting variadic positional arguments
+    """
     args = [1, 2, 3]
 
     task = gts.sum_variadic(*args)
@@ -327,6 +330,18 @@ async def test_variadic(client):
     ans, = await asyncio.wait_for(client.collect(task), 3)
 
     assert ans == sum(args)
+
+async def test_variadic_dict(client):
+    """
+    Like variadic for keyword arguments
+    """
+    kwargs = {'a': 1, 'b': 2, 'c': 3}
+
+    task = gts.sum_variadic_dict(**kwargs)
+
+    ans, = await asyncio.wait_for(client.collect(task), 3)
+
+    assert ans == sum(kwargs.values())
 
 async def test_complex_inline(client):
     """

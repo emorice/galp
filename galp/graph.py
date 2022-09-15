@@ -92,10 +92,14 @@ class Step(StepType):
         self.task_options = task_options
         self.scope = scope
         self.kw_names = {}
+        self.has_var_kw = False
         self.is_view = is_view
         try:
             sig = inspect.signature(self.function)
             for name, param in sig.parameters.items():
+                if param.kind == param.VAR_KEYWORD:
+                    self.has_var_kw = True
+                    continue
                 if param.kind not in (
                     param.POSITIONAL_OR_KEYWORD,
                     param.KEYWORD_ONLY):
@@ -134,6 +138,9 @@ class Step(StepType):
     def collect_kwargs(self, given, injected):
         """
         Collect dependencies, watching for duplicates
+
+        If the step has variadic keyword arguments, all the given kwargs are
+        passed, but only the injectable args explictly declared.
         """
         _kwargs = {}
         for arg_name in self.kw_names:
@@ -147,6 +154,9 @@ class Step(StepType):
                 _kwargs[arg_name] = given[arg_name]
             if arg_name in injected:
                 _kwargs[arg_name] = injected[arg_name]
+        if self.has_var_kw:
+            _kwargs.update(given)
+
         return _kwargs
 
     def _inject(self):
