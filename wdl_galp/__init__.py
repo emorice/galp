@@ -30,7 +30,7 @@ def run(uri, _galp, **kwargs):
 
     workspace = _galp.new_path()
 
-    os.mkdir(workspace)
+    os.makedirs(workspace, exist_ok=True)
 
     thread = threading.Thread(target=_run_thread_inner, args=(uri, result,
         workspace, kwargs))
