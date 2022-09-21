@@ -9,6 +9,7 @@ import logging
 
 from . import handlers
 
+# pylint: disable=wrong-import-order
 import WDL
 import WDL.runtime
 
@@ -37,9 +38,11 @@ def run(uri, _galp, **kwargs):
     thread.start()
     thread.join()
 
-    return result
+    if result['success']:
+        return result['out']
+    raise galp.TaskFailedError('wdl run thread encountered an error')
 
-def _run_thread_inner(uri, out, workspace, kwargs):
+def _run_thread_inner(uri, result, workspace, kwargs):
     """
     Does the actual WDL calls, meant to be started in its own thread to avoid
     conflicting with the parent's asyncio event loop.
@@ -75,8 +78,10 @@ def _run_thread_inner(uri, out, workspace, kwargs):
                 cfg, target, inputs, run_dir=os.path.join(workspace, '.')
                 )
 
-        out.update(WDL.values_to_json(wdl_outputs, target.name))
+        result['success'] = True
+        result['out'] = WDL.values_to_json(wdl_outputs, target.name)
 
     except:
+        result['success'] = False
         logging.exception('in thread:')
         raise

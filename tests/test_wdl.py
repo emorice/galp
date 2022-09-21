@@ -47,3 +47,14 @@ def test_hello(run, local_file):
             "world"
             )
         }
+
+def test_missing_arg(run, local_file):
+    """
+    Run the hello world wdl with a missing arg, resulting in a fail.
+
+    """
+    wdl_uri = local_file('hello.wdl')
+    infile = local_file('hello.txt')
+
+    with pytest.raises(galp.TaskFailedError):
+        run(wdl_galp.run(wdl_uri, infile=infile)) # No "pattern"
