@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{include = "wdl_galp"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.8"
 miniwdl = "^1.7.0"
 
 
