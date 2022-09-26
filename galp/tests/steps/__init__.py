@@ -12,7 +12,7 @@ import pyarrow as pa
 import galp
 from galp.graph import StepSet
 
-from . import utils, inject, dashboard
+from . import utils, inject, dashboard, files
 from .utils import identity
 
 export = StepSet()
@@ -21,6 +21,7 @@ export = StepSet()
 export += utils.export
 export += inject.export
 export += dashboard.export
+export += files.export
 
 # Alternative namespaces to register the same function several times
 _export2 = StepSet()
@@ -214,28 +215,6 @@ def sum_dict(some_dict):
     for key in some_dict:
         tot += some_dict[key]
     return tot
-
-@export
-def write_file(string, _galp):
-    """
-    Write to a unique file
-    """
-    path = _galp.new_path()
-    with open(path, 'w', encoding='utf8') as stream:
-        stream.write(string)
-
-    with open(_galp.new_path(), 'w', encoding='utf8') as stream:
-        stream.write('clobber !')
-
-    return path
-
-@export
-def read_file(path):
-    """
-    Return content of an utf8 text file
-    """
-    with open(path, encoding='utf8') as stream:
-        return stream.read()
 
 # Trivial empty target for CLI galp.client
 empty = []

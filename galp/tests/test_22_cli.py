@@ -55,11 +55,25 @@ async def test_path(client):
     Store a resource to a provided path
     """
 
-    upstream = gts.write_file('42')
-    downstream = gts.read_file(upstream)
+    upstream = gts.files.write_file('42')
+    middle = gts.files.copy_file(upstream)
+    downstream = gts.files.read_file(middle)
 
     assert b'_galp' not in upstream.to_dict()['kwarg_names']
 
     async with timeout(3):
         res = await client.run(downstream)
         assert res == '42'
+
+async def test_inject_path(client):
+    """
+    Simultaneous use of injection and path providers
+    """
+
+    downstream = gts.files.read_file(
+            gts.files.injected_copier
+            )
+
+    async with timeout(3):
+        res = await client.run(downstream)
+        assert res == 'wizard'

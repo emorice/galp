@@ -217,12 +217,14 @@ class Step(StepType):
             injectable = injectables[name]
 
             # If not itself a Step, injection stops here
-            # We still add it to the post_order we'll need to inject it,
+            # We still add it to the post_order as we'll need to inject it,
             # unless it's worker-side
             if not isinstance(injectable, StepType):
-                pending.pop()
+                oset.remove(name)
+                cset.add(name)
                 if not isinstance(injectable, WorkerSideInject):
                     post_order.append(name)
+                pending.pop()
                 continue
 
             # Push its unseen arguments on the stack
