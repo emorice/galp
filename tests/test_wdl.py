@@ -58,3 +58,34 @@ def test_missing_arg(run, local_file):
 
     with pytest.raises(galp.TaskFailedError):
         run(wdl_galp.run(wdl_uri, infile=infile)) # No "pattern"
+
+def test_two_parts(run, local_file):
+    """
+    Run two workflows head to tail
+    """
+
+    up_wdl = local_file('upstream.wdl')
+    down_wdl = local_file('downstream.wdl')
+
+    up_task = wdl_galp.run(up_wdl)
+    down_task = wdl_galp.run(down_wdl, **{
+        'downstream.in_file': up_task['wf.upstream.out_file']
+        })
+
+    assert run(down_task) ==  {'wf.downstream.n_lines': 3}
+
+def test_rel_path(run, local_file):
+    """
+    Run a wdl workflow with a relative input
+    """
+    wdl_uri = local_file('hello.wdl')
+    infile = os.path.relpath(local_file('hello.txt'))
+
+    task = wdl_galp.run(wdl_uri, infile=infile, pattern="^[a-z]+$")
+
+    assert run(task) == {
+          "wf.matches": (
+            "hello",
+            "world"
+            )
+        }

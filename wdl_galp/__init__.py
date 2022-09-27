@@ -60,6 +60,14 @@ def _run_thread_inner(uri, result, workspace, kwargs):
 
         for key, py_value in kwargs.items():
             decl = target.available_inputs.resolve(key)
+
+            # Make paths absolute before handing them to wdl
+            # Necessary to play well with docker binds
+            # This is a shallow fix, it will miss items in container types but
+            # still handle most common use cases.
+            if isinstance(decl.type, WDL.Type.File):
+                py_value = os.path.abspath(py_value)
+
             wdl_value = WDL.Value.from_json(
                 decl.type,
                 py_value)
