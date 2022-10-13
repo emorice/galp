@@ -3,6 +3,7 @@ Lists of internal commands
 """
 
 import sys
+import time
 from enum import Enum
 from collections import deque
 
@@ -250,24 +251,27 @@ class Script(Command):
         if not self.verbose:
             return
 
+        def print_status(stat, name):
+            print(f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] {stat:4} {name}', file=sys.stderr)
+
         if isinstance(command, Stat):
             if new_status == Status.DONE:
                 task_done, task_dict = command.result
                 if not task_done and 'step_name' in task_dict:
                     self._task_dicts[command.name] = task_dict
-                    print('PLAN', task_dict['step_name'].decode('ascii'),
-                            file=sys.stderr)
+                    print_status('PLAN',
+                            task_dict['step_name'].decode('ascii'))
 
         if isinstance(command, Submit):
             if command.name in self._task_dicts:
                 step_name_s = self._task_dicts[command.name]['step_name'].decode('ascii')
 
                 if init:
-                    print('SUB ', step_name_s, file=sys.stderr)
+                    print_status('SUB', step_name_s)
                 elif new_status == Status.DONE:
-                    print('DONE', step_name_s, file=sys.stderr)
+                    print_status('DONE', step_name_s)
                 if new_status == Status.FAILED:
-                    print('FAIL', step_name_s, file=sys.stderr)
+                    print_status('FAIL', step_name_s)
 
     def update(self, *_, **_k):
         pass
