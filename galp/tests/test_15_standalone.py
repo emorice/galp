@@ -49,3 +49,13 @@ def test_oneshot(tmpdir):
         gts.identity(1234),
         store=tmpdir, steps=['galp.tests.steps'], timeout=3
         ) == 1234
+
+def test_oneshot_dryrun(tmpdir):
+    """
+    Dry-run a task through an all-in-one wrapper.
+    """
+    assert galp.run(
+        gts.identity(1234),
+        store=tmpdir, steps=['galp.tests.steps'], timeout=3,
+        dry_run=True
+        ) is None

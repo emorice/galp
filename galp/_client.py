@@ -121,7 +121,8 @@ class Client:
         self.command_queue.enqueue(command_key)
         self.new_command.set()
 
-    async def gather(self, *tasks, return_exceptions=False, timeout=None):
+    async def gather(self, *tasks, return_exceptions=False, timeout=None,
+            dry_run=False):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
         and returns the actual results.
@@ -144,12 +145,16 @@ class Client:
 
         try:
             err = await asyncio.wait_for(
-                self.run_collection(tasks, return_exceptions=return_exceptions),
+                self.run_collection(tasks, return_exceptions=return_exceptions,
+                    dry_run=dry_run),
                 timeout=timeout)
             if err and not return_exceptions:
                 raise TaskFailedError(err)
         except ProtocolEndException:
             pass
+
+        if dry_run:
+            return None
 
         results = []
         failed = None
@@ -170,17 +175,19 @@ class Client:
     # Old name of gather
     collect = gather
 
-    async def run(self, *tasks, return_exceptions=False, timeout=None):
+    async def run(self, *tasks, return_exceptions=False, timeout=None,
+            dry_run=False):
         """
         Shorthand for gather with a more variadic style
         """
-        results = await self.gather(*tasks, return_exceptions=return_exceptions, timeout=timeout)
+        results = await self.gather(*tasks, return_exceptions=return_exceptions,
+                timeout=timeout, dry_run=dry_run)
 
-        if len(results) == 1:
+        if results and len(results) == 1:
             return results[0]
         return results
 
-    async def run_collection(self, tasks, return_exceptions):
+    async def run_collection(self, tasks, return_exceptions, dry_run):
         """
         Processes messages until the collection target is achieved
         """
@@ -191,10 +198,14 @@ class Client:
 
 
         script = self.protocol.script
+
+        main_command = script.dry_run if dry_run else script.run
+
         collect = script.collect(
-                commands=[script.run(t.name) for t in tasks],
+                commands=[main_command(t.name) for t in tasks],
                 allow_failures=return_exceptions
                 )
+
         script.callback(
             collect, _end
             )

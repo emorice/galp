@@ -21,6 +21,8 @@ parser.add_argument('-e', '--endpoint', help='zmq endpoint of the broker. '
         'If not given, a local galp system is started')
 parser.add_argument('-q', '--quiet', action='store_true',
         help='do nor print the result on the standard output')
+parser.add_argument('-n', '--dry-run', action='store_true',
+        help='do not actually run the tasks, just print what would be done')
 galp.cache.add_store_argument(parser, optional=True)
 galp.cli.add_parser_arguments(parser)
 
@@ -46,11 +48,11 @@ async def run(target):
                     for k in ['config', 'log_level', 'store']
                     })
                 )
-        return await client.run(target)
+        return await client.run(target, dry_run=args.dry_run)
 
 result = asyncio.run(
         run(_target)
         )
 
-if not args.quiet:
+if not (args.quiet or args.dry_run):
     print(result)

@@ -2,6 +2,7 @@
 Lists of internal commands
 """
 
+import sys
 from enum import Enum
 from collections import deque
 
@@ -74,6 +75,9 @@ class Command:
         """
         old_status = self.status
         self.status = new_status
+        if self.script:
+            self.script.notify_change(self, old_status, new_status, init)
+
         logging.info('%s %s',
                 ('NEW' if init else new_status.name).ljust(7),
                 self
@@ -164,6 +168,12 @@ class Command:
         """
         return self.do_once('RSUBMIT', name)
 
+    def dry_run(self, name):
+        """
+        Creates a unique-by-name command representing a recursive task dry-run
+        """
+        return self.do_once('DRYRUN', name)
+
     def submit(self, name):
         """
         Creates a unique-by-name command representing a task submission
@@ -213,10 +223,13 @@ class Script(Command):
     """
     A collection of maker methods for Commands
     """
-    def __init__(self):
+    def __init__(self, verbose=True):
         super().__init__(self)
         self.commands = {}
         self.new_commands = deque()
+        self.verbose = verbose
+
+        self._task_dicts = {}
 
     def collect(self, commands, allow_failures=False):
         """
@@ -229,6 +242,32 @@ class Script(Command):
         Adds an arbitrary callback to an existing command
         """
         return Callback(command, callback)
+
+    def notify_change(self, command, old_status, new_status, init):
+        """
+        Hook called when the graph status changes
+        """
+        if not self.verbose:
+            return
+
+        if isinstance(command, Stat):
+            if new_status == Status.DONE:
+                task_done, task_dict = command.result
+                if not task_done and 'step_name' in task_dict:
+                    self._task_dicts[command.name] = task_dict
+                    print('PLAN', task_dict['step_name'].decode('ascii'),
+                            file=sys.stderr)
+
+        if isinstance(command, Submit):
+            if command.name in self._task_dicts:
+                step_name_s = self._task_dicts[command.name]['step_name'].decode('ascii')
+
+                if init:
+                    print('SUB ', step_name_s, file=sys.stderr)
+                elif new_status == Status.DONE:
+                    print('DONE', step_name_s, file=sys.stderr)
+                if new_status == Status.FAILED:
+                    print('FAIL', step_name_s, file=sys.stderr)
 
     def update(self, *_, **_k):
         pass
@@ -362,6 +401,59 @@ class Rsubmit(Command):
         # Recursive children tasks
         return self.req(*[
             self.rsubmit(child_name)
+            for child_name in children
+            ])
+
+@once
+class DryRun(Command):
+    """
+    A task dry-run. Similar to RSUBMIT, but does not actually submit tasks, and
+    instead moves on as soon as the STAT command succeeded.
+
+    If a task has dynamic children (i.e., running the task returns new tasks to
+    execute), the output will depend on the task status:
+     * If the task is done, the dry-run will be able to list the child tasks and
+       recurse on them.
+     * If the task is not done, the dry-run will not see the child tasks and
+       skip them, so only the parent task will show up in the dry-run log.
+
+    This is the intended behavior, it reflects the inherent limit of a dry-run:
+    part of the task graph is unknown before we actually start executing it.
+    """
+    def __init__(self, script, name):
+        self.name = name
+        super().__init__(script)
+
+    def __str__(self):
+        return f'dry-run {self.name}'
+
+    def _eval(self):
+        stat = self.stat(self.name)
+        sta = self.req(stat)
+        if sta:
+            return sta
+
+        task_done, stat_result = stat.result
+
+        if not task_done:
+            task_dict = stat_result
+
+            # dependencies
+            sta = self.req(*[
+                self.dry_run(dep)
+                for dep in task_deps(task_dict)
+                ])
+            if sta:
+                return sta
+
+            # Skip running the task itself, assume no children
+            children = []
+        else:
+            children = stat_result
+
+        # Recursive children tasks
+        return self.req(*[
+            self.dry_run(child_name)
             for child_name in children
             ])
 

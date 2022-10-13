@@ -27,7 +27,7 @@ async def async_run(*tasks, **options):
     run_options = {
         k: opt
         for k, opt in options.items()
-        if k in ('return_exceptions', 'timeout')
+        if k in ('return_exceptions', 'timeout', 'dry_run')
         }
     for k in run_options:
         del options[k]
