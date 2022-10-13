@@ -252,7 +252,8 @@ class Script(Command):
             return
 
         def print_status(stat, name):
-            print(f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] {stat:4} {name}', file=sys.stderr)
+            print(f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] {stat:4} {name}',
+                    file=sys.stderr, flush=True)
 
         if isinstance(command, Stat):
             if new_status == Status.DONE:

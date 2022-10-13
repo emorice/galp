@@ -18,5 +18,5 @@ galp.cli.setup('dashboard', args.log_level)
 app = create_app(vars(args))
 
 with make_server('', 5000, app) as httpd:
-    print("Serving HTTP on port 5000")
+    print("Serving HTTP on port 5000", flush=True)
     httpd.serve_forever()
