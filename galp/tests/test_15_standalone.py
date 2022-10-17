@@ -20,6 +20,17 @@ async def test_standalone():
             res = await client.run(task)
         assert res == task.step.function()
 
+async def test_standalone_jobs():
+    """
+    Temp system with several jobs.
+    """
+    task = gts.hello()
+
+    async with timeout(3):
+        async with galp.temp_system(steps=['galp.tests.steps'], pool_size=2) as client:
+            res = await client.run(task)
+        assert res == task.step.function()
+
 async def test_explicit():
     """
     Use a standalone system without the context manager syntax
