@@ -9,6 +9,7 @@ import signal
 import threading
 from contextlib import asynccontextmanager
 
+import psutil
 import zmq
 
 import galp.worker
@@ -51,7 +52,7 @@ class Pool:
             async with background(
                 self.broker_transport.listen_reply_loop()
                 ):
-                async with run_forkserver(self.worker_config) as forkserver_socket:
+                async with run_forkserver(self.config, self.worker_config) as forkserver_socket:
                     self.forkserver_socket = forkserver_socket
                     for _ in range(self.config['pool_size']):
                         self.start_worker()
@@ -124,7 +125,7 @@ class Pool:
                 rpid, rexit = os.waitpid(pid, 0)
                 logging.info('Child %s exited with code %d', pid, rexit >> 8)
 
-def forkserver(worker_config):
+def forkserver(config, worker_config):
     """
     A dedicated loop to fork workers on demand and return the pids.
 
@@ -134,23 +135,33 @@ def forkserver(worker_config):
     socket = zmq.Context.instance().socket(zmq.PAIR) # pylint: disable=no-member
     socket.connect('inproc://galp_forkserver')
 
+    if config.get('pin_workers'):
+        cpus = psutil.Process().cpu_affinity()
+        cpu_counter = 0
+
     while True:
         msg = socket.recv()
         if msg == b'FORK':
-            pid = galp.worker.fork(worker_config)
+            if config.get('pin_workers'):
+                cpu = cpus[cpu_counter]
+                cpu_counter = (cpu_counter + 1) % len(cpus)
+                logging.info('Pinning new worker to cpu %d', cpu)
+                pid = galp.worker.fork(worker_config, pin_cpus=[cpu])
+            else:
+                pid = galp.worker.fork(worker_config)
             socket.send(pid.to_bytes(4, 'little'))
         else:
             break
 
 @asynccontextmanager
-async def run_forkserver(worker_config):
+async def run_forkserver(config, worker_config):
     """
     Async context handler to start a forkserver thread.
     """
     socket = zmq.Context.instance().socket(zmq.PAIR) # pylint: disable=no-member
     socket.bind('inproc://galp_forkserver')
 
-    thread = threading.Thread(target=forkserver, args=(worker_config,))
+    thread = threading.Thread(target=forkserver, args=(config, worker_config))
     thread.start()
 
     try:

@@ -25,6 +25,8 @@ parser.add_argument('-n', '--dry-run', action='store_true',
         help='do not actually run the tasks, just print what would be done')
 parser.add_argument('-j', '--jobs', type=int, help='Number of worker processes'
         ' to run in parallel. Ignored with -e.', default=1, dest='pool_size')
+parser.add_argument('--pin-workers', action='store_true',
+        help='Set cpu affinity to pin each worker to one cpu core')
 galp.cache.add_store_argument(parser, optional=True)
 galp.cli.add_parser_arguments(parser)
 
@@ -47,7 +49,8 @@ async def run(target):
             client = await stack.enter_async_context(
                 galp.local_system(**{
                     k: getattr(args, k)
-                    for k in ['config', 'log_level', 'store', 'pool_size']
+                    for k in ['config', 'log_level', 'store', 'pool_size',
+                    'pin_workers']
                     })
                 )
         return await client.run(target, dry_run=args.dry_run)

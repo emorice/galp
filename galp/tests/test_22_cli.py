@@ -54,7 +54,7 @@ def test_cli_jobs(tmpdir):
     """
     Start a pool from cli
     """
-    out = run(f'python3 -m galp.client -s {tmpdir} -j 2 galp.steps galp_hello --log-level=info')
+    out = run(f'python3 -m galp.client -s {tmpdir} -j 2 galp.steps galp_hello --log-level=info --pin-workers')
 
     assert out == str(galp.steps.galp_hello.function())
 

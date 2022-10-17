@@ -16,6 +16,7 @@ import resource
 
 from dataclasses import dataclass
 
+import psutil
 import zmq
 import zmq.asyncio
 
@@ -426,16 +427,22 @@ class PathMaker:
             f'{self.task}_{fileno}'
             )
 
-def fork(config):
+def fork(config, pin_cpus=None):
     """
     Forks a worker with the given arguments.
 
     No validation is done on the arguments
+
+    Args:
+        config: configuration dictionnary for the started worker
+        pin_cpu: if set, change cpu affinity to this list of cpus after forking
     """
     pid = os.fork()
     if pid == 0:
         ret = 1
         try:
+            if pin_cpus is not None:
+                psutil.Process().cpu_affinity(pin_cpus)
             ret = main(config)
         except:
             # os._exit swallows exception so make sure to log them
