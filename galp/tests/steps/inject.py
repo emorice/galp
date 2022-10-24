@@ -2,11 +2,11 @@
 Tests steps related to injection
 """
 
-from galp.graph import StepSet
+import galp
 
 from .utils import identity
 
-export = StepSet()
+export = galp.Block()
 
 # pylint: disable=redefined-outer-name
 

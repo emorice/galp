@@ -7,9 +7,9 @@ and make sure they are never called in prod.
 """
 import logging
 
-from galp.graph import StepSet
+from galp.graph import Block
 
-export = StepSet()
+export = Block()
 
 @export
 def getitem(obj, index):

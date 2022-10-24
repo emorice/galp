@@ -2,9 +2,9 @@
 Steps related to the path provider feature
 """
 
-from galp import StepSet
+import galp
 
-export = StepSet()
+export = galp.Block()
 
 @export
 def write_file(string, _galp):

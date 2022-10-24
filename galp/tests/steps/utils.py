@@ -2,9 +2,9 @@
 Galp test steps used to build other steps
 """
 
-from galp.graph import StepSet
+import galp
 
-export = StepSet()
+export = galp.Block()
 
 @export
 def identity(arg):

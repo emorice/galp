@@ -4,9 +4,9 @@ Dashboard specific steps, aka views
 
 import plotly.graph_objects as go
 
-from galp import StepSet
+import galp
 
-export = StepSet()
+export = galp.Block()
 
 # pylint: disable=redefined-outer-name
 

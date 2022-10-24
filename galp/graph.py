@@ -3,6 +3,7 @@ General routines to build and operate on graphs of tasks.
 """
 import hashlib
 import inspect
+import warnings
 
 from dataclasses import dataclass
 
@@ -20,7 +21,7 @@ class TaskName(bytes):
 
     def __str__(self):
         _hex = self.hex()
-        return _hex[:6] + '..' + _hex[-2:]
+        return _hex[:7]
 
 _serializer = Serializer() # Actually stateless, safe
 
@@ -559,8 +560,8 @@ class NoSuchStep(ValueError):
 # Placholder type for an object injected by the worker
 WorkerSideInject = type('WorkerSideInject', tuple(), {})
 
-class StepSet:
-    """A collection of steps"""
+class Block:
+    """A collection of steps and bound arguments"""
     def __init__(self, steps=None):
         # Note: if we inherit steps, we don't touch their scope
         self._steps = {} if steps is None else steps
@@ -663,7 +664,48 @@ class StepSet:
         # We do not merge the injectables by default
         return self
 
+class StepSet(Block):
+    """
+    Obsolete alias for PipelineBlock
+    """
+    def __init__(self, *args, **kwargs):
+        warnings.warn('StepSet is now an alias to Block and will be removed in the'
+                ' future', FutureWarning, stacklevel=2)
+        super().__init__(*args, **kwargs)
+
 class NonIterableHandleError(TypeError):
     """
     Specific sub-exception raised when trying to iterate an atomic handle.
     """
+
+class Query(TaskType):
+    """
+    A task referencing specific attributes of an other task.
+
+    Args:
+        subject: the task to which to apply the query
+        query: the query description. The query specification will be documented
+            elsewhere and linked here, if you're reading this remind the package
+            author to do it.
+    """
+    def __init__(self, subject, query):
+        self.subject = ensure_task(subject)
+        self.query = query
+
+        rep = [self.__class__.__name__, self.to_dict()]
+
+        self.name = obj_to_name(rep)
+        self.dependencies = [self.subject]
+
+    def to_dict(self, name=False):
+        """
+        Dictionary representation of the task
+        """
+        task_dict = {
+                'subject': self.subject.name,
+                'query': self.query,
+                }
+        if name:
+            task_dict['name'] = self.name
+
+        return task_dict

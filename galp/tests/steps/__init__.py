@@ -10,22 +10,22 @@ import numpy as np
 import pyarrow as pa
 
 import galp
-from galp.graph import StepSet
 
-from . import utils, inject, dashboard, files
+from . import utils, inject, dashboard, files, query
 from .utils import identity
 
-export = StepSet()
+export = galp.Block()
 
 # Submodules exports
 export += utils.export
 export += inject.export
 export += dashboard.export
 export += files.export
+export += query.blk
 
 # Alternative namespaces to register the same function several times
-_export2 = StepSet()
-_export3 = StepSet()
+_export2 = galp.Block()
+_export3 = galp.Block()
 
 @export.step
 def hello():
