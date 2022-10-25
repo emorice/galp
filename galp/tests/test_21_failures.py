@@ -76,7 +76,7 @@ async def test_missing_step_error(client):
     """
 
     # Define a step locally that is invisible to the worker
-    local_export = galp.StepSet()
+    local_export = galp.Block()
     @local_export.step
     def missing():
         pass

@@ -104,8 +104,6 @@ def make_worker_init(config):
             )
     return _make_worker
 
-
-
 class WorkerProtocol(ReplyProtocol):
     """
     Handler for messages from the broker
@@ -299,7 +297,7 @@ class Worker:
 
         script = self.protocol.script
         collect = script.collect([
-                script.rget(t) for t in [
+                script.do_once('RGET', t) for t in [
                     *task_dict['arg_names'],
                     *task_dict['kwarg_names'].values()
                     ]

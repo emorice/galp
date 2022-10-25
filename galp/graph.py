@@ -66,10 +66,14 @@ def task_deps(task_dict):
     if 'parent' in task_dict:
         return [ task_dict['parent'] ]
 
-    # Literal, the dependencies are the tasks found embedded when walking the
-    # object
+    # Removed: dependencies are now defined as tasks that need to be done before
+    # the raw task result can be reached. Literal children are not dependencies
+    # under this definition.
+    # - # Literal, the dependencies are the tasks found embedded when walking the
+    # - # object
     if 'children' in task_dict:
-        return task_dict['children']
+        return []
+    # -   return task_dict['children']
 
     raise NotImplementedError('task_deps', task_dict)
 

@@ -9,7 +9,7 @@ from importlib import import_module
 import toml
 
 from galp.cache import CacheStack
-from galp.graph import StepSet
+from galp.graph import Block
 from galp.serializer import Serializer
 
 class ConfigError(Exception):
@@ -63,12 +63,12 @@ def load_steps(plugin_names):
     Attempts to import the given modules, and add any public StepSet attribute
     to the list of currently known steps
     """
-    step_dir = StepSet()
+    step_dir = Block()
     for name in plugin_names:
         try:
             plugin = import_module(name)
             for k, attr in vars(plugin).items():
-                if isinstance(attr, StepSet) and not k.startswith('_'):
+                if isinstance(attr, Block) and not k.startswith('_'):
                     step_dir += attr
             logging.info('Loaded plug-in %s', name)
         except ModuleNotFoundError as exc:

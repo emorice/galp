@@ -1,10 +1,12 @@
 """
 Query system
 """
+import pytest
 
 import galp
 import galp.tests.steps as gts
 
+@pytest.mark.xfail
 def test_query_status(tmpdir):
     """
     Collect task arguments and there statuses

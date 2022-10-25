@@ -9,7 +9,7 @@ from collections import deque
 
 import logging
 
-from .graph import task_deps
+from .graph import task_deps, TaskType
 
 def status_conj(commands):
     """
@@ -59,7 +59,11 @@ class Command:
         self.status = Status.PENDING
         self.result = None
         self.outputs = set()
+        self._state = 'INIT'
+        self._sub_commands = []
         self.update(init=True)
+
+    when = {}
 
     def out(self, cmd):
         """
@@ -68,7 +72,36 @@ class Command:
         self.outputs.add(cmd)
 
     def _eval(self):
-        raise NotImplementedError
+        """
+        State-based handling
+        """
+        sub_commands = self._sub_commands
+        while all(cmd.status != Status.PENDING for cmd in sub_commands):
+            try:
+                handler = self.when[self._state]
+            except KeyError:
+                raise NotImplementedError(self.__class__, self._state) from None
+
+            ret = handler(self, *sub_commands)
+            # Sugar: allow omitting sub commands or passing only one instead of
+            # a list
+            if isinstance(ret, tuple):
+                new_state, sub_commands = ret
+            else:
+                new_state, sub_commands = ret, []
+            if isinstance(sub_commands, Command):
+                sub_commands = [sub_commands]
+
+            self._sub_commands = sub_commands
+            # Returning pending from a handlers means 'stay in the same state'
+            if new_state == Status.PENDING:
+                new_state = self._state
+            logging.warning('%s: %s => %s', self, self._state, new_state)
+            self._state = new_state
+            if self._state in (Status.DONE, Status.FAILED):
+                return self._state
+
+        return Status.PENDING
 
     def change_status(self, new_status, init=False):
         """
@@ -156,54 +189,9 @@ class Command:
         self.script.new_commands.append(key)
         return cmd
 
-    def run(self, name):
-        """
-        Creates a unique-by-name command representing a task submission and
-        fetch
-        """
-        return self.do_once('RUN', name)
-
-    def rsubmit(self, name):
-        """
-        Creates a unique-by-name command representing a recursive task submission
-        """
-        return self.do_once('RSUBMIT', name)
-
-    def dry_run(self, name):
-        """
-        Creates a unique-by-name command representing a recursive task dry-run
-        """
-        return self.do_once('DRYRUN', name)
-
-    def submit(self, name):
-        """
-        Creates a unique-by-name command representing a task submission
-        """
-        return self.do_once('SUBMIT', name)
-
-    def rget(self, name):
-        """
-        Creates a unique-by-name command representing a recursive resource fetch
-        """
-        return self.do_once('RGET', name)
-
-    def get(self, name):
-        """
-        Creates a unique-by-name command representing the fetch of a single
-        resource
-        """
-        return self.do_once('GET', name)
-
-    def stat(self, name):
-        """
-        Creates a unique-by-name command representing the fetch of a task's
-        metadata
-        """
-        return self.do_once('STAT', name)
-
     def req(self, *commands):
         """
-        Propagate result on failure
+        Aggregate failure status of commands, propagating result of first failure
         """
 
         for command in commands:
@@ -219,6 +207,29 @@ class Command:
             f' = [{", ".join(str(r) for r in self.result)}]'
             if self.is_done() else ''
             )
+
+class When:
+    """
+    Decorator factory to make declaring automata simpler
+    """
+    def __init__(self):
+        self._functions = {}
+
+    def __call__(self, key):
+        """
+        Decorator to register a method as handler for a particular state (Use
+        the instance of the When class as the decorator)
+        """
+        def _wrapper(function):
+            self._functions[key] = function
+            return function
+        return _wrapper
+
+    def __getitem__(self, key):
+        """
+        Accessor for the registered decorated methods
+        """
+        return self._functions[key]
 
 class Script(Command):
     """
@@ -250,6 +261,7 @@ class Script(Command):
         """
         if not self.verbose:
             return
+        del old_status
 
         def print_status(stat, name):
             print(f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] {stat:4} {name}',
@@ -273,6 +285,7 @@ class Script(Command):
                     print_status('DONE', step_name_s)
                 if new_status == Status.FAILED:
                     print_status('FAIL', step_name_s)
+
 
     def update(self, *_, **_k):
         pass
@@ -307,20 +320,26 @@ class Rget(Command):
     def __str__(self):
         return f'rget {self.name}'
 
-    def _eval(self):
-        """
-        Eval the trigger condition on the given concrete values
-        """
-        get = self.get(self.name)
+    when = When()
 
-        sta = self.req(get)
-        if sta:
-            return sta
+    @when('INIT')
+    def _init(self, *_):
+        return 'PARENT', self.do_once('GET', self.name)
 
-        return self.req(*[
-            self.rget(child_name)
-            for child_name in get.result
-            ])
+    @when('PARENT')
+    def _get(self, get):
+        failed = self.req(get)
+        if failed:
+            return failed
+
+        return 'CHILDREN', [
+                self.do_once('RGET', child_name)
+                for child_name in get.result
+                ]
+
+    @when('CHILDREN')
+    def _sub_gets(self, *sub_gets):
+        return self.req(*sub_gets), sub_gets
 
 class Collect(Command):
     """
@@ -373,41 +392,102 @@ class Rsubmit(Command):
     def __str__(self):
         return f'rsubmit {self.name}'
 
-    def _eval(self):
+    when = When()
+
+    @when('INIT')
+    def _init(self, *_):
+        """
+        Emit the initial stat
+        """
         # metadata
-        stat = self.stat(self.name)
+        return 'SORT', self.do_once('STAT', self.name)
+
+    @when('SORT')
+    def _sort(self, stat):
+        """
+        Sort out queries, remote jobs and literals
+        """
         sta = self.req(stat)
         if sta:
             return sta
 
         task_done, stat_result = stat.result
 
-        if not task_done:
-            task_dict = stat_result
-
-            # dependencies
-            sta = self.req(*[
-                self.rsubmit(dep)
-                for dep in task_deps(task_dict)
-                ])
-            if sta:
-                return sta
-
-            # task itself
-            main_sub = self.submit(self.name)
-            sta = self.req(main_sub)
-            if sta:
-                return sta
-
-            children = main_sub.result
-        else:
+        # Short circuit for tasks already processed and literals
+        children, task_dict = None, None
+        if task_done:
             children = stat_result
+        else:
+            task_dict = stat_result
+            children = task_dict.get('children')
 
-        # Recursive children tasks
-        return self.req(*[
-            self.rsubmit(child_name)
-            for child_name in children
-            ])
+        if children is not None:
+            return 'CHILDREN', [self.do_once('RSUBMIT', child_name)
+                    for child_name in children]
+
+        # Queries. This deserves its own function
+        if 'query' in task_dict:
+            return self._query(task_dict)
+
+        # Else, regular job, process dependencies first
+        return 'DEPS', [
+                self.do_once('RSUBMIT', dep)
+                for dep in task_deps(task_dict)
+                ]
+
+    @when('DEPS')
+    def _deps(self, *deps):
+        """
+        Check deps availability before proceeding to main submit
+        """
+        sta = self.req(*deps)
+        if sta:
+            return sta
+
+        # task itself
+        return 'MAIN', self.do_once('SUBMIT', self.name)
+
+    @when('MAIN')
+    def _main(self, main_sub):
+        """
+        Check the main result and proceed with possible children tasks
+        """
+        sta = self.req(main_sub)
+        if sta:
+            return sta
+
+        children = main_sub.result
+        return 'CHILDREN', [ self.do_once('RSUBMIT', child_name)
+                for child_name in children ]
+
+    @when('CHILDREN')
+    def _children(self, *children):
+        """
+        Check completion of children and propagate result
+        """
+        return self.req(*children)
+
+    def _query(self, task_dict):
+        """
+        Process a query
+        """
+        query = task_dict['query']
+
+        # Query terminator, this is a query leaf and requests the task result
+        # itself
+        if query is True:
+            # Check a pointer to the task into the cache
+            store = self.script.store
+            store.put_serial(self.name, (
+                    store.serializer.dumps(TaskType()),
+                    [query['subject']]
+                    ))
+            # Return the subject as the lone child
+            return 'CHILDREN', self.do_once('RSUBMIT', query['subject'])
+
+
+        raise NotImplementedError
+
 
 @once
 class DryRun(Command):
@@ -433,7 +513,7 @@ class DryRun(Command):
         return f'dry-run {self.name}'
 
     def _eval(self):
-        stat = self.stat(self.name)
+        stat = self.do_once('STAT', self.name)
         sta = self.req(stat)
         if sta:
             return sta
@@ -445,7 +525,7 @@ class DryRun(Command):
 
             # dependencies
             sta = self.req(*[
-                self.dry_run(dep)
+                self.do_once('DRYRUN', dep)
                 for dep in task_deps(task_dict)
                 ])
             if sta:
@@ -458,7 +538,7 @@ class DryRun(Command):
 
         # Recursive children tasks
         return self.req(*[
-            self.dry_run(child_name)
+            self.do_once('DRYRUN', child_name)
             for child_name in children
             ])
 
@@ -475,13 +555,13 @@ class Run(Command):
         return f'run {self.name}'
 
     def _eval(self):
-        rsub = self.rsubmit(self.name)
+        rsub = self.do_once('RSUBMIT', self.name)
 
         sta = self.req(rsub)
         if sta:
             return sta
 
-        rget = self.rget(self.name)
+        rget = self.do_once('RGET', self.name)
 
         return self.req(rget)
 

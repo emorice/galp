@@ -199,10 +199,10 @@ class Client:
 
         script = self.protocol.script
 
-        main_command = script.dry_run if dry_run else script.run
+        main_command = 'DRYRUN' if dry_run else 'RUN'
 
         collect = script.collect(
-                commands=[main_command(t.name) for t in tasks],
+                commands=[script.do_once(main_command, t.name) for t in tasks],
                 allow_failures=return_exceptions
                 )
 
