@@ -156,7 +156,7 @@ class WorkerProtocol(ReplyProtocol):
         # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name)
-            return self.done(route, name, [])
+            return self.done(route, name, task_dict, [])
 
         # If not in cache, resolve metadata and run the task
         replies = MessageList([self.doing(route, name)])
@@ -195,28 +195,29 @@ class WorkerProtocol(ReplyProtocol):
         """
         STAT handler allowed to raise store read errors
         """
+        task_dict = None
+        try:
+            task_dict = self.store.get_task(name)
+        except KeyError:
+            pass
+
+        if task_dict is None:
+            logging.info('STAT: NOT FOUND %s', name)
+            return self.not_found(route, name)
+
         children = None
         try:
             children = self.store.get_children(name)
         except KeyError:
-            logging.debug('STAT: MISS %s', name)
+            pass
 
         if children is not None:
             logging.info('STAT: DONE %s', name)
-            return self.done(route, name, children)
+            return self.done(route, name, task_dict, children)
 
-        task = None
-        try:
-            task = self.store.get_task(name)
-        except KeyError:
-            pass
+        logging.info('STAT: FOUND %s', name)
+        return self.found(route, task_dict)
 
-        if task is not None:
-            logging.info('STAT: FOUND %s', name)
-            return self.found(route, task)
-
-        logging.info('STAT: NOT FOUND %s', name)
-        return self.not_found(route, name)
 
     def new_commands_to_messages(self, route):
         """
@@ -278,9 +279,9 @@ class Worker:
         """
         while True:
             task = await self.galp_jobs.get()
-            route, name, success, result = await task
+            route, name, success, task_dict, result = await task
             if success:
-                reply = self.protocol.done(route, name, result)
+                reply = self.protocol.done(route, name, task_dict, result)
             else:
                 reply = self.protocol.failed(route, name)
             await self.transport.send_message(reply)
@@ -388,15 +389,16 @@ class Worker:
                 step_name.decode('ascii'), name)
                 raise NonFatalTaskError from exc
 
-            # Store the result back
+            # Store the result back, along with the task definition
+            self.protocol.store.put_task_dict(name, task_dict)
             children = self.protocol.store.put_native(handle, result)
 
-            return route, name, True, children
+            return route, name, True, task_dict, children
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return route, name, False, None
+            return route, name, False, task_dict, None
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.

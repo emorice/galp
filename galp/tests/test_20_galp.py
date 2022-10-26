@@ -123,7 +123,7 @@ async def assert_cache(clients, task=galp.steps.galp_hello()):
 
     # May be more that 1 since drop-n-retry was adopted
     assert client1.protocol.submitted_count[task.name] >= 1
-    # Should be 0 since STAT commands were introcuded
+    # Should be 0 since STAT commands were introduced
     assert client2.protocol.submitted_count[task.name] == 0
 
     assert client1.protocol.run_count[task.name] == 1

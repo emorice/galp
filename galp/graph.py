@@ -465,6 +465,8 @@ class SubTask(TaskType):
         """
         Returns a dictionnary representation of the task.
         """
+        # FIXME: this definition is duplicated in the store, where we need dicts
+        # but don't have task objects.
         task_dict = {
             'parent': self.parent.name
             }
@@ -713,3 +715,19 @@ class Query(TaskType):
             task_dict['name'] = self.name
 
         return task_dict
+
+@dataclass
+class TaskReference(TaskType):
+    """
+    A reference to an existing task by name, stripped of all the task definition
+    details.
+
+    The only valid operation on such a task is to read its name.
+    """
+    name: bytes
+
+    def to_dict(self):
+        """
+        Task definition is explictly missing
+        """
+        return None

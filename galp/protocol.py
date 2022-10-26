@@ -46,7 +46,7 @@ class Protocol(LowerProtocol):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
 
-    def on_done(self, route, name, children):
+    def on_done(self, route, name, task_dict, children):
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
@@ -120,14 +120,15 @@ class Protocol(LowerProtocol):
         """
         return route, [b'DOING', name]
 
-    def done(self, route, name, children):
+    def done(self, route, name, task_dict, children):
         """
         Builds a DONE message
 
         Args:
             name: the name of the task
         """
-        return route, [b'DONE', name, *children]
+        payload = msgpack.packb(task_dict)
+        return route, [b'DONE', name, payload, *children]
 
     def exited(self, route, peer):
         """Signal the given peer has exited"""
@@ -257,7 +258,7 @@ class Protocol(LowerProtocol):
         Builds a FOUND message
 
         Args:
-            task_dcits: representation of the task including name
+            task_dict: representation of the task including name
         """
         name = task_dict['name']
         payload = msgpack.packb(task_dict)
@@ -329,12 +330,14 @@ class Protocol(LowerProtocol):
 
     @event.on('DONE')
     def _on_done(self, route, msg):
-        self._validate(len(msg) >= 2, route, 'DONE without a name')
+        self._validate(len(msg) >= 3, route, 'DONE without name or definition')
 
         name = TaskName(msg[1])
-        children = [ TaskName(child_name) for child_name in msg[2:] ]
+        task_dict = msgpack.unpackb(msg[2])
+        task_dict['name'] = name
+        children = [ TaskName(child_name) for child_name in msg[3:] ]
 
-        return self.on_done(route, name, children)
+        return self.on_done(route, name, task_dict, children)
 
     @event.on('FAILED')
     def _on_failed(self, route, msg):

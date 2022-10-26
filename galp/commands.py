@@ -9,7 +9,7 @@ from collections import deque
 
 import logging
 
-from .graph import task_deps, TaskType
+from .graph import task_deps, TaskReference, TaskType
 
 def status_conj(commands):
     """
@@ -67,9 +67,10 @@ class Command:
 
     def out(self, cmd):
         """
-        Add command to the set of outputs
+        Add command to the set of outputs, returns self for easy chaining.
         """
         self.outputs.add(cmd)
+        return self
 
     def _eval(self):
         """
@@ -96,7 +97,7 @@ class Command:
             # Returning pending from a handlers means 'stay in the same state'
             if new_state == Status.PENDING:
                 new_state = self._state
-            logging.warning('%s: %s => %s', self, self._state, new_state)
+            logging.debug('%s: %s => %s', self, self._state, new_state)
             self._state = new_state
             if self._state in (Status.DONE, Status.FAILED):
                 return self._state
@@ -208,6 +209,17 @@ class Command:
             if self.is_done() else ''
             )
 
+class UniqueCommand(Command):
+    """
+    Any command that is fully defined and indentified by a task name
+    """
+    def __init__(self, script, name):
+        self.name = name
+        super().__init__(script)
+
+    def __str__(self):
+        return f'{self.__class__.__name__.lower()} {self.name}'
+
 class When:
     """
     Decorator factory to make declaring automata simpler
@@ -234,12 +246,18 @@ class When:
 class Script(Command):
     """
     A collection of maker methods for Commands
+
+    Args:
+        verbose: whether to print brief summary of command completion to stderr
+        store: Store object, destination to store Query result. Only needed for
+            queries.
     """
-    def __init__(self, verbose=True):
+    def __init__(self, verbose=True, store=None):
         super().__init__(self)
         self.commands = {}
         self.new_commands = deque()
         self.verbose = verbose
+        self.store = store
 
         self._task_dicts = {}
 
@@ -263,16 +281,17 @@ class Script(Command):
             return
         del old_status
 
-        def print_status(stat, name):
-            print(f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] {stat:4} {name}',
+        def print_status(stat, name, step_name):
+            print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {stat:4} [{name}]'
+                    f' {step_name}',
                     file=sys.stderr, flush=True)
 
         if isinstance(command, Stat):
             if new_status == Status.DONE:
-                task_done, task_dict = command.result
+                task_done, task_dict, *_ = command.result
                 if not task_done and 'step_name' in task_dict:
                     self._task_dicts[command.name] = task_dict
-                    print_status('PLAN',
+                    print_status('PLAN', command.name,
                             task_dict['step_name'].decode('ascii'))
 
         if isinstance(command, Submit):
@@ -280,12 +299,11 @@ class Script(Command):
                 step_name_s = self._task_dicts[command.name]['step_name'].decode('ascii')
 
                 if init:
-                    print_status('SUB', step_name_s)
+                    print_status('SUB', command.name, step_name_s)
                 elif new_status == Status.DONE:
-                    print_status('DONE', step_name_s)
+                    print_status('DONE', command.name, step_name_s)
                 if new_status == Status.FAILED:
-                    print_status('FAIL', step_name_s)
-
+                    print_status('FAIL', command.name, step_name_s)
 
     def update(self, *_, **_k):
         pass
@@ -309,17 +327,10 @@ class Get(Command):
         return Status.PENDING
 
 @once
-class Rget(Command):
+class Rget(UniqueCommand):
     """
     Recursively gets a resource and all its parts
     """
-    def __init__(self, script, name):
-        self.name = name
-        super().__init__(script)
-
-    def __str__(self):
-        return f'rget {self.name}'
-
     when = When()
 
     @when('INIT')
@@ -381,17 +392,11 @@ class Callback(Command):
         return Status.PENDING
 
 @once
-class Rsubmit(Command):
+class SSubmit(UniqueCommand):
     """
-    A task submission
+    A non-recursive ("simple") task submission: executes depndencies, but not
+    children. Return said children as result on success.
     """
-    def __init__(self, script, name):
-        self.name = name
-        super().__init__(script)
-
-    def __str__(self):
-        return f'rsubmit {self.name}'
-
     when = When()
 
     @when('INIT')
@@ -411,23 +416,25 @@ class Rsubmit(Command):
         if sta:
             return sta
 
-        task_done, stat_result = stat.result
+        task_done, *stat_result = stat.result
 
         # Short circuit for tasks already processed and literals
         children, task_dict = None, None
         if task_done:
-            children = stat_result
+            task_dict, children = stat_result
         else:
-            task_dict = stat_result
+            task_dict, = stat_result
             children = task_dict.get('children')
 
         if children is not None:
-            return 'CHILDREN', [self.do_once('RSUBMIT', child_name)
-                    for child_name in children]
+            self.result = children
+            return Status.DONE
 
-        # Queries. This deserves its own function
+        # Queries, wrap in the dedicated command
         if 'query' in task_dict:
-            return self._query(task_dict)
+            query_cmd = Query(self.script, task_dict['subject'], task_dict['query'])
+            query_cmd.out(self)
+            return 'QUERY', query_cmd
 
         # Else, regular job, process dependencies first
         return 'DEPS', [
@@ -450,13 +457,60 @@ class Rsubmit(Command):
     @when('MAIN')
     def _main(self, main_sub):
         """
-        Check the main result and proceed with possible children tasks
+        Check the main result and return possible children tasks
         """
         sta = self.req(main_sub)
         if sta:
             return sta
 
-        children = main_sub.result
+        self.result = main_sub.result
+        return Status.DONE
+
+
+    @when('QUERY')
+    def _query(self, query_cmd):
+        """
+        Check query completion and put result in store
+        """
+        not_done = self.req(query_cmd)
+        if not_done:
+            return not_done
+
+        # Check result in store
+        store = self.script.store
+        child_names = store.put_native(self.name, query_cmd.result)
+
+        # The final result of a query may reference other tasks, so these need
+        # to be executed as children
+        self.result = child_names
+        return Status.DONE
+
+@once
+class RSubmit(UniqueCommand):
+    """
+    Recursive submit, with children, aka an SSubmit plus a RSubmit per child
+    """
+    when = When()
+
+    @when('INIT')
+    def _init(self, *_):
+        """
+        Emit the simple submit
+        """
+        ssub = self.do_once('SSUBMIT', self.name)
+        return 'MAIN', ssub
+
+    @when('MAIN')
+    def _main(self, ssub):
+        """
+        Check the main result and proceed with possible children tasks
+        """
+        sta = self.req(ssub)
+        if sta:
+            return sta
+
+        children = ssub.result
+
         return 'CHILDREN', [ self.do_once('RSUBMIT', child_name)
                 for child_name in children ]
 
@@ -467,30 +521,188 @@ class Rsubmit(Command):
         """
         return self.req(*children)
 
-    def _query(self, task_dict):
+class Query(Command):
+    """
+    Local execution of a query
+
+    Args:
+        subject: the name of the task to apply the query to
+        query: the native object representing the query
+    """
+    def __init__(self, script, subject, query):
+        self.subject = subject
+        self.query = query
+        super().__init__(script)
+
+    def __str__(self):
+        return f'query on {self.subject} {self.query}'
+
+    when = When()
+
+    @when('INIT')
+    def _init(self, *_):
         """
-        Process a query
+        Process the query and decide on further commands to issue
         """
-        query = task_dict['query']
+
+        # Simple queries
+        # ==============
 
         # Query terminator, this is a query leaf and requests the task result
         # itself
-        if query is True:
-            # Check a pointer to the task into the cache
-            store = self.script.store
-            store.put_serial(self.name, (
-                    store.serializer.dumps(TaskType()),
-                    [query['subject']]
-                    ))
-            # Return the subject as the lone child
-            return 'CHILDREN', self.do_once('RSUBMIT', query['subject'])
+        if self.query is True:
+            # Return a reference to the task
+            self.result = TaskReference(self.subject)
+            return Status.DONE
 
+        # Status of task, issue a STAT command
+        if self.query in ('done', ('done', True)):
+            return 'STATUS', self.do_once('STAT', self.subject)
 
-        raise NotImplementedError
+        # Recursive queries
+        # ================
 
+        # Query set, turn each in its own query
+        if hasattr(self.query, 'items'):
+            return 'QUERYSET', [
+                    Query(self.script, self.subject, (key, value)).out(self)
+                    for key, value in self.query.items()
+                    ]
+
+        # Query items
+        try:
+            query_key, _sub_query = self.query
+        except TypeError:
+            raise NotImplementedError(self.query) from None
+
+        # Iterator, get the raw object first
+        if query_key == '*':
+            return 'ITERATOR', self.do_once('SRUN', self.subject)
+
+        # Arg query, get the task definition first
+        if query_key == 'args':
+            return 'ARGS', self.do_once('STAT', self.subject)
+
+        raise NotImplementedError(self.query)
+
+    @when('STATUS')
+    def _status(self, stat_cmd):
+        """
+        Check and returns status request
+        """
+        not_done = self.req(stat_cmd)
+        if not_done:
+            return not_done
+
+        task_done, _ = stat_cmd.result
+
+        self.result = task_done
+        return Status.DONE
+
+    @when('ARGS')
+    def _args(self, stat_cmd):
+        """
+        Build list of sub-queries for arguments of subject task from the
+        definition obtained from STAT
+        """
+        not_done = self.req(stat_cmd)
+        if not_done:
+            return not_done
+
+        _task_done, task_dict, *_children = stat_cmd.result
+        _, arg_subqueries = self.query
+
+        # bare list of indexes, set the subquery to the whole object
+        if not hasattr(arg_subqueries, 'items'):
+            arg_subqueries = { index: True for index in arg_subqueries }
+
+        if not 'arg_names' in task_dict:
+            raise TypeError('Object is not a job-type Task, cannot use a "args"'
+                ' query here.')
+
+        sub_commands = []
+        for index, subquery in arg_subqueries.items():
+            try:
+                num_index = int(index)
+                target = task_dict['arg_names'][num_index]
+            except ValueError: # keyword argument
+                target = task_dict['kwarg_names'][index]
+            sub_commands.append(
+                Query(self.script, target, subquery).out(self)
+                )
+        return 'ARG_QUERYSET', sub_commands
+
+    @when('ARG_QUERYSET')
+    def _queryset(self, *query_items):
+        """
+        Check and merge argument query items
+        """
+        not_done = self.req(*query_items)
+        if not_done:
+            return not_done
+
+        _, arg_subqueries = self.query
+
+        result = {}
+        for index, qitem in zip(arg_subqueries, query_items):
+            result[index] = qitem.result
+        self.result = result
+
+        return Status.DONE
+
+    @when('QUERYSET')
+    def _queryset(self, *query_items):
+        """
+        Check and merge query items
+        """
+        not_done = self.req(*query_items)
+        if not_done:
+            return not_done
+
+        result = {}
+        for qitem in query_items:
+            result[qitem.query[0]] = qitem.result
+        self.result = result
+        return Status.DONE
+
+    @when('ITERATOR')
+    def _iterator(self, srun):
+        """
+        Check simple run, extract raw result and build subqueries
+        """
+        sta = self.req(srun)
+        if sta:
+            return sta
+
+        shallow_obj = self.script.store.get_native(self.subject, shallow=True)
+
+        _, subquery = self.query
+        subquery_commands = []
+
+        for task in shallow_obj:
+            if not isinstance(task, TaskType):
+                raise TypeError('Object is not a collection of tasks, cannot'
+                    ' use a "*" query here')
+            subquery_commands.append(
+                    Query(self.script, task.name, subquery).out(self)
+                    )
+
+        return 'ITEMS', subquery_commands
+
+    @when('ITEMS')
+    def _items(self, *items):
+        """
+        Check and pack items
+        """
+        not_done = self.req(*items)
+        if not_done:
+            return not_done
+
+        self.result = [ item.result for item in items ]
+        return Status.DONE
 
 @once
-class DryRun(Command):
+class DryRun(UniqueCommand):
     """
     A task dry-run. Similar to RSUBMIT, but does not actually submit tasks, and
     instead moves on as soon as the STAT command succeeded.
@@ -505,13 +717,6 @@ class DryRun(Command):
     This is the intended behavior, it reflects the inherent limit of a dry-run:
     part of the task graph is unknown before we actually start executing it.
     """
-    def __init__(self, script, name):
-        self.name = name
-        super().__init__(script)
-
-    def __str__(self):
-        return f'dry-run {self.name}'
-
     def _eval(self):
         stat = self.do_once('STAT', self.name)
         sta = self.req(stat)
@@ -534,7 +739,7 @@ class DryRun(Command):
             # Skip running the task itself, assume no children
             children = []
         else:
-            children = stat_result
+            task_dict, children = stat_result
 
         # Recursive children tasks
         return self.req(*[
@@ -543,17 +748,10 @@ class DryRun(Command):
             ])
 
 @once
-class Run(Command):
+class Run(UniqueCommand):
     """
     Combined rsubmit + rget
     """
-    def __init__(self, script, name):
-        self.name = name
-        super().__init__(script)
-
-    def __str__(self):
-        return f'run {self.name}'
-
     def _eval(self):
         rsub = self.do_once('RSUBMIT', self.name)
 
@@ -562,6 +760,23 @@ class Run(Command):
             return sta
 
         rget = self.do_once('RGET', self.name)
+
+        return self.req(rget)
+
+@once
+class SRun(UniqueCommand):
+    """
+    Shallow run: combined ssubmit + get, fetches the raw result of a task but
+    not its children
+    """
+    def _eval(self):
+        rsub = self.do_once('SSUBMIT', self.name)
+
+        sta = self.req(rsub)
+        if sta:
+            return sta
+
+        rget = self.do_once('GET', self.name)
 
         return self.req(rget)
 

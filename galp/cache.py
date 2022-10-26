@@ -5,7 +5,7 @@ Caching utils
 import diskcache
 import msgpack
 
-from galp.graph import NonIterableHandleError, TaskName
+from galp.graph import NonIterableHandleError, TaskName, Handle, TaskReference
 from galp.serializer import Serializer, CHILD_EXT_CODE
 
 class StoreReadError(Exception):
@@ -49,19 +49,32 @@ class CacheStack():
     def __contains__(self, name):
         return self.contains(name)
 
-    def get_native(self, name):
+    def get_native(self, name, shallow=False):
         """
         Get a native object form the cache.
 
         Either finds it in memory, or deserialize from persistent storage.
+
+        Args:
+            name: the task name
+            shallow: if False, the child tasks MUST have been checked in the
+                cache first, and this method will extract them and inject them
+                at the correct location in the returned object. If True, only
+                the root object is returned with any linked task replaced by a
+                TaskReference.
         """
         data, children = self.get_serial(name)
-        native_children = [
-            self.get_native(
-                child_name
-                )
-            for child_name in children
-            ]
+
+        if shallow:
+            native_children = [ TaskReference(child_name)
+                    for child_name in children ]
+        else:
+            native_children = [
+                self.get_native(
+                    child_name
+                    )
+                for child_name in children
+                ]
 
         native = self.serializer.loads(data, native_children)
         return native
@@ -110,7 +123,22 @@ class CacheStack():
         Recursive call if handle is iterable. Returns the child tasks
         encountered when serializing (the true Task objects inside obj, not the
         "virtual" tasks of iterable handles)
+
+        Args:
+            handle: either a graph.Handle object, or a task name. Handle allows
+                to instruct the store to split the native object into items first.
+            obj: the native object to store
+
+        Returns:
+            A list containing the names of the Task objects encountered when
+            serializing the object. The results of these tasks must be first
+            added to the store for `get_native` to be able to construct the full
+            object.
         """
+        # Accept either a handle or just a name
+        if isinstance(handle, bytes):
+            handle = Handle(handle)
+
         try:
             # Logical composite handle
             ## Recursively store the children
@@ -118,7 +146,11 @@ class CacheStack():
             struct = []
             for i, (sub_handle, sub_obj) in enumerate(zip(handle, obj)):
                 children.append(sub_handle.name)
+                # FIXME: this hardcodes the dictionnary representation of a
+                # sub-task
+                self.put_task_dict(sub_handle.name, {'parent': handle.name})
                 self.put_native(sub_handle, sub_obj)
+                # FIXME: this hardcodes the serialization of a task object
                 struct.append(
                     msgpack.ExtType(
                         code=CHILD_EXT_CODE,
@@ -153,6 +185,16 @@ class CacheStack():
         self.serialcache[name + b'.data'] = data
         self.serialcache[name + b'.children'] = msgpack.packb(children)
 
+    def put_task_dict(self, name, task_dict):
+        """
+        Non-recursively store the dictionnary describing the task
+        """
+        key = name + b'.task'
+        if key in self.serialcache:
+            return
+
+        self.serialcache[key] = msgpack.packb(task_dict)
+
     def put_task(self, task):
         """
         Recursively store a task definition
@@ -160,11 +202,15 @@ class CacheStack():
         If the task is a literal, this also stores the included task result as a
         resource.
         """
-        key = task.name + b'.task'
-        if key in self.serialcache:
+
+        task_dict = task.to_dict()
+
+        # Skip if the task definition is missing (reference to previously
+        # defined task)
+        if task_dict is None:
             return
 
-        self.serialcache[key] = msgpack.packb(task.to_dict())
+        self.put_task_dict(task.name, task_dict)
 
         for child in task.dependencies:
             self.put_task(child)
@@ -174,7 +220,7 @@ class CacheStack():
 
     def get_task(self, name):
         """
-        Returns a task definition, non-recursively
+        Returns a task definition (dict), non-recursively
         """
         task_dict = msgpack.unpackb(
             self.serialcache[name + b'.task']

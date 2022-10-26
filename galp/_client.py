@@ -231,20 +231,20 @@ class BrokerProtocol(ReplyProtocol):
         # default.
         self.route = self.default_route()
 
-        # Commands
-        self.script = Script()
-
-        # Should be phased out, currently used only with the RUNNING state to
-        # prevent re-sending a submit after receiving a done
-        self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
-
-        # Task definitions, either given to add() or collected through STAT/FOUND
-        self._tasks = {}
-
         # Memory only native+serial cache
         self.store = CacheStack(
             dirpath=None,
             serializer=Serializer())
+
+        # Commands
+        self.script = Script(store=self.store)
+
+        # Should be phased out, currently used only with the RUNNING state to
+        # prevent re-sending a submit after receiving a DOING notification
+        self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
+
+        # Task definitions, either given to add() or collected through STAT/FOUND
+        self._tasks = {}
 
         # Public attributes: counters for the number of SUBMITs sent and DOING
         # received for each task
@@ -331,34 +331,27 @@ class BrokerProtocol(ReplyProtocol):
                 return self.submit(self.route, task_dict)
             # Literals and SubTasks are always satisfied, and never have
             # recursive children
-            return self.on_done(None, task_name, [])
+            return self.on_done(None, task_name, task_dict, [])
 
         raise ValueError(f"Task {task_name.hex()} is unknown")
 
     def get(self, route, name):
         """
-        Filter out literal tasks and send GETs for others
+        Send GET for task if not locally available
         """
-        task_dict = self._tasks.get(name)
+        children = None
+        try:
+            children = self.store.get_children(name)
+        except KeyError:
+            # Not found, send a normal GET
+            return super().get(route, name)
 
-        # Literal task, check if we already have it.
-        # Note that in the case of a remote literal task, we could have the list
-        # of children from a STAT/FOUND call, but still miss the actual object
-        # In the case of a sub-task, we could not have the definition either, so
-        # don't rely on it
-        if task_dict and 'children' in task_dict and name in self.store:
-            # Mark command as done and pass on children
-            self.script.commands['GET', name].done(
-                    task_dict['children']
-                    )
-            # Schedule downstream
-            self.schedule_new()
-            # Supress normal output, removing task from queue
-            return None
-
-        # Send a normal GET
-        return super().get(route, name)
-
+        # Found, mark command as done and pass on children
+        self.script.commands['GET', name].done(children)
+        # Schedule downstream
+        self.schedule_new()
+        # Supress normal output, removing task from queue
+        return None
 
     # Protocol callbacks
     # ==================
@@ -396,16 +389,16 @@ class BrokerProtocol(ReplyProtocol):
         # Schedule for sub-GETs to be sent in the future
         self.schedule_new()
 
-    def on_done(self, route, name, children):
-        """Given that done_task just finished, mark it as done, schedule any
-        dependent ready to be submitted, and schedule GETs for final tasks.
+    def on_done(self, route, name, task_dict, children):
+        """Given that done_task just finished, mark it as done, letting the
+        command system schedule any dependent ready to be submitted, schedule
+        GETs for final tasks, etc.
         """
-
         self._status[name] = TaskStatus.COMPLETED
 
-        # Add recieved graph to ours
-        # FIXME: to be moved to 'FOUND' handler
-        #self.add(children)
+        # If it was a remotely defined task, store its definition too
+        if name not in self._tasks:
+            self._tasks[name] = task_dict
 
         # trigger downstream commands
         command = self.script.commands.get(('SUBMIT', name))
@@ -415,7 +408,7 @@ class BrokerProtocol(ReplyProtocol):
 
         command = self.script.commands.get(('STAT', name))
         if command:
-            command.done((True, children))
+            command.done((True, task_dict, children))
             self.schedule_new()
 
     def on_doing(self, route, name):

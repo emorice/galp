@@ -6,7 +6,6 @@ import pytest
 import galp
 import galp.tests.steps as gts
 
-@pytest.mark.xfail
 def test_query_status(tmpdir):
     """
     Collect task arguments and there statuses
@@ -14,7 +13,10 @@ def test_query_status(tmpdir):
 
     graph = [ gts.query.do_nothing(1), gts.query.do_nothing(2) ]
 
-    ans = galp.run(galp.Query(graph, {'*': {'args': '0', 'status': True}}),
+    ans = galp.run(galp.Query(graph, {'*': {'args': ['0'], 'done': True}}),
             store=tmpdir)
 
-    assert ans == ...
+    assert ans ==  {'*': (
+        {'args': {'0': 1}, 'done': False},
+        {'args': {'0': 2}, 'done': False}
+        )}
