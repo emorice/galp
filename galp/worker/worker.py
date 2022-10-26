@@ -195,15 +195,12 @@ class WorkerProtocol(ReplyProtocol):
         """
         STAT handler allowed to raise store read errors
         """
+        # Try first to extract both definition and children
         task_dict = None
         try:
             task_dict = self.store.get_task(name)
         except KeyError:
             pass
-
-        if task_dict is None:
-            logging.info('STAT: NOT FOUND %s', name)
-            return self.not_found(route, name)
 
         children = None
         try:
@@ -211,13 +208,28 @@ class WorkerProtocol(ReplyProtocol):
         except KeyError:
             pass
 
-        if children is not None:
+        # Case 1: both def and children, DONE
+        if task_dict is not None and children is not None:
             logging.info('STAT: DONE %s', name)
             return self.done(route, name, task_dict, children)
 
-        logging.info('STAT: FOUND %s', name)
-        return self.found(route, task_dict)
+        # Case 2: only def, FOUND
+        if task_dict is not None:
+            logging.info('STAT: FOUND %s', name)
+            return self.found(route, task_dict)
 
+        # Case 3: only children
+        # This means a legacy store that was missing tasks definition
+        # persistency. We still return DONE for backwards compatibility, but
+        # with and empty dict as the placeholder for the missing dict. New
+        # features such as queries may not work on this task.
+        if children is not None:
+            logging.info('STAT: DONE %s', name)
+            return self.done(route, name, {}, children)
+
+        # Case 4: nothing
+        logging.info('STAT: NOT FOUND %s', name)
+        return self.not_found(route, name)
 
     def new_commands_to_messages(self, route):
         """
