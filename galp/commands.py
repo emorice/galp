@@ -416,15 +416,11 @@ class SSubmit(UniqueCommand):
         if sta:
             return sta
 
-        task_done, *stat_result = stat.result
+        _task_done, task_dict, children = stat.result
 
         # Short circuit for tasks already processed and literals
-        children, task_dict = None, None
-        if task_done:
-            task_dict, children = stat_result
-        else:
-            task_dict, = stat_result
-            children = task_dict.get('children')
+        if 'children' in task_dict:
+            children = task_dict['children']
 
         if children is not None:
             self.result = children
@@ -594,7 +590,7 @@ class Query(Command):
         if not_done:
             return not_done
 
-        task_done, _ = stat_cmd.result
+        task_done, *_ = stat_cmd.result
 
         self.result = task_done
         return Status.DONE
@@ -609,7 +605,7 @@ class Query(Command):
         if not_done:
             return not_done
 
-        _task_done, task_dict, *_children = stat_cmd.result
+        _task_done, task_dict, _children = stat_cmd.result
         _, arg_subqueries = self.query
 
         # bare list of indexes, set the subquery to the whole object
@@ -723,11 +719,9 @@ class DryRun(UniqueCommand):
         if sta:
             return sta
 
-        task_done, stat_result = stat.result
+        task_done, task_dict, children = stat.result
 
         if not task_done:
-            task_dict = stat_result
-
             # dependencies
             sta = self.req(*[
                 self.do_once('DRYRUN', dep)
@@ -738,8 +732,6 @@ class DryRun(UniqueCommand):
 
             # Skip running the task itself, assume no children
             children = []
-        else:
-            task_dict, children = stat_result
 
         # Recursive children tasks
         return self.req(*[

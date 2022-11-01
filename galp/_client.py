@@ -408,6 +408,7 @@ class BrokerProtocol(ReplyProtocol):
 
         command = self.script.commands.get(('STAT', name))
         if command:
+            # Triplet (is_done, dict, children?)
             command.done((True, task_dict, children))
             self.schedule_new()
 
@@ -449,7 +450,7 @@ class BrokerProtocol(ReplyProtocol):
             task_dict = self._tasks.get(name)
             if task_dict:
                 # Not found remotely, but still found locally
-                command.done((False, task_dict))
+                command.done((False, task_dict, None))
                 self.schedule_new()
             else:
                 # Found neither remotely not locally, hard error
@@ -462,7 +463,8 @@ class BrokerProtocol(ReplyProtocol):
         """
         name = task_dict['name']
         self._tasks[name] = task_dict
-        self.script.commands['STAT', name].done((False, task_dict))
+        # Triplet (is_done, dict, children?)
+        self.script.commands['STAT', name].done((False, task_dict, None))
         self.schedule_new()
 
     def on_illegal(self, route, reason):
