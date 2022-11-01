@@ -730,8 +730,9 @@ class DryRun(UniqueCommand):
             if sta:
                 return sta
 
-            # Skip running the task itself, assume no children
-            children = []
+            # Skip running the task itself, assume no children, except if
+            # known from the task specification itself
+            children = task_dict.get('children') or []
 
         # Recursive children tasks
         return self.req(*[
