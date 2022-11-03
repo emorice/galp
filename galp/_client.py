@@ -164,7 +164,8 @@ class Client:
                     self.protocol.store.get_native(task.name)
                     )
             except (KeyError, DeserializeError) as exc:
-                new_exc = TaskFailedError(task.name)
+                new_exc = TaskFailedError('Failed to collect task '
+                        f'[{task}]')
                 new_exc.__cause__ = exc
                 failed = new_exc
                 results.append(new_exc)

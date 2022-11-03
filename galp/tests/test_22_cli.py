@@ -9,6 +9,8 @@ from subprocess import check_output
 
 from async_timeout import timeout
 
+import pytest
+
 import galp
 import galp.tests.steps as gts
 
@@ -54,9 +56,23 @@ def test_cli_jobs(tmpdir):
     """
     Start a pool from cli
     """
-    out = run(f'python3 -m galp.client -s {tmpdir} -j 2 galp.steps galp_hello --log-level=info --pin-workers')
+    out = run(f'python3 -m galp.client -s {tmpdir} -j 2 galp.steps galp_hello '
+        '--log-level=info --pin-workers')
 
     assert out == str(galp.steps.galp_hello.function())
+
+
+def test_cli_keep_going(tmpdir):
+    """
+    Start a failing job
+    """
+    with pytest.raises(subprocess.CalledProcessError):
+        _ = run(f'python3 -m galp.client -s {tmpdir} --steps galp.tests.steps '
+                'galp.tests.steps suicide')
+
+    out = run(f'python3 -m galp.client -s {tmpdir} --steps galp.tests.steps -k '
+            'galp.tests.steps suicide')
+    assert 'failed' in out.lower()
 
 async def test_path(client):
     """

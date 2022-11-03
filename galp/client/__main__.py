@@ -4,7 +4,6 @@ Command line interface to the galp client
 
 import argparse
 import asyncio
-import logging
 
 from contextlib import AsyncExitStack
 from importlib import import_module
@@ -27,6 +26,10 @@ parser.add_argument('-j', '--jobs', type=int, help='Number of worker processes'
         ' to run in parallel. Ignored with -e.', default=1, dest='pool_size')
 parser.add_argument('--pin-workers', action='store_true',
         help='Set cpu affinity to pin each worker to one cpu core')
+parser.add_argument('--steps', action='append',
+        help='Add the given python module to the set of usable steps')
+parser.add_argument('-k', '--keep_going', action='store_true',
+        help='Continue running on failure, returning exceptions')
 galp.cache.add_store_argument(parser, optional=True)
 galp.cli.add_parser_arguments(parser)
 
@@ -50,10 +53,14 @@ async def run(target):
                 galp.local_system(**{
                     k: getattr(args, k)
                     for k in ['config', 'log_level', 'store', 'pool_size',
-                    'pin_workers']
+                    'pin_workers', 'steps']
                     })
                 )
-        return await client.run(target, dry_run=args.dry_run)
+        return await client.run(
+                target,
+                dry_run=args.dry_run,
+                return_exceptions=args.keep_going
+                )
 
 result = asyncio.run(
         run(_target)

@@ -107,8 +107,18 @@ class Pool:
                 if rpid not in self.pids:
                     logging.error('Ignoring exit of unknown child %s', rpid)
                     continue
-                logging.error('Worker %s exited with code %s',
-                        rpid, rstatus >> 8)
+                rsig = rstatus & 0x7F
+                rdumped = rstatus & 0x80
+                rret = rstatus >> 8
+                if rsig:
+                    logging.error('Worker %s killed by signal %d (%s) %s', rpid,
+                            rsig,
+                            signal.strsignal(rsig),
+                            '(core dumped)' if rdumped else ''
+                            )
+                else:
+                    logging.error('Worker %s exited with code %s',
+                            rpid, rret)
                 await self.notify_exit(rpid)
                 self.pids.remove(rpid)
 

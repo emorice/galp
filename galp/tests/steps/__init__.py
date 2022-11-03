@@ -4,6 +4,7 @@ Steps only used for testing, and loaded through the plugin system.
 import logging
 import os
 import time
+import signal
 
 import psutil
 import numpy as np
@@ -162,7 +163,7 @@ def busy_loop():
         pass
 
 @export
-def suicide(sig):
+def suicide(sig=signal.SIGKILL):
     """
     Steps that mocks a crash py sending a signal to its own process
     """
