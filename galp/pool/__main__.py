@@ -9,8 +9,7 @@ import signal
 
 import galp.cli
 import galp.worker
-from .pool import Pool
-
+from .._pool import Pool
 
 def on_signal(sig, pool):
     """
