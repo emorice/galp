@@ -146,7 +146,7 @@ def forkserver(config, worker_config):
                 cpu = cpus[cpu_counter]
                 cpu_counter = (cpu_counter + 1) % len(cpus)
                 logging.info('Pinning new worker to cpu %d', cpu)
-                pid = galp.worker.fork(worker_config, pin_cpus=[cpu])
+                pid = galp.worker.fork(dict(worker_config, pin_cpus=[cpu]))
             else:
                 pid = galp.worker.fork(worker_config)
             socket.send(pid.to_bytes(4, 'little'))

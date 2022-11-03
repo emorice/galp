@@ -439,7 +439,7 @@ class PathMaker:
             f'{self.task}_{fileno}'
             )
 
-def fork(config, pin_cpus=None):
+def fork(config):
     """
     Forks a worker with the given arguments.
 
@@ -447,29 +447,18 @@ def fork(config, pin_cpus=None):
 
     Args:
         config: configuration dictionnary for the started worker
-        pin_cpu: if set, change cpu affinity to this list of cpus after forking
     """
-    pid = os.fork()
-    if pid == 0:
-        ret = 1
-        try:
-            if pin_cpus is not None:
-                psutil.Process().cpu_affinity(pin_cpus)
-            ret = main(config)
-        except:
-            # os._exit swallows exception so make sure to log them
-            logging.exception('Uncaught exception in worker')
-            raise
-        finally:
-            # Not sys.exit after a fork as it could call parent-specific
-            # callbacks
-            os._exit(ret) # pylint: disable=protected-access
-    return pid
+    return galp.cli.run_in_fork(main, config)
 
 def main(config):
     """
     Normal entry point
     """
+    # Set cpu pins early, before we load any new module that may read it for its
+    # init
+    if 'pin_cpus' in config:
+        psutil.Process().cpu_affinity(config['pin_cpus'])
+
     make_worker = make_worker_init(config)
     async def _coro(make_worker):
         worker = make_worker()

@@ -2,6 +2,7 @@
 Common CLI features used by several cli endpoints.
 """
 
+import os
 import asyncio
 import logging
 import signal
@@ -121,3 +122,22 @@ async def cleanup_tasks(tasks):
         except asyncio.CancelledError:
             pass
         # let other exceptions be raised
+
+def run_in_fork(function, *args, **kwargs):
+    """
+    Functional Wrapper for fork including exception handling and clean-up
+    """
+    pid = os.fork()
+    if pid == 0:
+        ret = 1
+        try:
+            ret = function(*args, **kwargs)
+        except:
+            # os._exit swallows exception so make sure to log them
+            logging.exception('Uncaught exception in forked process')
+            raise
+        finally:
+            # Not sys.exit after a fork as it could call parent-specific
+            # callbacks
+            os._exit(ret) # pylint: disable=protected-access
+    return pid
