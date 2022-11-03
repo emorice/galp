@@ -59,3 +59,10 @@ def test_inject(render_parse):
     """
     soup = render_parse('view_with_inject')
     assert any('42' in s for s in soup.strings)
+
+def test_inject_literal(render_parse):
+    """
+    Render a view depending on a graph constant
+    """
+    soup = render_parse('view_with_injected_literal')
+    assert any('42' in s for s in soup.strings)

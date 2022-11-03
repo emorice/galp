@@ -35,3 +35,12 @@ def view_with_inject(fortytwo):
     View requiring the output of an other step
     """
     return {'data': fortytwo}
+
+@export.view
+def view_with_injected_literal(bound_fortytwo):
+    """
+    View requiring a bound_constant
+    """
+    return {'data': bound_fortytwo}
+
+export.bind(bound_fortytwo=42)

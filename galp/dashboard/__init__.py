@@ -9,6 +9,7 @@ from importlib import import_module
 from flask import Flask, render_template, abort
 
 import galp.config
+from galp._client import BrokerProtocol
 
 def render_object(obj):
     """
@@ -75,13 +76,24 @@ def create_app(config):
 
         if step.is_view:
             # inject deps and check for missing args
-            task = step().to_dict()
-            # collect args from store. Since we don't pass any argument to the
-            # step, all arguments are injected, and therefore keyword arguments
-            assert not task['arg_names']
+            task = step()
+            task_dict = task.to_dict()
+
+            # Use a client protocol to parse the graph and create a map of
+            # required literals
+            proto = BrokerProtocol('CL', False, lambda _: None)
+            proto.add([task])
+
+            # collect args from local and remote store. Since we don't pass any
+            # argument to the step, all arguments are injected, and therefore keyword arguments
+            assert not task_dict['arg_names']
             kwargs = {
-                keyword.decode('ascii'): store.get_native(name)
-                for keyword, name in task['kwarg_names'].items()
+                keyword.decode('ascii'): (
+                    proto.store.get_native(name)
+                    if name in proto.store
+                    else store.get_native(name)
+                    )
+                for keyword, name in task_dict['kwarg_names'].items()
                 }
             # Run the step
             result = step.function(**kwargs)
