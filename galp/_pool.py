@@ -20,10 +20,15 @@ from galp.async_utils import background
 class Pool:
     """
     A pool of worker processes.
+
+    Args:
+        config: pool and worker config. There is no distinction between the two,
+            any worker-specific option can be given to the pool and will be
+            forwarded to the workers; and pool-specific options like pool size
+            are still visible to the worker.
     """
-    def __init__(self, config, worker_config):
+    def __init__(self, config):
         self.config = config
-        self.worker_config = worker_config
         self.pids = set()
         self.signal = None
         self.pending_signal = asyncio.Event()
@@ -52,7 +57,7 @@ class Pool:
             async with background(
                 self.broker_transport.listen_reply_loop()
                 ):
-                async with run_forkserver(self.config, self.worker_config) as forkserver_socket:
+                async with run_forkserver(self.config) as forkserver_socket:
                     self.forkserver_socket = forkserver_socket
                     for _ in range(self.config['pool_size']):
                         self.start_worker()
@@ -125,7 +130,7 @@ class Pool:
                 rpid, rexit = os.waitpid(pid, 0)
                 logging.info('Child %s exited with code %d', pid, rexit >> 8)
 
-def forkserver(config, worker_config):
+def forkserver(config):
     """
     A dedicated loop to fork workers on demand and return the pids.
 
@@ -146,22 +151,22 @@ def forkserver(config, worker_config):
                 cpu = cpus[cpu_counter]
                 cpu_counter = (cpu_counter + 1) % len(cpus)
                 logging.info('Pinning new worker to cpu %d', cpu)
-                pid = galp.worker.fork(dict(worker_config, pin_cpus=[cpu]))
+                pid = galp.worker.fork(dict(config, pin_cpus=[cpu]))
             else:
-                pid = galp.worker.fork(worker_config)
+                pid = galp.worker.fork(config)
             socket.send(pid.to_bytes(4, 'little'))
         else:
             break
 
 @asynccontextmanager
-async def run_forkserver(config, worker_config):
+async def run_forkserver(config):
     """
     Async context handler to start a forkserver thread.
     """
     socket = zmq.Context.instance().socket(zmq.PAIR) # pylint: disable=no-member
     socket.bind('inproc://galp_forkserver')
 
-    thread = threading.Thread(target=forkserver, args=(config, worker_config))
+    thread = threading.Thread(target=forkserver, args=(config,))
     thread.start()
 
     try:
@@ -169,3 +174,36 @@ async def run_forkserver(config, worker_config):
     finally:
         socket.send(b'EXIT')
         thread.join()
+
+def on_signal(sig, pool):
+    """
+    Signal handler, propagates it to the pool
+
+    Does not handle race conditions where a signal is received before the
+    previous is handled, but that should not be a problem: CHLD always does the
+    same thing and TERM or INT would supersede CHLD.
+    """
+    logging.info("Caught signal %d (%s)", sig, signal.strsignal(sig))
+    pool.set_signal(sig)
+
+def main(config):
+    """
+    Main process entry point
+    """
+    galp.cli.setup(" pool ", config.get('log_level'))
+    logging.info("Starting worker pool")
+
+    async def _amain(config):
+        pool = Pool(config)
+
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD):
+            loop.add_signal_handler(sig,
+                lambda sig=sig, pool=pool: on_signal(sig, pool)
+            )
+
+        await pool.run()
+
+        logging.info("Pool manager exiting")
+    asyncio.run(_amain(config))
+    return 0

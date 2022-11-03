@@ -18,6 +18,12 @@ def add_parser_arguments(parser):
 def setup(name, loglevel=None):
     """
     Common CLI setup steps
+
+    Args:
+        name: a string that will be added to each log line, identifying the
+            process type
+        loglevel: a string among 'debug', 'info', 'warn' (case-insenstivie), or an integer or
+            integer-like string, or None (= warn)
     """
     log_format = (
         "%(asctime)s " # Time, useful when reading logs from overnight pipeline runs
@@ -26,13 +32,17 @@ def setup(name, loglevel=None):
         "["+name+" %(process)d] " # Identification of the process (type + pid)
         "%(message)s" # Message
     )
-    if loglevel:
+    if loglevel is None:
+        loglevel = logging.WARNING
+    try:
+        level = int(loglevel)
+    except ValueError:
         loglevel = loglevel.lower()
-    level = dict(
-        debug=logging.DEBUG,
-        info=logging.INFO,
-        warning=logging.WARNING
-        ).get(loglevel, logging.WARNING)
+        level = dict(
+            debug=logging.DEBUG,
+            info=logging.INFO,
+            warning=logging.WARNING
+            ).get(loglevel)
     # Note the use of force ; this unregisters existing handlers that could have been
     # set by a parent forking process
     logging.basicConfig(level=level, format=log_format, force=True)

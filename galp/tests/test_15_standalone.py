@@ -2,7 +2,11 @@
 Tests running galp tasks on a locally created galp system with minimum setup
 """
 
+import signal
+
 from async_timeout import timeout
+
+import pytest
 
 import galp
 import galp.tests.steps as gts
@@ -70,3 +74,13 @@ def test_oneshot_dryrun(tmpdir):
         store=tmpdir, steps=['galp.tests.steps'], timeout=3,
         dry_run=True
         ) is None
+
+def test_oneshot_suicide(tmpdir):
+    """
+    Run a task that will cause worker crash
+    """
+    with pytest.raises(galp.TaskFailedError):
+        galp.run(
+                gts.suicide(signal.SIGKILL),
+                store=tmpdir, steps=['galp.tests.steps'], timeout=3,
+                )

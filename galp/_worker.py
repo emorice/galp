@@ -78,7 +78,6 @@ def make_worker_init(config):
         config['steps'].append('galp.steps')
     else:
         config['steps'] = ['galp.steps']
-    logging.info(config['steps'])
 
     # Early setup, make sure this work before attempting config
     galp.cli.setup("worker", config.get('log_level'))

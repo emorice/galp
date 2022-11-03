@@ -2,4 +2,4 @@
 Pools of workers
 """
 
-from .._pool import Pool
+from .._pool import Pool, main

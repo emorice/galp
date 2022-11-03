@@ -3,18 +3,23 @@ All-in-one client, broker, worker
 """
 
 import os
+import signal
 import tempfile
+import logging
 
-from contextlib import asynccontextmanager, AsyncExitStack
+from contextlib import asynccontextmanager, AsyncExitStack, contextmanager
 
+import galp.pool
 from galp.client import Client
 from galp.broker import Broker
-from galp.pool import Pool
 from galp.async_utils import background
+from galp.cli import run_in_fork
 
 class LocalSystem:
     """
     Asynchronous exit stack encapsulating broker, pool and client management
+
+    Tries to pass on the current default log level to the forked processes.
     """
     def __init__(self, pool_size=1, pin_workers=False, **worker_options):
         self._stack = AsyncExitStack()
@@ -30,11 +35,10 @@ class LocalSystem:
                 'pool_size': pool_size,
                 'endpoint': worker_endpoint,
                 'pin_workers': pin_workers,
-            }
-        self._worker_config = {
-                'endpoint': worker_endpoint,
                 **worker_options,
             }
+        if 'log_level' not in self._pool_config:
+            self._pool_config['log_level'] = logging.getLogger().level
 
         self.client = None
 
@@ -49,12 +53,8 @@ class LocalSystem:
         await self._stack.enter_async_context(
             background(self._broker.run())
             )
-        _pool = Pool(
-            self._pool_config,
-            self._worker_config
-            )
-        await self._stack.enter_async_context(
-            background(_pool.run())
+        self._stack.enter_context(
+            _fork_pool(self._pool_config)
             )
         self.client =  Client(self._client_endpoint)
         return self.client
@@ -66,6 +66,13 @@ class LocalSystem:
         self.client = None
         await self._stack.aclose()
 
+@contextmanager
+def _fork_pool(config):
+    pid = run_in_fork(galp.pool.main, config)
+    yield
+    os.kill(pid, signal.SIGTERM)
+    os.waitpid(pid, 0)
+
 class TempSystem(LocalSystem):
     """
     Manages a temporary directory for LocalSystem
@@ -74,7 +81,7 @@ class TempSystem(LocalSystem):
         tmpdir = self._stack.enter_context(
             tempfile.TemporaryDirectory()
             )
-        self._worker_config['store'] = tmpdir
+        self._pool_config['store'] = tmpdir
         return await super().start()
 
 @asynccontextmanager
