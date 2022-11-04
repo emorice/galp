@@ -333,7 +333,7 @@ class Protocol(LowerProtocol):
         self._validate(len(msg) >= 3, route, 'DONE without name or definition')
 
         name = TaskName(msg[1])
-        task_dict = msgpack.unpackb(msg[2])
+        task_dict = self._load_task_dict(msg[2])
         task_dict['name'] = name
         children = [ TaskName(child_name) for child_name in msg[3:] ]
 
@@ -402,11 +402,26 @@ class Protocol(LowerProtocol):
 
         return self.on_submit(route, task_dict)
 
+    @staticmethod
+    def _load_task_dict(payload):
+        task_dict = msgpack.unpackb(payload)
+        for key in ['arg_names', 'children']:
+            if key in task_dict:
+                task_dict[key] = [TaskName(name) for name in task_dict[key]]
+        for key in ['kwarg_names']:
+            if key in task_dict:
+                task_dict[key] = { kw: TaskName(name)
+                        for kw, name in task_dict[key].items()}
+        for key in ['parent']:
+            if key in task_dict:
+                task_dict[key] = TaskName(task_dict[key])
+        return task_dict
+
     @event.on('FOUND')
     def _on_found(self, route, msg):
         self._validate(len(msg) == 3, 'FOUND with wrong number of parts')
         name = TaskName(msg[1])
-        task_dict = msgpack.unpackb(msg[2])
+        task_dict = self._load_task_dict(msg[2])
         task_dict['name'] = name
         self.on_found(route, task_dict)
 
