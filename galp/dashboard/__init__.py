@@ -79,22 +79,34 @@ def create_app(config):
             task = step()
             task_dict = task.to_dict()
 
-            # Use a client protocol to parse the graph and create a map of
-            # required literals
-            proto = BrokerProtocol('CL', False, lambda _: None)
+            # Re-use client logic to parse the graph and sort out which pieces
+            # need to be fetched from store
+
+            ## Define how to fetch missing pieces (direct read from store)
+            proto = None # fwd decl
+            def _schedule(key):
+                verb, name = key
+                if verb != 'GET':
+                    raise NotImplementedError
+                if name not in proto.store:
+                    serialized = store.get_serial(name)
+                    proto.store.put_serial(name, serialized)
+                _, children = proto.store.get_serial(name)
+                proto.script.commands[key].done(children)
+                proto.schedule_new()
+
+            proto = BrokerProtocol('CL', False, _schedule)
             proto.add([task])
 
-            # collect args from local and remote store. Since we don't pass any
-            # argument to the step, all arguments are injected, and therefore keyword arguments
+            ## Collect args from local and remote store. Since we don't pass any
+            ## argument to the step, all arguments are injected, and therefore keyword arguments
             assert not task_dict['arg_names']
-            kwargs = {
-                keyword.decode('ascii'): (
-                    proto.store.get_native(name)
-                    if name in proto.store
-                    else store.get_native(name)
-                    )
-                for keyword, name in task_dict['kwarg_names'].items()
-                }
+            kwargs = {}
+            for keyword, name in task_dict['kwarg_names'].items():
+                proto.script.do_once('RGET', name)
+                proto.schedule_new()
+                kwargs[keyword.decode('ascii')] = proto.store.get_native(name)
+
             # Run the step
             result = step.function(**kwargs)
             # Render the result
