@@ -43,4 +43,4 @@ def view_with_injected_literal(bound_fortytwo):
     """
     return {'data': bound_fortytwo}
 
-export.bind(bound_fortytwo=42)
+export.bind(bound_fortytwo={'x': fortytwo})
