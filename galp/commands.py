@@ -61,7 +61,8 @@ class Command:
         self.outputs = set()
         self._state = 'INIT'
         self._sub_commands = []
-        self.update(init=True)
+        # TODO: move this out of constructor
+        advance_all([self])
 
     when = {}
 
@@ -104,30 +105,43 @@ class Command:
 
         return Status.PENDING
 
-    def change_status(self, new_status, init=False):
+    def advance(self, external_status=None):
         """
-        Updates status, triggering callbacks and collecting replies
+        Try to advance the commands state. If the move causes new commands to be
+        created or moves to a terminal state and trigger downstream commands,
+        returns them for them to be advanced by the caller too.
         """
+        # If command is already in terminal state, do nothing. In theory, the
+        # rest of the procedure should be a no-op anyway, but that makes it
+        # easier e.g. to log things only once.
+        if self.status != Status.PENDING:
+            # Avoid silently ignoring conflicting external status
+            assert external_status is None or external_status == self.status
+            return []
         old_status = self.status
-        self.status = new_status
+
+        # Command is pending, i.e. waiting for an external trigger. Maybe this
+        # trigger came since the last advance attempt, so we try to move states.
+        if external_status is None:
+            # TODO: this should also return possible child commands.
+            self.status = self._eval()
+        else:
+            self.status = external_status
+
+        # Give the script the chance to hook anything, like printing out progress
         if self.script:
-            self.script.notify_change(self, old_status, new_status, init)
+            self.script.notify_change(self, old_status, self.status)
 
-        logging.info('%s %s',
-                ('NEW' if init else new_status.name).ljust(7),
-                self
-                )
-        if old_status == Status.PENDING and new_status != Status.PENDING:
-            for command in self.outputs:
-                command.update()
+        # Also log the change anyway
+        logging.info('%s %s', self.status.name.ljust(7), self)
 
-    def update(self, init=False):
-        """
-        Re-evals condition and possibly trigger callbacks, returns a list of
-        replies
-        """
-        if self.status == Status.PENDING:
-            self.change_status(self._eval(), init)
+        # Maybe this caused the command to advance to a terminal state (DONE or
+        # FAILED). In that case downstream commands must be checked too.
+        if self.status != Status.PENDING:
+            return self.outputs
+
+        # Else, still pending, nothing else to check
+        return []
 
     def done(self, result=None):
         """
@@ -170,8 +184,11 @@ class Command:
         return self._mark_as(Status.FAILED, result)
 
     def _mark_as(self, status, result):
+        """
+        Externally change the status of the command, then try to advance it
+        """
         self.result = result
-        self.change_status(status)
+        advance_all(self.advance(status))
 
     def do_once(self, verb, name, *args, **kwargs):
         """
@@ -208,6 +225,16 @@ class Command:
             f' = [{", ".join(str(r) for r in self.result)}]'
             if self.is_done() else ''
             )
+
+def advance_all(commands):
+    """
+    Try to advance all given commands, and all downstream depending on them the
+    case being
+    """
+    commands = list(commands)
+    while commands:
+        command = commands.pop()
+        commands.extend(command.advance())
 
 class UniqueCommand(Command):
     """
@@ -273,7 +300,7 @@ class Script(Command):
         """
         return Callback(command, callback)
 
-    def notify_change(self, command, old_status, new_status, init):
+    def notify_change(self, command, old_status, new_status):
         """
         Hook called when the graph status changes
         """
@@ -298,15 +325,18 @@ class Script(Command):
             if command.name in self._task_dicts:
                 step_name_s = self._task_dicts[command.name]['step_name'].decode('ascii')
 
-                if init:
+                # We log 'SUB' every time a submit command's status "changes" to
+                # PENDING. Currently this only happens when the command is
+                # created.
+                if new_status == Status.PENDING:
                     print_status('SUB', command.name, step_name_s)
                 elif new_status == Status.DONE:
                     print_status('DONE', command.name, step_name_s)
                 if new_status == Status.FAILED:
                     print_status('FAIL', command.name, step_name_s)
 
-    def update(self, *_, **_k):
-        pass
+    def advance(self, *_, **_k):
+        return []
 
     def __str__(self):
         return 'script'
