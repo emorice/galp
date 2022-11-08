@@ -41,8 +41,6 @@ class Command:
         self.outputs = set()
         self._state = 'INIT'
         self._sub_commands = []
-        # TODO: move this out of constructor
-        advance_all([self])
 
     when = {}
 
@@ -58,6 +56,7 @@ class Command:
         State-based handling
         """
         sub_commands = self._sub_commands
+        new_sub_commands = []
         # Aggregate status of all sub-commands
         sub_status = self.script.status_conj(sub_commands)
         while sub_status != Status.PENDING:
@@ -69,7 +68,7 @@ class Command:
                         sub.result
                         for sub in sub_commands
                         if sub.status == Status.FAILED)
-                return Status.FAILED
+                return Status.FAILED, []
 
             # At this point, all sub commands are DONE
 
@@ -88,19 +87,25 @@ class Command:
             if isinstance(sub_commands, Command):
                 sub_commands = [sub_commands]
 
-            self._sub_commands = sub_commands
-            # Returning pending from a handlers means 'stay in the same state'
-            if new_state == Status.PENDING:
-                new_state = self._state
+            new_sub_commands = sub_commands
+
             logging.debug('%s: %s => %s', self, self._state, new_state)
             self._state = new_state
             if self._state in (Status.DONE, Status.FAILED):
-                return self._state
+                return self._state, []
 
             # Re-inspect status of new set of sub-commands and loop
             sub_status = self.script.status_conj(sub_commands)
 
-        return Status.PENDING
+        # Ensure all remaining sub-commands have downstream links pointing to
+        # this command before relinquishing control
+        for sub in sub_commands:
+            sub.out(self)
+
+        # Save for callback
+        self._sub_commands = sub_commands
+
+        return Status.PENDING, new_sub_commands
 
     def advance(self, external_status=None):
         """
@@ -108,6 +113,8 @@ class Command:
         created or moves to a terminal state and trigger downstream commands,
         returns them for them to be advanced by the caller too.
         """
+        new_sub_commands = []
+
         # If command is already in terminal state, do nothing. In theory, the
         # rest of the procedure should be a no-op anyway, but that makes it
         # easier e.g. to log things only once.
@@ -121,7 +128,7 @@ class Command:
         # trigger came since the last advance attempt, so we try to move states.
         if external_status is None:
             # TODO: this should also return possible child commands.
-            self.status = self._eval()
+            self.status, new_sub_commands = self._eval()
         else:
             self.status = external_status
 
@@ -135,10 +142,10 @@ class Command:
         # Maybe this caused the command to advance to a terminal state (DONE or
         # FAILED). In that case downstream commands must be checked too.
         if self.status != Status.PENDING:
-            return self.outputs
+            return new_sub_commands + list(self.outputs)
 
         # Else, still pending, nothing else to check
-        return []
+        return new_sub_commands
 
     def done(self, result=None):
         """
@@ -196,10 +203,8 @@ class Command:
 
         if key in self.script.commands:
             cmd = self.script.commands[key]
-            cmd.out(self)
             return cmd
         cmd = cls(self.script, name, *args, **kwargs)
-        cmd.out(self)
         self.script.commands[key] = cmd
         self.script.new_commands.append(key)
         return cmd
@@ -223,7 +228,7 @@ def advance_all(commands):
 
 class UniqueCommand(Command):
     """
-    Any command that is fully defined and indentified by a task name
+    Any command that is fully defined and identified by a task name
     """
     def __init__(self, script, name):
         self.name = name
@@ -285,9 +290,15 @@ class Script(Command):
 
     def callback(self, command, callback):
         """
-        Adds an arbitrary callback to an existing command
+        Adds an arbitrary callback to an existing command. This triggers
+        execution of the command as far as possible, and of the callback if
+        ready.
         """
-        return Callback(command, callback)
+        cb_command = Callback(command, callback)
+        # The callback is set as a downstream link to the command, but it still
+        # need an external trigger, so we need to advance it
+        advance_all([command])
+        return cb_command
 
     def notify_change(self, command, old_status, new_status):
         """
@@ -348,16 +359,33 @@ class Script(Command):
             return Status.FAILED
         return Status.PENDING
 
+class InertCommand(UniqueCommand):
+    """
+    Command tied to an external event
+    """
+    def __str__(self):
+        return f'{self.__class__.__name__.lower().ljust(7)} {self.name}' + self._str_res
+
+    def _eval(self):
+        return Status.PENDING, []
+
 @once
-class Get(UniqueCommand):
+class Get(InertCommand):
     """
     Get a single resource part
     """
-    def __str__(self):
-        return f' get {self.name}' + self._str_res
 
-    def _eval(self):
-        return Status.PENDING
+@once
+class Submit(InertCommand):
+    """
+    Remotely execute a single step
+    """
+
+@once
+class Stat(InertCommand):
+    """
+    Get a task's metadata
+    """
 
 @once
 class Rget(UniqueCommand):
@@ -387,8 +415,6 @@ class Collect(Command):
     """
     def __init__(self, script, commands):
         self.commands = commands
-        for cmd in commands:
-            cmd.out(self)
         super().__init__(script)
 
     def __str__(self):
@@ -398,9 +424,9 @@ class Collect(Command):
 
     @when('INIT')
     def _init(self):
-        return 'END', self.commands
+        return 'COLLECT', self.commands
 
-    @when('END')
+    @when('COLLECT')
     def _end(self, *_):
         return Status.DONE
 
@@ -420,13 +446,13 @@ class Callback(Command):
     def _eval(self):
         if self._in.status != Status.PENDING:
             self._callback(self._in.status)
-            return Status.DONE
-        return Status.PENDING
+            return Status.DONE, []
+        return Status.PENDING, []
 
 @once
 class SSubmit(UniqueCommand):
     """
-    A non-recursive ("simple") task submission: executes depndencies, but not
+    A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
     """
     _dry = False
@@ -460,7 +486,6 @@ class SSubmit(UniqueCommand):
             if self._dry:
                 raise NotImplementedError
             query_cmd = Query(self.script, task_dict['subject'], task_dict['query'])
-            query_cmd.out(self)
             return 'QUERY', query_cmd
 
         # Else, regular job, process dependencies first
@@ -593,7 +618,7 @@ class Query(Command):
         # Query set, turn each in its own query
         if hasattr(self.query, 'items'):
             return 'QUERYSET', [
-                    Query(self.script, self.subject, (key, value)).out(self)
+                    Query(self.script, self.subject, (key, value))
                     for key, value in self.query.items()
                     ]
 
@@ -648,7 +673,7 @@ class Query(Command):
             except ValueError: # keyword argument
                 target = task_dict['kwarg_names'][index]
             sub_commands.append(
-                Query(self.script, target, subquery).out(self)
+                Query(self.script, target, subquery)
                 )
         return 'ARG_QUERYSET', sub_commands
 
@@ -692,7 +717,7 @@ class Query(Command):
                 raise TypeError('Object is not a collection of tasks, cannot'
                     ' use a "*" query here')
             subquery_commands.append(
-                    Query(self.script, task.name, subquery).out(self)
+                    Query(self.script, task.name, subquery)
                     )
 
         return 'ITEMS', subquery_commands
@@ -763,25 +788,3 @@ class SRun(UniqueCommand):
     @when('GET')
     def _rget(self, _):
         return Status.DONE
-
-@once
-class Submit(UniqueCommand):
-    """
-    Get a single resource part
-    """
-    def __str__(self):
-        return f' submit {self.name}' + self._str_res
-
-    def _eval(self):
-        return Status.PENDING
-
-@once
-class Stat(UniqueCommand):
-    """
-    Get a task's metadata
-    """
-    def __str__(self):
-        return f' stat {self.name}' + self._str_res
-
-    def _eval(self):
-        return Status.PENDING

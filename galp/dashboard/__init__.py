@@ -9,6 +9,7 @@ from importlib import import_module
 from flask import Flask, render_template, abort
 
 import galp.config
+import galp.commands
 from galp._client import BrokerProtocol
 
 def render_object(obj):
@@ -103,7 +104,7 @@ def create_app(config):
             assert not task_dict['arg_names']
             kwargs = {}
             for keyword, name in task_dict['kwarg_names'].items():
-                proto.script.do_once('RGET', name)
+                galp.commands.advance_all([proto.script.do_once('RGET', name)])
                 proto.schedule_new()
                 kwargs[keyword.decode('ascii')] = proto.store.get_native(name)
 
