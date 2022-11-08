@@ -11,26 +11,6 @@ import logging
 
 from .graph import task_deps, TaskReference, TaskType
 
-def status_conj(commands):
-    """
-    Ternary conjunction of an iterable of status
-    """
-    status = [cmd.status for cmd in commands]
-    if all(s == Status.DONE for s in status):
-        return Status.DONE
-    if any(s == Status.FAILED for s in status):
-        return Status.FAILED
-    return Status.PENDING
-
-def status_conj_any(commands):
-    """
-    Ternary conjunction of an iterable of status
-    """
-    status = [cmd.status for cmd in commands]
-    if all(s != Status.PENDING for s in status):
-        return Status.DONE
-    return Status.PENDING
-
 class Status(Enum):
     """
     Command status
@@ -78,7 +58,21 @@ class Command:
         State-based handling
         """
         sub_commands = self._sub_commands
-        while all(cmd.status != Status.PENDING for cmd in sub_commands):
+        # Aggregate status of all sub-commands
+        sub_status = self.script.status_conj(sub_commands)
+        while sub_status != Status.PENDING:
+            # By default, we stop processing a command on failures. In theory
+            # the command could have other independent work to do, but we have
+            # no use case yet.
+            if sub_status == Status.FAILED:
+                self.result = next(
+                        sub.result
+                        for sub in sub_commands
+                        if sub.status == Status.FAILED)
+                return Status.FAILED
+
+            # At this point, all sub commands are DONE
+
             try:
                 handler = self.when[self._state]
             except KeyError:
@@ -102,6 +96,9 @@ class Command:
             self._state = new_state
             if self._state in (Status.DONE, Status.FAILED):
                 return self._state
+
+            # Re-inspect status of new set of sub-commands and loop
+            sub_status = self.script.status_conj(sub_commands)
 
         return Status.PENDING
 
@@ -207,18 +204,6 @@ class Command:
         self.script.new_commands.append(key)
         return cmd
 
-    def req(self, *commands):
-        """
-        Aggregate failure status of commands, propagating result of first failure
-        """
-
-        for command in commands:
-            if command.is_failed():
-                self.result = command.result
-                break
-
-        return status_conj(commands)
-
     @property
     def _str_res(self):
         return (
@@ -278,21 +263,25 @@ class Script(Command):
         verbose: whether to print brief summary of command completion to stderr
         store: Store object, destination to store Query result. Only needed for
             queries.
+        keep_going: whether to attempt to complete independent commands when one
+            fails. If False, attempts to "fail fast" instead, and finishes as
+            soon as any command fails.
     """
-    def __init__(self, verbose=True, store=None):
+    def __init__(self, verbose=True, store=None, keep_going=False):
         super().__init__(self)
         self.commands = {}
         self.new_commands = deque()
         self.verbose = verbose
+        self.keep_going=keep_going
         self.store = store
 
         self._task_dicts = {}
 
-    def collect(self, commands, allow_failures=False):
+    def collect(self, commands):
         """
         Creates a command representing a collection of other commands
         """
-        return Collect(self, commands, allow_failures)
+        return Collect(self, commands)
 
     def callback(self, command, callback):
         """
@@ -341,6 +330,24 @@ class Script(Command):
     def __str__(self):
         return 'script'
 
+    def status_conj(self, commands):
+        """
+        Status conjunction respecting self.keep_going
+        """
+        status = [cmd.status for cmd in commands]
+
+        if all(s == Status.DONE for s in status):
+            return Status.DONE
+
+        if self.keep_going:
+            if any(s == Status.PENDING for s in status):
+                return Status.PENDING
+            return Status.FAILED
+
+        if any(s == Status.FAILED for s in status):
+            return Status.FAILED
+        return Status.PENDING
+
 @once
 class Get(UniqueCommand):
     """
@@ -365,26 +372,21 @@ class Rget(UniqueCommand):
 
     @when('PARENT')
     def _get(self, get):
-        failed = self.req(get)
-        if failed:
-            return failed
-
         return 'CHILDREN', [
                 self.do_once('RGET', child_name)
                 for child_name in get.result
                 ]
 
     @when('CHILDREN')
-    def _sub_gets(self, *sub_gets):
-        return self.req(*sub_gets), sub_gets
+    def _sub_gets(self, *_):
+        return Status.DONE
 
 class Collect(Command):
     """
     A collection of other commands
     """
-    def __init__(self, script, commands, allow_failures):
+    def __init__(self, script, commands):
         self.commands = commands
-        self.allow_failures = allow_failures
         for cmd in commands:
             cmd.out(self)
         super().__init__(script)
@@ -392,11 +394,15 @@ class Collect(Command):
     def __str__(self):
         return 'collect'
 
-    def _eval(self):
-        if self.allow_failures:
-            return status_conj_any(self.commands)
+    when = When()
 
-        return self.req(*self.commands)
+    @when('INIT')
+    def _init(self):
+        return 'END', self.commands
+
+    @when('END')
+    def _end(self, *_):
+        return Status.DONE
 
 class Callback(Command):
     """
@@ -439,10 +445,6 @@ class SSubmit(UniqueCommand):
         """
         Sort out queries, remote jobs and literals
         """
-        sta = self.req(stat)
-        if sta:
-            return sta
-
         _task_done, task_dict, children = stat.result
 
         # Short circuit for tasks already processed and literals
@@ -469,14 +471,10 @@ class SSubmit(UniqueCommand):
                 ]
 
     @when('DEPS')
-    def _deps(self, *deps):
+    def _deps(self, *_):
         """
         Check deps availability before proceeding to main submit
         """
-        sta = self.req(*deps)
-        if sta:
-            return sta
-
         # For dry-runs, bypass the submission
         if self._dry:
             # Explicitely set the result to "no children"
@@ -491,10 +489,6 @@ class SSubmit(UniqueCommand):
         """
         Check the main result and return possible children tasks
         """
-        sta = self.req(main_sub)
-        if sta:
-            return sta
-
         self.result = main_sub.result
         return Status.DONE
 
@@ -504,10 +498,6 @@ class SSubmit(UniqueCommand):
         """
         Check query completion and put result in store
         """
-        not_done = self.req(query_cmd)
-        if not_done:
-            return not_done
-
         # Check result in store
         store = self.script.store
         child_names = store.put_native(self.name, query_cmd.result)
@@ -546,10 +536,6 @@ class RSubmit(UniqueCommand):
         """
         Check the main result and proceed with possible children tasks
         """
-        sta = self.req(ssub)
-        if sta:
-            return sta
-
         children = ssub.result
 
         cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
@@ -557,11 +543,11 @@ class RSubmit(UniqueCommand):
                 for child_name in children ]
 
     @when('CHILDREN')
-    def _children(self, *children):
+    def _children(self, *_):
         """
         Check completion of children and propagate result
         """
-        return self.req(*children)
+        return Status.DONE
 
 class Query(Command):
     """
@@ -632,10 +618,6 @@ class Query(Command):
         """
         Check and returns status request
         """
-        not_done = self.req(stat_cmd)
-        if not_done:
-            return not_done
-
         task_done, *_ = stat_cmd.result
 
         self.result = task_done
@@ -647,10 +629,6 @@ class Query(Command):
         Build list of sub-queries for arguments of subject task from the
         definition obtained from STAT
         """
-        not_done = self.req(stat_cmd)
-        if not_done:
-            return not_done
-
         _task_done, task_dict, _children = stat_cmd.result
         _, arg_subqueries = self.query
 
@@ -679,10 +657,6 @@ class Query(Command):
         """
         Check and merge argument query items
         """
-        not_done = self.req(*query_items)
-        if not_done:
-            return not_done
-
         _, arg_subqueries = self.query
 
         result = {}
@@ -697,10 +671,6 @@ class Query(Command):
         """
         Check and merge query items
         """
-        not_done = self.req(*query_items)
-        if not_done:
-            return not_done
-
         result = {}
         for qitem in query_items:
             result[qitem.query[0]] = qitem.result
@@ -708,14 +678,10 @@ class Query(Command):
         return Status.DONE
 
     @when('ITERATOR')
-    def _iterator(self, srun):
+    def _iterator(self, _):
         """
         Check simple run, extract raw result and build subqueries
         """
-        sta = self.req(srun)
-        if sta:
-            return sta
-
         shallow_obj = self.script.store.get_native(self.subject, shallow=True)
 
         _, subquery = self.query
@@ -736,10 +702,6 @@ class Query(Command):
         """
         Check and pack items
         """
-        not_done = self.req(*items)
-        if not_done:
-            return not_done
-
         self.result = [ item.result for item in items ]
         return Status.DONE
 
@@ -775,16 +737,12 @@ class Run(UniqueCommand):
         return 'RSUB', self.do_once('RSUBMIT', self.name)
 
     @when('RSUB')
-    def _rsub(self, rsub):
-        sta = self.req(rsub)
-        if sta:
-            return sta
-
+    def _rsub(self, _):
         return 'RGET', self.do_once('RGET', self.name)
 
     @when('RGET')
-    def _rsub(self, rget):
-        return self.req(rget)
+    def _rsub(self, _):
+        return Status.DONE
 
 @once
 class SRun(UniqueCommand):
@@ -799,16 +757,12 @@ class SRun(UniqueCommand):
         return 'SSUB', self.do_once('SSUBMIT', self.name)
 
     @when('SSUB')
-    def _ssub(self, ssub):
-        sta = self.req(ssub)
-        if sta:
-            return sta
-
+    def _ssub(self, _):
         return 'GET', self.do_once('GET', self.name)
 
     @when('GET')
-    def _rget(self, get):
-        return self.req(get)
+    def _rget(self, _):
+        return Status.DONE
 
 @once
 class Submit(UniqueCommand):

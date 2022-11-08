@@ -200,11 +200,22 @@ class Client:
 
         script = self.protocol.script
 
+        # Note: this is shared by different calls to the collection methods. We
+        # currently don't have a way to specify that the same task should be
+        # considered as either failed or pending depending on the caller. Doing
+        # so would require duplicating the command graph. So for now, calling
+        # collection routines twice simulatenously on the same client with
+        # different keep_going parameters is not allowed and will result in
+        # unspecified behavior.
+        if return_exceptions:
+            script.keep_going = True
+        else:
+            script.keep_going = False
+
         main_command = 'DRYRUN' if dry_run else 'RUN'
 
         collect = script.collect(
-                commands=[script.do_once(main_command, t.name) for t in tasks],
-                allow_failures=return_exceptions
+                commands=[script.do_once(main_command, t.name) for t in tasks]
                 )
 
         script.callback(
