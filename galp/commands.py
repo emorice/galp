@@ -288,7 +288,7 @@ class Script(Command):
 
         if isinstance(command, Stat):
             if new_status == Status.DONE:
-                task_done, task_dict, *_ = command.result
+                task_done, task_dict, _children = command.result
                 if not task_done and 'step_name' in task_dict:
                     self._task_dicts[command.name] = task_dict
                     print_status('PLAN', command.name,
@@ -312,14 +312,10 @@ class Script(Command):
         return 'script'
 
 @once
-class Get(Command):
+class Get(UniqueCommand):
     """
     Get a single resource part
     """
-    def __init__(self, script, name):
-        self.name = name
-        super().__init__(script)
-
     def __str__(self):
         return f' get {self.name}' + self._str_res
 
@@ -334,7 +330,7 @@ class Rget(UniqueCommand):
     when = When()
 
     @when('INIT')
-    def _init(self, *_):
+    def _init(self):
         return 'PARENT', self.do_once('GET', self.name)
 
     @when('PARENT')
@@ -397,10 +393,11 @@ class SSubmit(UniqueCommand):
     A non-recursive ("simple") task submission: executes depndencies, but not
     children. Return said children as result on success.
     """
+    _dry = False
     when = When()
 
     @when('INIT')
-    def _init(self, *_):
+    def _init(self):
         """
         Emit the initial stat
         """
@@ -428,13 +425,16 @@ class SSubmit(UniqueCommand):
 
         # Queries, wrap in the dedicated command
         if 'query' in task_dict:
+            if self._dry:
+                raise NotImplementedError
             query_cmd = Query(self.script, task_dict['subject'], task_dict['query'])
             query_cmd.out(self)
             return 'QUERY', query_cmd
 
         # Else, regular job, process dependencies first
+        cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
         return 'DEPS', [
-                self.do_once('RSUBMIT', dep)
+                self.do_once(cmd, dep)
                 for dep in task_deps(task_dict)
                 ]
 
@@ -447,7 +447,13 @@ class SSubmit(UniqueCommand):
         if sta:
             return sta
 
-        # task itself
+        # For dry-runs, bypass the submission
+        if self._dry:
+            # Explicitely set the result to "no children"
+            self.result = []
+            return Status.DONE
+
+        # Task itself
         return 'MAIN', self.do_once('SUBMIT', self.name)
 
     @when('MAIN')
@@ -482,19 +488,28 @@ class SSubmit(UniqueCommand):
         return Status.DONE
 
 @once
+class DrySSubmit(SSubmit):
+    """
+    Dry-run variant of SSubmit
+    """
+    _dry = True
+
+@once
 class RSubmit(UniqueCommand):
     """
     Recursive submit, with children, aka an SSubmit plus a RSubmit per child
     """
+    _dry = False
+
     when = When()
 
     @when('INIT')
-    def _init(self, *_):
+    def _init(self):
         """
         Emit the simple submit
         """
-        ssub = self.do_once('SSUBMIT', self.name)
-        return 'MAIN', ssub
+        cmd = 'DRYSSUBMIT' if self._dry else 'SSUBMIT'
+        return 'MAIN', self.do_once(cmd, self.name)
 
     @when('MAIN')
     def _main(self, ssub):
@@ -507,7 +522,8 @@ class RSubmit(UniqueCommand):
 
         children = ssub.result
 
-        return 'CHILDREN', [ self.do_once('RSUBMIT', child_name)
+        cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
+        return 'CHILDREN', [ self.do_once(cmd, child_name)
                 for child_name in children ]
 
     @when('CHILDREN')
@@ -536,7 +552,7 @@ class Query(Command):
     when = When()
 
     @when('INIT')
-    def _init(self, *_):
+    def _init(self):
         """
         Process the query and decide on further commands to issue
         """
@@ -697,8 +713,10 @@ class Query(Command):
         self.result = [ item.result for item in items ]
         return Status.DONE
 
+# Despite the name, since a DryRun never does any fetches, it is implemented as
+# a special case of RSubmit and not Run (Run is RSubmit + RGet)
 @once
-class DryRun(UniqueCommand):
+class DryRun(RSubmit):
     """
     A task dry-run. Similar to RSUBMIT, but does not actually submit tasks, and
     instead moves on as soon as the STAT command succeeded.
@@ -713,47 +731,29 @@ class DryRun(UniqueCommand):
     This is the intended behavior, it reflects the inherent limit of a dry-run:
     part of the task graph is unknown before we actually start executing it.
     """
-    def _eval(self):
-        stat = self.do_once('STAT', self.name)
-        sta = self.req(stat)
-        if sta:
-            return sta
-
-        task_done, task_dict, children = stat.result
-
-        if not task_done:
-            # dependencies
-            sta = self.req(*[
-                self.do_once('DRYRUN', dep)
-                for dep in task_deps(task_dict)
-                ])
-            if sta:
-                return sta
-
-            # Skip running the task itself, assume no children, except if
-            # known from the task specification itself
-            children = task_dict.get('children') or []
-
-        # Recursive children tasks
-        return self.req(*[
-            self.do_once('DRYRUN', child_name)
-            for child_name in children
-            ])
+    _dry = True
 
 @once
 class Run(UniqueCommand):
     """
     Combined rsubmit + rget
     """
-    def _eval(self):
-        rsub = self.do_once('RSUBMIT', self.name)
+    when = When()
 
+    @when('INIT')
+    def _init(self):
+        return 'RSUB', self.do_once('RSUBMIT', self.name)
+
+    @when('RSUB')
+    def _rsub(self, rsub):
         sta = self.req(rsub)
         if sta:
             return sta
 
-        rget = self.do_once('RGET', self.name)
+        return 'RGET', self.do_once('RGET', self.name)
 
+    @when('RGET')
+    def _rsub(self, rget):
         return self.req(rget)
 
 @once
@@ -762,26 +762,29 @@ class SRun(UniqueCommand):
     Shallow run: combined ssubmit + get, fetches the raw result of a task but
     not its children
     """
-    def _eval(self):
-        rsub = self.do_once('SSUBMIT', self.name)
+    when = When()
 
-        sta = self.req(rsub)
+    @when('INIT')
+    def _init(self):
+        return 'SSUB', self.do_once('SSUBMIT', self.name)
+
+    @when('SSUB')
+    def _ssub(self, ssub):
+        sta = self.req(ssub)
         if sta:
             return sta
 
-        rget = self.do_once('GET', self.name)
+        return 'GET', self.do_once('GET', self.name)
 
-        return self.req(rget)
+    @when('GET')
+    def _rget(self, get):
+        return self.req(get)
 
 @once
-class Submit(Command):
+class Submit(UniqueCommand):
     """
     Get a single resource part
     """
-    def __init__(self, script, name):
-        self.name = name
-        super().__init__(script)
-
     def __str__(self):
         return f' submit {self.name}' + self._str_res
 
@@ -789,14 +792,10 @@ class Submit(Command):
         return Status.PENDING
 
 @once
-class Stat(Command):
+class Stat(UniqueCommand):
     """
     Get a task's metadata
     """
-    def __init__(self, script, name):
-        self.name = name
-        super().__init__(script)
-
     def __str__(self):
         return f' stat {self.name}' + self._str_res
 
