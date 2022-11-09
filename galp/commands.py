@@ -63,6 +63,8 @@ class Command:
             # By default, we stop processing a command on failures. In theory
             # the command could have other independent work to do, but we have
             # no use case yet.
+            # Note: this drops new_sub_commands by design since there is no need
+            # to inject them into the event loop with the parent failed.
             if sub_status == Status.FAILED:
                 self.result = next(
                         sub.result
@@ -92,6 +94,7 @@ class Command:
             logging.debug('%s: %s => %s', self, self._state, new_state)
             self._state = new_state
             if self._state in (Status.DONE, Status.FAILED):
+                assert not new_sub_commands
                 return self._state, []
 
             # Re-inspect status of new set of sub-commands and loop
