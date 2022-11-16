@@ -123,6 +123,7 @@ class Step(StepType):
         bound_step = self._inject()
         injected_tasks = self._call_bound(bound_step, kwargs)
         all_kwargs = self.collect_kwargs(kwargs, injected_tasks)
+
         return self.make_task(args, all_kwargs)
 
     def make_task(self, args, kwargs):
@@ -341,14 +342,30 @@ class Task(TaskType):
     Object wrapping a step invocation with its arguments
 
     Args:
+        args: positional arguments to the step
+        kwargs: keyword arguments to the step
         vtag: arbitrary object whose ascii() representation will be hashed and
             used in name generation, thus invalidating any previous names each
             time the vtag in the code is changed.
-        rerun: (bool) True if a unique seed should be added at each loading and
-          included as a vtag, causing unique names to be generated
-          and the step to be rerun for each python client session.
+        items: length of the tuple returned by the task for eager unpacking
     """
     def __init__(self, step, args, kwargs, vtag=None, items=None):
+
+        # Before anything else, type check the call. This ensures we don't wait
+        # until actually trying to run the task to realize we're missing
+        # arguments.
+        try:
+            full_kwargs = dict(kwargs, **{
+                kw: WorkerSideInject()
+                for kw in _WORKER_INJECTABLES
+                if kw in step.kw_names
+                })
+            inspect.signature(step.function).bind(*args, **full_kwargs)
+        except TypeError as exc:
+            raise TypeError(
+                    f'{step.function.__name__}() {str(exc)}'
+                    ) from exc
+
         self.step = step
         self.args = [ensure_task(arg) for arg in args]
         self.kwargs = { kw.encode('ascii'): ensure_task(arg) for kw, arg in kwargs.items() }
@@ -566,6 +583,9 @@ class NoSuchStep(ValueError):
 # Placholder type for an object injected by the worker
 WorkerSideInject = type('WorkerSideInject', tuple(), {})
 
+# Keys reserved for resources injected by the worker at runtime.
+_WORKER_INJECTABLES = ['_galp']
+
 class Block:
     """A collection of steps and bound arguments"""
     def __init__(self, steps=None):
@@ -574,11 +594,8 @@ class Block:
 
         self._injectables = {
                 k: WorkerSideInject()
-                for k in self._worker_injectables
+                for k in _WORKER_INJECTABLES
                 }
-
-    # Keys reserved for resources injected by the worker at runtime.
-    _worker_injectables = ['_galp']
 
     def step(self, *decorated, **options):
         """Decorator to make a function a step.

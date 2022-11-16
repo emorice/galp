@@ -67,3 +67,13 @@ async def test_inject_cycle(client):
             await client.run(gts.recursive)
         with pytest.raises(TypeError):
             await client.run(gts.cyclic)
+
+async def test_missing_argument(client):
+    """
+    Detect missing arguments early
+    """
+    async with timeout(3):
+        # This must raise with a TypeError at graph construction time and not a
+        # TaskFailedError at runtime.
+        with pytest.raises(TypeError):
+            await client.run(gts.has_free_arg, dry_run=True)
