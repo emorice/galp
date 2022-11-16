@@ -306,6 +306,18 @@ class Step(StepType):
         """
         return SubStep(self, index)
 
+    def __get__(self, obj, objtype=None):
+        """
+        Normally, a function wrapper can be transparently applied to methods too
+        through the descriptor protocol, but it's not clear what galp should do
+        in that case, so we explicitly error out.
+
+        The special function is defined anyway because code may rely on it to
+        detect that the Step object is a function wrapper.
+        """
+
+        raise NotImplementedError('Cannot only wrap functions, not methods')
+
 class SubStep(StepType):
     """
     Step representing the indexation of the result of an other step
