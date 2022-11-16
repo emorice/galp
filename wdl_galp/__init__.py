@@ -15,7 +15,7 @@ import WDL.runtime
 
 import galp
 
-pbl = galp.StepSet()
+pbl = galp.Block()
 
 @pbl.step
 def run(uri, _galp, **kwargs):
