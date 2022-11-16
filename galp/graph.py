@@ -4,6 +4,7 @@ General routines to build and operate on graphs of tasks.
 import hashlib
 import inspect
 import warnings
+import functools
 
 from dataclasses import dataclass
 
@@ -112,6 +113,7 @@ class Step(StepType):
                 self.kw_names[name] = param.default != param.empty
         except ValueError:
             pass
+        functools.update_wrapper(self, self.function)
 
     def __call__(self, *args, **kwargs):
         """
