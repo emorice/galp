@@ -643,6 +643,10 @@ class Query(Command):
         if query_key == 'args':
             return 'ARGS', self.do_once('STAT', self.subject)
 
+        # Children query, run the task first
+        if query_key == 'children':
+            return 'CHILDREN', self.do_once('SSUBMIT', self.subject)
+
         raise NotImplementedError(self.query)
 
     @when('STATUS')
@@ -692,10 +696,31 @@ class Query(Command):
             sub_commands.append(
                 Query(self.script, target, subquery)
                 )
-        return 'ARG_QUERYSET', sub_commands
+        return 'DICT_QUERYSET', sub_commands
 
-    @when('ARG_QUERYSET')
-    def _queryset(self, *query_items):
+    @when('CHILDREN')
+    def _children(self, ssub_cmd):
+        """
+        Build a list of sub-queries for children of subject task
+        from the children list obtained from SRUN
+        """
+        children = ssub_cmd.result
+
+        _, arg_subqueries = self.query
+        sub_commands = []
+        for index, subquery in arg_subqueries.items():
+            try:
+                num_index = int(index)
+                target = children[num_index]
+            except ValueError: # key-indexed child
+                raise NotImplementedError(index) from None
+            sub_commands.append(
+                Query(self.script, target, subquery)
+                )
+        return 'DICT_QUERYSET', sub_commands
+
+    @when('DICT_QUERYSET')
+    def _dict_queryset(self, *query_items):
         """
         Check and merge argument query items
         """

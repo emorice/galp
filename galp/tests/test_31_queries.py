@@ -32,3 +32,18 @@ def test_query_def(tmpdir):
 
     assert 'step_name' in ans
     assert ans['step_name'] == task.step.key
+
+def test_query_children(tmpdir):
+    """
+    Collect meta-task children definition
+    """
+
+    task = gts.query.do_meta()
+
+    ans = galp.run(galp.Query(task, {'children': {'0': 'def'}}),
+        store=tmpdir,
+        steps=['galp.tests.steps'])
+
+    assert 'children' in ans
+    assert all(c['step_name']  == gts.query.do_nothing(0).step.key
+            for _k, c in ans['children'].items())
