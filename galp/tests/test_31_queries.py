@@ -20,3 +20,15 @@ def test_query_status(tmpdir):
         {'args': {'0': 1}, 'done': False},
         {'args': {'0': 2}, 'done': False}
         )}
+
+def test_query_def(tmpdir):
+    """
+    Collect task definition
+    """
+
+    task = gts.query.do_nothing(1)
+
+    ans = galp.run(galp.Query(task, 'def'), store=tmpdir)
+
+    assert 'step_name' in ans
+    assert ans['step_name'] == task.step.key

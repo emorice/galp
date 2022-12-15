@@ -615,6 +615,10 @@ class Query(Command):
         if self.query in ('done', ('done', True)):
             return 'STATUS', self.do_once('STAT', self.subject)
 
+        # Definition of task, issue a STAT command
+        if self.query in ('def', ('def', True)):
+            return 'DEF', self.do_once('STAT', self.subject)
+
         # Recursive queries
         # ================
 
@@ -628,7 +632,7 @@ class Query(Command):
         # Query items
         try:
             query_key, _sub_query = self.query
-        except TypeError:
+        except (TypeError, ValueError):
             raise NotImplementedError(self.query) from None
 
         # Iterator, get the raw object first
@@ -649,6 +653,16 @@ class Query(Command):
         task_done, *_ = stat_cmd.result
 
         self.result = task_done
+        return Status.DONE
+
+    @when('DEF')
+    def _def(self, stat_cmd):
+        """
+        Check and returns definition request
+        """
+        _done, task_dict, _children = stat_cmd.result
+
+        self.result = task_dict
         return Status.DONE
 
     @when('ARGS')
