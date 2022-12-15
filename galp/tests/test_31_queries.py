@@ -47,3 +47,20 @@ def test_query_children(tmpdir):
     assert 'children' in ans
     assert all(c['step_name']  == gts.query.do_nothing(0).step.key
             for _k, c in ans['children'].items())
+
+def test_query_all_children(tmpdir):
+    """
+    Collect meta-task children definition, iterative version
+    """
+
+    task = gts.query.do_meta()
+
+    ans = galp.run(galp.Query(task, {'children': {'*': 'def'}}),
+        store=tmpdir,
+        steps=['galp.tests.steps'])
+
+    assert 'children' in ans
+    assert sum(
+            c['step_name']  == gts.query.do_nothing(0).step.key
+            for _k, c in ans['children'].items()
+            ) == 2

@@ -706,9 +706,18 @@ class Query(Command):
         """
         children = ssub_cmd.result
 
-        _, arg_subqueries = self.query
+        _, child_subqueries = self.query
         sub_commands = []
-        for index, subquery in arg_subqueries.items():
+
+        if '*' in child_subqueries:
+            if len(child_subqueries) > 1:
+                raise NotImplementedError('Only one subquery supported when '
+                        'using universal children queries at the moment')
+            child_subqueries = { i: child_subqueries['*']
+                    for i in range(len(children))
+                    }
+
+        for index, subquery in child_subqueries.items():
             try:
                 num_index = int(index)
                 target = children[num_index]
@@ -725,10 +734,12 @@ class Query(Command):
         Check and merge argument query items
         """
         _, arg_subqueries = self.query
+        if '*' in arg_subqueries:
+            arg_subqueries = range(len(query_items))
 
         result = {}
         for index, qitem in zip(arg_subqueries, query_items):
-            result[index] = qitem.result
+            result[str(index)] = qitem.result
         self.result = result
 
         return Status.DONE
