@@ -6,6 +6,8 @@ import pytest
 import galp
 import galp.tests.steps as gts
 
+from galp.graph import TaskReference
+
 def test_query_status(tmpdir):
     """
     Collect task arguments and there statuses
@@ -16,10 +18,10 @@ def test_query_status(tmpdir):
     ans = galp.run(galp.Query(graph, {'*': {'args': ['0'], 'done': True}}),
             store=tmpdir)
 
-    assert ans ==  {'*': (
+    assert ans ==  {'*': [
         {'args': {'0': 1}, 'done': False},
         {'args': {'0': 2}, 'done': False}
-        )}
+        ]}
 
 def test_query_def(tmpdir):
     """
@@ -64,3 +66,15 @@ def test_query_all_children(tmpdir):
             c['step_name']  == gts.query.do_nothing(0).step.key
             for _k, c in ans['children'].items()
             ) == 2
+
+def test_query_base(tmpdir):
+    """
+    Test non-recursive task collection
+    """
+    graph = [ gts.query.do_nothing(1), gts.query.do_nothing(2) ]
+
+    ans = galp.run(galp.Query(graph, '$base'),
+            store=tmpdir, steps=['galp.tests.steps'])
+
+    assert len(ans) == 2
+    assert all(isinstance(t, TaskReference) for t in ans)

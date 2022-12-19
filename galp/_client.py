@@ -143,32 +143,36 @@ class Client:
         # Update the task graph
         self.protocol.add(tasks)
 
-        try:
-            err = await asyncio.wait_for(
-                self.run_collection(tasks, return_exceptions=return_exceptions,
-                    dry_run=dry_run),
-                timeout=timeout)
-            if err and not return_exceptions:
-                raise TaskFailedError(err)
-        except ProtocolEndException:
-            pass
+        err, cmd_results = await asyncio.wait_for(
+            self.run_collection(tasks, return_exceptions=return_exceptions,
+                dry_run=dry_run),
+            timeout=timeout)
+
+        if err and not return_exceptions:
+            raise TaskFailedError(cmd_results)
 
         if dry_run:
             return None
 
         results = []
         failed = None
-        for task in tasks:
-            try:
-                results.append(
-                    self.protocol.store.get_native(task.name)
-                    )
-            except (KeyError, DeserializeError) as exc:
-                new_exc = TaskFailedError('Failed to collect task '
-                        f'[{task}]')
-                new_exc.__cause__ = exc
-                failed = new_exc
-                results.append(new_exc)
+        for task, cmd_result in zip(tasks, cmd_results):
+            if hasattr(task, 'query'):
+                # For queries, result is inline
+                results.append(cmd_result)
+            else:
+                # For the rest, result is in store on success
+                try:
+                    results.append(
+                        self.protocol.store.get_native(task.name)
+                        )
+                # On failure, more details on the error can be provided inline
+                except (KeyError, DeserializeError) as exc:
+                    new_exc = TaskFailedError('Failed to collect task '
+                            f'[{task}]: {cmd_result}')
+                    new_exc.__cause__ = exc
+                    failed = new_exc
+                    results.append(new_exc)
         if failed is None or return_exceptions:
             return results
         raise failed
@@ -197,7 +201,6 @@ class Client:
         def _end(status):
             raise ProtocolEndException(status)
 
-
         script = self.protocol.script
 
         # Note: this is shared by different calls to the collection methods. We
@@ -212,23 +215,23 @@ class Client:
         else:
             script.keep_going = False
 
-        main_command = 'DRYRUN' if dry_run else 'RUN'
-
         collect = script.collect(
-                commands=[script.do_once(main_command, t.name) for t in tasks]
+                commands=[script.run_task(t, dry=dry_run) for t in tasks]
                 )
 
-        script.callback(
-            collect, _end
-            )
-        self.protocol.schedule_new()
+        try:
+            script.callback(
+                collect, _end
+                )
+            self.protocol.schedule_new()
 
-        await async_utils.run(
-            self.process_scheduled(),
-            self.transport.listen_reply_loop()
-            )
-
-        return collect.result
+            await async_utils.run(
+                self.process_scheduled(),
+                self.transport.listen_reply_loop()
+                )
+        except ProtocolEndException:
+            pass
+        return collect.status, collect.result
 
 class BrokerProtocol(ReplyProtocol):
     """

@@ -362,6 +362,19 @@ class Script(Command):
             return Status.FAILED
         return Status.PENDING
 
+    def run_task(self, task, dry=False):
+        """
+        Creates command appropriate to type of task
+        """
+        if hasattr(task, 'query'):
+            if dry:
+                raise NotImplementedError('Cannot dry-run queries yet')
+            return Query(self.script, task.subject.name, task.query)
+
+        if dry:
+            return self.do_once('DRYRUN', task.name)
+        return self.do_once('RUN', task.name)
+
 class InertCommand(UniqueCommand):
     """
     Command tied to an external event
@@ -430,7 +443,8 @@ class Collect(Command):
         return 'COLLECT', self.commands
 
     @when('COLLECT')
-    def _end(self, *_):
+    def _end(self, *commands):
+        self.result = [ c.result for c in commands ]
         return Status.DONE
 
 class Callback(Command):
@@ -484,12 +498,10 @@ class SSubmit(UniqueCommand):
             self.result = children
             return Status.DONE
 
-        # Queries, wrap in the dedicated command
+        # Query, should never have reached this layer as queries have custom run
+        # mechanics
         if 'query' in task_dict:
-            if self._dry:
-                raise NotImplementedError
-            query_cmd = Query(self.script, task_dict['subject'], task_dict['query'])
-            return 'QUERY', query_cmd
+            raise NotImplementedError
 
         # Else, regular job, process dependencies first
         cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
@@ -518,21 +530,6 @@ class SSubmit(UniqueCommand):
         Check the main result and return possible children tasks
         """
         self.result = main_sub.result
-        return Status.DONE
-
-
-    @when('QUERY')
-    def _query(self, query_cmd):
-        """
-        Check query completion and put result in store
-        """
-        # Check result in store
-        store = self.script.store
-        child_names = store.put_native(self.name, query_cmd.result)
-
-        # The final result of a query may reference other tasks, so these need
-        # to be executed as children
-        self.result = child_names
         return Status.DONE
 
 @once
@@ -605,11 +602,9 @@ class Query(Command):
         # ==============
 
         # Query terminator, this is a query leaf and requests the task result
-        # itself
+        # itself ; issue a RUN
         if self.query is True:
-            # Return a reference to the task
-            self.result = TaskReference(self.subject)
-            return Status.DONE
+            return 'RUN', self.do_once('RUN', self.subject)
 
         # Status of task, issue a STAT command
         if self.query in ('done', ('done', True)):
@@ -618,6 +613,10 @@ class Query(Command):
         # Definition of task, issue a STAT command
         if self.query in ('def', ('def', True)):
             return 'DEF', self.do_once('STAT', self.subject)
+
+        # Base of task, issue a SRUN
+        if self.query in ('$base', ('$base', True)):
+            return 'BASE', self.do_once('SRUN', self.subject)
 
         # Recursive queries
         # ================
@@ -781,6 +780,22 @@ class Query(Command):
         Check and pack items
         """
         self.result = [ item.result for item in items ]
+        return Status.DONE
+
+    @when('BASE')
+    def _base(self, _):
+        """
+        Return base result
+        """
+        self.result = self.script.store.get_native(self.subject, shallow=True)
+        return Status.DONE
+
+    @when('RUN')
+    def _run(self, _):
+        """
+        Return full result
+        """
+        self.result = self.script.store.get_native(self.subject, shallow=False)
         return Status.DONE
 
 # Despite the name, since a DryRun never does any fetches, it is implemented as
