@@ -1,8 +1,6 @@
 """
 Query system
 """
-import pytest
-
 import galp
 import galp.tests.steps as gts
 

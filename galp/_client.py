@@ -24,6 +24,7 @@ from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.commands import Script
+from galp.query import run_task
 
 class TaskStatus(IntEnum):
     """
@@ -216,7 +217,7 @@ class Client:
             script.keep_going = False
 
         collect = script.collect(
-                commands=[script.run_task(t, dry=dry_run) for t in tasks]
+                commands=[run_task(script, t, dry=dry_run) for t in tasks]
                 )
 
         try:
