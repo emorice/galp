@@ -40,28 +40,15 @@ class Query(Command):
         Process the query and decide on further commands to issue
         """
 
+        is_compound, parsed_query = parse_query(self.query)
         # Query set, turn each in its own query
-        if hasattr(self.query, 'items'):
-            self.op = Compound(self, self.query.items())
+        if is_compound:
+            self.op = Compound(self, parsed_query.items())
         else:
-            # Simple queries, parse into key-subquery
-            ## Scalar shorthand: query terminator, implicit sub
-            if self.query is True:
-                query_key, subquery = '$sub', True
-            ## Scalar shorthand: just a string, implicit terminator
-            elif isinstance(self.query, str):
-                query_key, subquery = self.query, True
-            ## Regular string-subquery sequence
-            else:
-                try:
-                    query_key, *subquery = self.query
-                except (TypeError, ValueError):
-                    raise NotImplementedError(self.query) from None
-                if not isinstance(query_key, str):
-                    raise NotImplementedError(self.query)
+            # Simple queries, parse into key-sub_query
+            query_key, sub_query = parsed_query
 
-            # Find operator
-
+            # Find operator by key
             ## Regular named operator
             if query_key.startswith('$'):
                 op_cls = Operator.by_name(query_key[1:])
@@ -69,16 +56,16 @@ class Query(Command):
                     raise NotImplementedError(
                         f'No such operator: "{query_key}"'
                         )
-                self.op = op_cls(self)
+                self.op = op_cls(self, sub_query)
 
             ## Direct index
             if query_key.isidentifier() or query_key.isnumeric():
                 index = int(query_key) if query_key.isnumeric() else query_key
-                self.op = GetItem(self, index)
+                self.op = GetItem(self, sub_query, index)
 
             ## Iterator
             if query_key == '*':
-                self.op = Iterate(self)
+                self.op = Iterate(self, sub_query)
 
         if self.op is None:
             raise NotImplementedError(self.query)
@@ -101,12 +88,57 @@ class Query(Command):
         self.result = self.op.result(sub_commands)
         return Status.DONE
 
+def parse_query(query):
+    """
+    Split query into query key and sub-query, watching out for shorthands
+
+    Returns:
+        Pair (is_compound: bool, object) where object is a mapping if compound,
+        else itself a pair (query_key, sub_query).
+    """
+    # Scalar shorthand: query terminator, implicit sub
+    if query is True:
+        return False, ('$sub', [])
+
+    # Scalar shorthand: just a string, implicit terminator
+    if isinstance(query, str):
+        return False, (query, [])
+
+    # Directly a mapping
+    if hasattr(query, 'items'):
+        return True, query
+
+    # Else, either regular string-sub_query sequence, or singleton mapping
+    # expected
+    try:
+        query_item, *sub_query = query
+    except (TypeError, ValueError):
+        raise NotImplementedError(query) from None
+
+    if hasattr(query_item, 'items'):
+        if sub_query:
+            # Compound query followed by a subquery, nonsense
+            raise NotImplementedError(query)
+        return True, query_item
+
+    if not isinstance(query_item, str):
+        raise NotImplementedError(query)
+
+    # Normalize the query terminator
+    if len(sub_query) == 1 and sub_query[0] is True:
+        sub_query = []
+
+    return False, (query_item, sub_query)
+
 class Operator:
     """
     Register an operator requiring the given command
     """
-    def __init__(self, query):
-        self.query = query
+    def __init__(self, query, sub_query):
+        self.sub_query = sub_query
+        self.script = query.script
+        self.store = query.script.store
+        self.subject = query.subject
         self._req_cmd = None
 
     requires = None
@@ -133,6 +165,14 @@ class Operator:
         return self._recurse(cmd)
 
     def _recurse(self, _cmd):
+        """
+        Default implementation does not recurse, but checks that no sub-query
+        was provided
+        """
+        if len(self.sub_query) > 0:
+            raise NotImplementedError('Operator '
+            f'"{self.__class__.__name__.lower()}" does not accept sub-queries '
+            f'(sub-query was "{self.sub_query}")')
         return []
 
     def result(self, subs):
@@ -152,8 +192,8 @@ class Base(Operator):
     requires = 'SRUN'
 
     def _result(self, _srun_cmd, _subs):
-        return self.query.script.store.get_native(
-                self.query.subject, shallow=True)
+        return self.store.get_native(
+                self.subject, shallow=True)
 
 class Sub(Operator):
     """
@@ -162,8 +202,8 @@ class Sub(Operator):
     requires = 'RUN'
 
     def _result(self, _run_cmd, _subs):
-        return self.query.script.store.get_native(
-                self.query.subject, shallow=False)
+        return self.store.get_native(
+                self.subject, shallow=False)
 
 class Done(Operator):
     """
@@ -197,9 +237,13 @@ class Args(Operator):
         definition obtained from STAT
         """
         _task_done, task_dict, _children = stat_cmd.result
-        _, arg_subqueries = self.query.query
 
-        # bare list of indexes, set the subquery to the whole object
+        # FIXME: this should delegate handling of the sub-query
+        is_compound, arg_subqueries = parse_query(self.sub_query)
+        if not is_compound:
+            raise NotImplementedError('Args operator requires mapping as sub-query')
+
+        # bare list of indexes, set the sub_query to the whole object
         if not hasattr(arg_subqueries, 'items'):
             arg_subqueries = { index: True for index in arg_subqueries }
 
@@ -208,14 +252,14 @@ class Args(Operator):
                 ' query here.')
 
         sub_commands = []
-        for index, subquery in arg_subqueries.items():
+        for index, sub_query in arg_subqueries.items():
             try:
                 num_index = int(index)
                 target = task_dict['arg_names'][num_index]
             except ValueError: # keyword argument
                 target = task_dict['kwarg_names'][index]
             sub_commands.append(
-                Query(self.query.script, target, subquery)
+                Query(self.script, target, sub_query)
                 )
         return sub_commands
 
@@ -223,7 +267,8 @@ class Args(Operator):
         """
         Merge argument query items
         """
-        _, arg_subqueries = self.query.query
+        # FIXME: this should delegate handling of the sub-query
+        is_compound, arg_subqueries = parse_query(self.sub_query)
         if '*' in arg_subqueries:
             arg_subqueries = range(len(query_items))
 
@@ -246,25 +291,29 @@ class Children(Args):
         """
         children = ssub_cmd.result
 
-        _, child_subqueries = self.query.query
+        child_subqueries = self.sub_query
         sub_commands = []
+
+        # FIXME: this should delegate handling of the sub-query
+        is_compound, child_subqueries = parse_query(child_subqueries)
+        if not is_compound:
+            raise NotImplementedError('Children operator requires mapping as sub-query')
 
         if '*' in child_subqueries:
             if len(child_subqueries) > 1:
-                raise NotImplementedError('Only one subquery supported when '
+                raise NotImplementedError('Only one sub_query supported when '
                         'using universal children queries at the moment')
             child_subqueries = { i: child_subqueries['*']
                     for i in range(len(children))
                     }
-
-        for index, subquery in child_subqueries.items():
+        for index, sub_query in child_subqueries.items():
             try:
                 num_index = int(index)
                 target = children[num_index]
             except ValueError: # key-indexed child
                 raise NotImplementedError(index) from None
             sub_commands.append(
-                Query(self.query.script, target, subquery)
+                Query(self.script, target, sub_query)
                 )
         return sub_commands
 
@@ -272,8 +321,8 @@ class GetItem(Operator, named=False):
     """
     Item access parametric operator
     """
-    def __init__(self, query, index):
-        super().__init__(query)
+    def __init__(self, query, sub_query, index):
+        super().__init__(query, sub_query)
         self.index = index
 
     requires = 'SRUN'
@@ -282,24 +331,24 @@ class GetItem(Operator, named=False):
         """
         Subquery for a simple item
         """
-        shallow_obj = self.query.script.store.get_native(self.query.subject, shallow=True)
-        _, subquery = self.query.query
+        shallow_obj = self.store.get_native(self.subject, shallow=True)
+        sub_query = self.sub_query
 
         try:
             task = shallow_obj[self.index]
         except Exception as exc:
             raise RuntimeError(
                 f'Query failed, cannot access item "{self.index}" of task '
-                f'{self.query.subject}'
+                f'{self.subject}'
                 ) from exc
 
         if not isinstance(task, TaskType):
             raise TypeError(
-                f'Item "{self.index}" of task {self.query.subject} is not itself a '
-                f'task, cannot apply subquery "{subquery}" to it'
+                f'Item "{self.index}" of task {self.subject} is not itself a '
+                f'task, cannot apply sub_query "{sub_query}" to it'
                 )
 
-        return Query(self.query.script, task.name, subquery)
+        return Query(self.script, task.name, sub_query)
 
     def _result(self, _srun_cmd, subs):
         """
@@ -313,12 +362,12 @@ class Compound(Operator, named=False):
     Collection of several other operators
     """
     def __init__(self, query, sub_queries):
-        super().__init__(query)
+        super().__init__(query, None)
         self.sub_queries = sub_queries
 
     def _recurse(self, _no_cmd):
         return [
-            Query(self.query.script, self.query.subject, sub_query)
+            Query(self.script, self.subject, sub_query)
             for sub_query in self.sub_queries
             ]
 
@@ -330,27 +379,26 @@ class Iterate(Operator, named=False):
     """
     Iterate over object
     """
-
     requires = 'SRUN'
 
     def _recurse(self, _srun_cmd):
         """
         Extract raw result and build subqueries
         """
-        shallow_obj = self.query.script.store.get_native(self.query.subject, shallow=True)
+        shallow_obj = self.store.get_native(self.subject, shallow=True)
 
-        _, subquery = self.query.query
-        subquery_commands = []
+        sub_query = self.sub_query
+        sub_query_commands = []
 
         for task in shallow_obj:
             if not isinstance(task, TaskType):
                 raise TypeError('Object is not a collection of tasks, cannot'
                     ' use a "*" query here')
-            subquery_commands.append(
-                    Query(self.query.script, task.name, subquery)
+            sub_query_commands.append(
+                    Query(self.script, task.name, sub_query)
                     )
 
-        return subquery_commands
+        return sub_query_commands
 
     def _result(self, _srun_cmd, items):
         """

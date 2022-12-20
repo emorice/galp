@@ -13,7 +13,7 @@ def test_query_status(tmpdir):
 
     graph = [ gts.query.do_nothing(1), gts.query.do_nothing(2) ]
 
-    ans = galp.run(galp.Query(graph, {'*': {'$args': ['0'], '$done': True}}),
+    ans = galp.run(galp.Query(graph, {'*': {'$args': {'0': True}, '$done': True}}),
             store=tmpdir)
 
     assert ans ==  {'*': [
