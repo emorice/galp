@@ -29,6 +29,7 @@ class Query(Command):
     def __init__(self, script, subject, query):
         self.subject = subject
         self.query = query
+        self.op = None
         super().__init__(script)
 
     def __str__(self):
@@ -39,28 +40,10 @@ class Query(Command):
         Process the query and decide on further commands to issue
         """
 
-        # Simple queries
-        # ==============
-
         # Query terminator, this is a query leaf and requests the task result
         # itself ; issue a RUN
         if self.query is True:
             return '_run', self.do_once('RUN', self.subject)
-
-        # Status of task, issue a STAT command
-        if self.query in ('$done', ('$done', True)):
-            return '_status', self.do_once('STAT', self.subject)
-
-        # Definition of task, issue a STAT command
-        if self.query in ('$def', ('$def', True)):
-            return '_def', self.do_once('STAT', self.subject)
-
-        # Base of task, issue a SRUN
-        if self.query in ('$base', ('$base', True)):
-            return '_base', self.do_once('SRUN', self.subject)
-
-        # Recursive queries
-        # ================
 
         # Query set, turn each in its own query
         if hasattr(self.query, 'items'):
@@ -69,21 +52,30 @@ class Query(Command):
                     for key, value in self.query.items()
                     ]
 
+        # Regular query, string optionally followed by subquery
+        if isinstance(self.query, str):
+            query_key, subquery = self.query, True
+        else:
+            try:
+                query_key, subquery = self.query
+            except (TypeError, ValueError):
+                raise NotImplementedError(self.query) from None
+            if not isinstance(query_key, str):
+                raise NotImplementedError(self.query)
+
+        # Operators
+        if query_key.startswith('$'):
+            op_cls = Operator.by_name(query_key[1:])
+            if op_cls is None:
+                raise NotImplementedError(
+                    f'No such operator: "{query_key}"'
+                    )
+            self.op = op_cls(self)
+            if self.op.requires is None:
+                return '_operator'
+            return '_operator', self.do_once(self.op.requires, self.subject)
+
         # Query items
-        try:
-            query_key, _sub_query = self.query
-        except (TypeError, ValueError):
-            raise NotImplementedError(self.query) from None
-        if not isinstance(query_key, str):
-            raise NotImplementedError(self.query)
-
-        # Arg query, get the task definition first
-        if query_key == '$args':
-            return '_args', self.do_once('STAT', self.subject)
-
-        # Children query, run the task first
-        if query_key == '$children':
-            return '_children', self.do_once('SSUBMIT', self.subject)
 
         # Iterator, get the raw object first
         if query_key == '*':
@@ -94,96 +86,6 @@ class Query(Command):
             return '_index', self.do_once('SRUN', self.subject)
 
         raise NotImplementedError(self.query)
-
-    def _status(self, stat_cmd):
-        """
-        Check and returns status request
-        """
-        task_done, *_ = stat_cmd.result
-
-        self.result = task_done
-        return Status.DONE
-
-    def _def(self, stat_cmd):
-        """
-        Check and returns definition request
-        """
-        _done, task_dict, _children = stat_cmd.result
-
-        self.result = task_dict
-        return Status.DONE
-
-    def _args(self, stat_cmd):
-        """
-        Build list of sub-queries for arguments of subject task from the
-        definition obtained from STAT
-        """
-        _task_done, task_dict, _children = stat_cmd.result
-        _, arg_subqueries = self.query
-
-        # bare list of indexes, set the subquery to the whole object
-        if not hasattr(arg_subqueries, 'items'):
-            arg_subqueries = { index: True for index in arg_subqueries }
-
-        if not 'arg_names' in task_dict:
-            raise TypeError('Object is not a job-type Task, cannot use a "args"'
-                ' query here.')
-
-        sub_commands = []
-        for index, subquery in arg_subqueries.items():
-            try:
-                num_index = int(index)
-                target = task_dict['arg_names'][num_index]
-            except ValueError: # keyword argument
-                target = task_dict['kwarg_names'][index]
-            sub_commands.append(
-                Query(self.script, target, subquery)
-                )
-        return '_dict_queryset', sub_commands
-
-    def _children(self, ssub_cmd):
-        """
-        Build a list of sub-queries for children of subject task
-        from the children list obtained from SRUN
-        """
-        children = ssub_cmd.result
-
-        _, child_subqueries = self.query
-        sub_commands = []
-
-        if '*' in child_subqueries:
-            if len(child_subqueries) > 1:
-                raise NotImplementedError('Only one subquery supported when '
-                        'using universal children queries at the moment')
-            child_subqueries = { i: child_subqueries['*']
-                    for i in range(len(children))
-                    }
-
-        for index, subquery in child_subqueries.items():
-            try:
-                num_index = int(index)
-                target = children[num_index]
-            except ValueError: # key-indexed child
-                raise NotImplementedError(index) from None
-            sub_commands.append(
-                Query(self.script, target, subquery)
-                )
-        return '_dict_queryset', sub_commands
-
-    def _dict_queryset(self, *query_items):
-        """
-        Check and merge argument query items
-        """
-        _, arg_subqueries = self.query
-        if '*' in arg_subqueries:
-            arg_subqueries = range(len(query_items))
-
-        result = {}
-        for index, qitem in zip(arg_subqueries, query_items):
-            result[str(index)] = qitem.result
-        self.result = result
-
-        return Status.DONE
 
     def _queryset(self, *query_items):
         """
@@ -251,17 +153,178 @@ class Query(Command):
         self.result = item.result
         return Status.DONE
 
-
-    def _base(self, _):
-        """
-        Return base result
-        """
-        self.result = self.script.store.get_native(self.subject, shallow=True)
-        return Status.DONE
-
     def _run(self, _):
         """
         Return full result
         """
         self.result = self.script.store.get_native(self.subject, shallow=False)
         return Status.DONE
+
+    def _operator(self, command):
+        """
+        Execute handler for operator after the required commands are done
+        """
+        return '_operator_result', self.op.recurse(command)
+
+    def _operator_result(self, *sub_commands):
+        """
+        Execute handler for operator after the required commands are done
+        """
+        self.result = self.op.result(sub_commands)
+        return Status.DONE
+
+class Operator:
+    """
+    Register an operator requiring the given command
+    """
+    def __init__(self, query):
+        self.query = query
+        self._req_cmd = None
+
+    requires = None
+
+    _ops = {}
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        name = cls.__name__.lower()
+        cls._ops[name] = cls
+
+    @classmethod
+    def by_name(cls, name):
+        """
+        Return operator by dollar-less name or None
+        """
+        return cls._ops.get(name)
+
+    def recurse(self, cmd):
+        """
+        Build subqueries if needed
+        """
+        self._req_cmd = cmd
+        return self._recurse(cmd)
+
+    def _recurse(self, _cmd):
+        return []
+
+    def result(self, subs):
+        """
+        Build result of operator from subcommands
+        """
+        return self._result(self._req_cmd, subs)
+
+    def _result(self, _req_cmd, _sub_cmds):
+        return None
+
+class Base(Operator):
+    """
+    Base operator, returns shallow object itself with the linked tasks left as
+    references
+    """
+    requires = 'SRUN'
+
+    def _result(self, _srun_cmd, _subs):
+        return self.query.script.store.get_native(
+                self.query.subject, shallow=True)
+
+class Done(Operator):
+    """
+    Completion state operator
+    """
+    requires = 'STAT'
+
+    def _result(self, stat_cmd, _subs):
+        task_done, *_ = stat_cmd.result
+        return task_done
+
+class Def(Operator):
+    """
+    Definition oerator
+    """
+    requires = 'STAT'
+
+    def _result(self, stat_cmd, _subs):
+        _done, task_dict, _children = stat_cmd.result
+        return task_dict
+
+class Args(Operator):
+    """
+    Task arguments operator
+    """
+    requires = 'STAT'
+
+    def _recurse(self, stat_cmd):
+        """
+        Build list of sub-queries for arguments of subject task from the
+        definition obtained from STAT
+        """
+        _task_done, task_dict, _children = stat_cmd.result
+        _, arg_subqueries = self.query.query
+
+        # bare list of indexes, set the subquery to the whole object
+        if not hasattr(arg_subqueries, 'items'):
+            arg_subqueries = { index: True for index in arg_subqueries }
+
+        if not 'arg_names' in task_dict:
+            raise TypeError('Object is not a job-type Task, cannot use a "args"'
+                ' query here.')
+
+        sub_commands = []
+        for index, subquery in arg_subqueries.items():
+            try:
+                num_index = int(index)
+                target = task_dict['arg_names'][num_index]
+            except ValueError: # keyword argument
+                target = task_dict['kwarg_names'][index]
+            sub_commands.append(
+                Query(self.query.script, target, subquery)
+                )
+        return sub_commands
+
+    def _result(self, _stat_cmd, query_items):
+        """
+        Merge argument query items
+        """
+        _, arg_subqueries = self.query.query
+        if '*' in arg_subqueries:
+            arg_subqueries = range(len(query_items))
+
+        result = {}
+        for index, qitem in zip(arg_subqueries, query_items):
+            result[str(index)] = qitem.result
+
+        return result
+
+class Children(Args):
+    """
+    Recurse on children after simple task run
+    """
+    requires = 'SSUBMIT'
+
+    def _recurse(self, ssub_cmd):
+        """
+        Build a list of sub-queries for children of subject task
+        from the children list obtained from SRUN
+        """
+        children = ssub_cmd.result
+
+        _, child_subqueries = self.query.query
+        sub_commands = []
+
+        if '*' in child_subqueries:
+            if len(child_subqueries) > 1:
+                raise NotImplementedError('Only one subquery supported when '
+                        'using universal children queries at the moment')
+            child_subqueries = { i: child_subqueries['*']
+                    for i in range(len(children))
+                    }
+
+        for index, subquery in child_subqueries.items():
+            try:
+                num_index = int(index)
+                target = children[num_index]
+            except ValueError: # key-indexed child
+                raise NotImplementedError(index) from None
+            sub_commands.append(
+                Query(self.query.script, target, subquery)
+                )
+        return sub_commands
