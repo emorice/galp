@@ -607,11 +607,11 @@ class Query(Command):
             return 'RUN', self.do_once('RUN', self.subject)
 
         # Status of task, issue a STAT command
-        if self.query in ('done', ('done', True)):
+        if self.query in ('$done', ('$done', True)):
             return 'STATUS', self.do_once('STAT', self.subject)
 
         # Definition of task, issue a STAT command
-        if self.query in ('def', ('def', True)):
+        if self.query in ('$def', ('$def', True)):
             return 'DEF', self.do_once('STAT', self.subject)
 
         # Base of task, issue a SRUN
@@ -633,18 +633,25 @@ class Query(Command):
             query_key, _sub_query = self.query
         except (TypeError, ValueError):
             raise NotImplementedError(self.query) from None
+        if not isinstance(query_key, str):
+            raise NotImplementedError(self.query)
+
+        # Arg query, get the task definition first
+        if query_key == '$args':
+            return 'ARGS', self.do_once('STAT', self.subject)
+
+        # Children query, run the task first
+        if query_key == '$children':
+            return 'CHILDREN', self.do_once('SSUBMIT', self.subject)
 
         # Iterator, get the raw object first
         if query_key == '*':
             return 'ITERATOR', self.do_once('SRUN', self.subject)
 
-        # Arg query, get the task definition first
-        if query_key == 'args':
-            return 'ARGS', self.do_once('STAT', self.subject)
+        # Direct indexing, get raw object first
+        if query_key.isidentifier():
+            return 'INDEX', self.do_once('SRUN', self.subject)
 
-        # Children query, run the task first
-        if query_key == 'children':
-            return 'CHILDREN', self.do_once('SSUBMIT', self.subject)
 
         raise NotImplementedError(self.query)
 
@@ -781,6 +788,39 @@ class Query(Command):
         """
         self.result = [ item.result for item in items ]
         return Status.DONE
+
+    @when('INDEX')
+    def _index(self, _):
+        """
+        Subquery for a simple item
+        """
+        shallow_obj = self.script.store.get_native(self.subject, shallow=True)
+
+        index, subquery = self.query
+
+        try:
+            task = shallow_obj[index]
+        except Exception as exc:
+            raise RuntimeError(
+                f'Query failed, cannot access item "{index}" of task {self.subject}'
+                ) from exc
+
+        if not isinstance(task, TaskType):
+            raise TypeError(
+                f'Item "{index}" of task {self.subject} is not itself a '
+                f'task, cannot apply subquery "{subquery}" to it'
+                )
+
+        return 'ITEM', Query(self.script, task.name, subquery)
+
+    @when('ITEM')
+    def _item(self, item):
+        """
+        Return result of simple indexed command
+        """
+        self.result = item.result
+        return Status.DONE
+
 
     @when('BASE')
     def _base(self, _):

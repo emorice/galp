@@ -15,12 +15,12 @@ def test_query_status(tmpdir):
 
     graph = [ gts.query.do_nothing(1), gts.query.do_nothing(2) ]
 
-    ans = galp.run(galp.Query(graph, {'*': {'args': ['0'], 'done': True}}),
+    ans = galp.run(galp.Query(graph, {'*': {'$args': ['0'], '$done': True}}),
             store=tmpdir)
 
     assert ans ==  {'*': [
-        {'args': {'0': 1}, 'done': False},
-        {'args': {'0': 2}, 'done': False}
+        {'$args': {'0': 1}, '$done': False},
+        {'$args': {'0': 2}, '$done': False}
         ]}
 
 def test_query_def(tmpdir):
@@ -30,7 +30,7 @@ def test_query_def(tmpdir):
 
     task = gts.query.do_nothing(1)
 
-    ans = galp.run(galp.Query(task, 'def'), store=tmpdir)
+    ans = galp.run(galp.Query(task, '$def'), store=tmpdir)
 
     assert 'step_name' in ans
     assert ans['step_name'] == task.step.key
@@ -42,13 +42,13 @@ def test_query_children(tmpdir):
 
     task = gts.query.do_meta()
 
-    ans = galp.run(galp.Query(task, {'children': {'0': 'def'}}),
+    ans = galp.run(galp.Query(task, {'$children': {'0': '$def'}}),
         store=tmpdir,
         steps=['galp.tests.steps'])
 
-    assert 'children' in ans
+    assert '$children' in ans
     assert all(c['step_name']  == gts.query.do_nothing(0).step.key
-            for _k, c in ans['children'].items())
+            for _k, c in ans['$children'].items())
 
 def test_query_all_children(tmpdir):
     """
@@ -57,14 +57,14 @@ def test_query_all_children(tmpdir):
 
     task = gts.query.do_meta()
 
-    ans = galp.run(galp.Query(task, {'children': {'*': 'def'}}),
+    ans = galp.run(galp.Query(task, {'$children': {'*': '$def'}}),
         store=tmpdir,
         steps=['galp.tests.steps'])
 
-    assert 'children' in ans
+    assert '$children' in ans
     assert sum(
             c['step_name']  == gts.query.do_nothing(0).step.key
-            for _k, c in ans['children'].items()
+            for _k, c in ans['$children'].items()
             ) == 2
 
 def test_query_base(tmpdir):
@@ -78,3 +78,14 @@ def test_query_base(tmpdir):
 
     assert len(ans) == 2
     assert all(isinstance(t, TaskReference) for t in ans)
+
+def test_query_index(tmpdir):
+    """
+    Test indexing directly inside task result
+    """
+    graph = {'x': gts.query.do_nothing(1), 'y': gts.query.do_nothing(2)}
+
+    ans = galp.run(galp.Query(graph, {'x': '$done'}),
+            store=tmpdir, steps=['galp.tests.steps'])
+
+    assert ans == {'x': False}
