@@ -40,131 +40,59 @@ class Query(Command):
         Process the query and decide on further commands to issue
         """
 
-        # Query terminator, this is a query leaf and requests the task result
-        # itself ; issue a RUN
-        if self.query is True:
-            return '_run', self.do_once('RUN', self.subject)
-
         # Query set, turn each in its own query
         if hasattr(self.query, 'items'):
-            return '_queryset', [
-                    Query(self.script, self.subject, (key, value))
-                    for key, value in self.query.items()
-                    ]
-
-        # Regular query, string optionally followed by subquery
-        if isinstance(self.query, str):
-            query_key, subquery = self.query, True
+            self.op = Compound(self, self.query.items())
         else:
-            try:
-                query_key, subquery = self.query
-            except (TypeError, ValueError):
-                raise NotImplementedError(self.query) from None
-            if not isinstance(query_key, str):
-                raise NotImplementedError(self.query)
+            # Simple queries, parse into key-subquery
+            ## Scalar shorthand: query terminator, implicit sub
+            if self.query is True:
+                query_key, subquery = '$sub', True
+            ## Scalar shorthand: just a string, implicit terminator
+            elif isinstance(self.query, str):
+                query_key, subquery = self.query, True
+            ## Regular string-subquery sequence
+            else:
+                try:
+                    query_key, *subquery = self.query
+                except (TypeError, ValueError):
+                    raise NotImplementedError(self.query) from None
+                if not isinstance(query_key, str):
+                    raise NotImplementedError(self.query)
 
-        # Operators
-        if query_key.startswith('$'):
-            op_cls = Operator.by_name(query_key[1:])
-            if op_cls is None:
-                raise NotImplementedError(
-                    f'No such operator: "{query_key}"'
-                    )
-            self.op = op_cls(self)
-            if self.op.requires is None:
-                return '_operator'
-            return '_operator', self.do_once(self.op.requires, self.subject)
+            # Find operator
 
-        # Query items
+            ## Regular named operator
+            if query_key.startswith('$'):
+                op_cls = Operator.by_name(query_key[1:])
+                if op_cls is None:
+                    raise NotImplementedError(
+                        f'No such operator: "{query_key}"'
+                        )
+                self.op = op_cls(self)
 
-        # Iterator, get the raw object first
-        if query_key == '*':
-            return '_iterator', self.do_once('SRUN', self.subject)
+            ## Direct index
+            if query_key.isidentifier() or query_key.isnumeric():
+                index = int(query_key) if query_key.isnumeric() else query_key
+                self.op = GetItem(self, index)
 
-        # Direct indexing, get raw object first
-        if query_key.isidentifier() or query_key.isnumeric():
-            return '_index', self.do_once('SRUN', self.subject)
+            ## Iterator
+            if query_key == '*':
+                self.op = Iterate(self)
 
-        raise NotImplementedError(self.query)
+        if self.op is None:
+            raise NotImplementedError(self.query)
 
-    def _queryset(self, *query_items):
-        """
-        Check and merge query items
-        """
-        result = {}
-        for qitem in query_items:
-            result[qitem.query[0]] = qitem.result
-        self.result = result
-        return Status.DONE
+        if self.op.requires is None:
+            return '_operator'
 
-    def _iterator(self, _):
-        """
-        Check simple run, extract raw result and build subqueries
-        """
-        shallow_obj = self.script.store.get_native(self.subject, shallow=True)
+        return '_operator', self.do_once(self.op.requires, self.subject)
 
-        _, subquery = self.query
-        subquery_commands = []
-
-        for task in shallow_obj:
-            if not isinstance(task, TaskType):
-                raise TypeError('Object is not a collection of tasks, cannot'
-                    ' use a "*" query here')
-            subquery_commands.append(
-                    Query(self.script, task.name, subquery)
-                    )
-
-        return '_items', subquery_commands
-
-    def _items(self, *items):
-        """
-        Check and pack items
-        """
-        self.result = [ item.result for item in items ]
-        return Status.DONE
-
-    def _index(self, _):
-        """
-        Subquery for a simple item
-        """
-        shallow_obj = self.script.store.get_native(self.subject, shallow=True)
-
-        index, subquery = self.query
-
-        try:
-            task = shallow_obj[int(index) if index.isnumeric() else index]
-        except Exception as exc:
-            raise RuntimeError(
-                f'Query failed, cannot access item "{index}" of task {self.subject}'
-                ) from exc
-
-        if not isinstance(task, TaskType):
-            raise TypeError(
-                f'Item "{index}" of task {self.subject} is not itself a '
-                f'task, cannot apply subquery "{subquery}" to it'
-                )
-
-        return '_item', Query(self.script, task.name, subquery)
-
-    def _item(self, item):
-        """
-        Return result of simple indexed command
-        """
-        self.result = item.result
-        return Status.DONE
-
-    def _run(self, _):
-        """
-        Return full result
-        """
-        self.result = self.script.store.get_native(self.subject, shallow=False)
-        return Status.DONE
-
-    def _operator(self, command):
+    def _operator(self, *command):
         """
         Execute handler for operator after the required commands are done
         """
-        return '_operator_result', self.op.recurse(command)
+        return '_operator_result', self.op.recurse(*command)
 
     def _operator_result(self, *sub_commands):
         """
@@ -184,10 +112,11 @@ class Operator:
     requires = None
 
     _ops = {}
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, /, named=True, **kwargs):
         super().__init_subclass__(**kwargs)
-        name = cls.__name__.lower()
-        cls._ops[name] = cls
+        if named:
+            name = cls.__name__.lower()
+            cls._ops[name] = cls
 
     @classmethod
     def by_name(cls, name):
@@ -196,7 +125,7 @@ class Operator:
         """
         return cls._ops.get(name)
 
-    def recurse(self, cmd):
+    def recurse(self, cmd=None):
         """
         Build subqueries if needed
         """
@@ -225,6 +154,16 @@ class Base(Operator):
     def _result(self, _srun_cmd, _subs):
         return self.query.script.store.get_native(
                 self.query.subject, shallow=True)
+
+class Sub(Operator):
+    """
+    Sub operator, returns subtree object itself with the linked tasks resolved
+    """
+    requires = 'RUN'
+
+    def _result(self, _run_cmd, _subs):
+        return self.query.script.store.get_native(
+                self.query.subject, shallow=False)
 
 class Done(Operator):
     """
@@ -328,3 +267,93 @@ class Children(Args):
                 Query(self.query.script, target, subquery)
                 )
         return sub_commands
+
+class GetItem(Operator, named=False):
+    """
+    Item access parametric operator
+    """
+    def __init__(self, query, index):
+        super().__init__(query)
+        self.index = index
+
+    requires = 'SRUN'
+
+    def _recurse(self, _srun_cmd):
+        """
+        Subquery for a simple item
+        """
+        shallow_obj = self.query.script.store.get_native(self.query.subject, shallow=True)
+        _, subquery = self.query.query
+
+        try:
+            task = shallow_obj[self.index]
+        except Exception as exc:
+            raise RuntimeError(
+                f'Query failed, cannot access item "{self.index}" of task '
+                f'{self.query.subject}'
+                ) from exc
+
+        if not isinstance(task, TaskType):
+            raise TypeError(
+                f'Item "{self.index}" of task {self.query.subject} is not itself a '
+                f'task, cannot apply subquery "{subquery}" to it'
+                )
+
+        return Query(self.query.script, task.name, subquery)
+
+    def _result(self, _srun_cmd, subs):
+        """
+        Return result of simple indexed command
+        """
+        item, = subs
+        return item.result
+
+class Compound(Operator, named=False):
+    """
+    Collection of several other operators
+    """
+    def __init__(self, query, sub_queries):
+        super().__init__(query)
+        self.sub_queries = sub_queries
+
+    def _recurse(self, _no_cmd):
+        return [
+            Query(self.query.script, self.query.subject, sub_query)
+            for sub_query in self.sub_queries
+            ]
+
+    def _result(self, _no_cmd, sub_cmds):
+        return { sub_cmd.query[0]: sub_cmd.result
+                for sub_cmd in sub_cmds }
+
+class Iterate(Operator, named=False):
+    """
+    Iterate over object
+    """
+
+    requires = 'SRUN'
+
+    def _recurse(self, _srun_cmd):
+        """
+        Extract raw result and build subqueries
+        """
+        shallow_obj = self.query.script.store.get_native(self.query.subject, shallow=True)
+
+        _, subquery = self.query.query
+        subquery_commands = []
+
+        for task in shallow_obj:
+            if not isinstance(task, TaskType):
+                raise TypeError('Object is not a collection of tasks, cannot'
+                    ' use a "*" query here')
+            subquery_commands.append(
+                    Query(self.query.script, task.name, subquery)
+                    )
+
+        return subquery_commands
+
+    def _result(self, _srun_cmd, items):
+        """
+        Pack items
+        """
+        return [ item.result for item in items ]
