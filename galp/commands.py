@@ -9,7 +9,7 @@ from collections import deque
 
 import logging
 
-from .graph import task_deps, TaskReference, TaskType
+from .graph import task_deps, TaskType
 
 class Status(Enum):
     """
@@ -39,7 +39,7 @@ class Command:
         self.status = Status.PENDING
         self.result = None
         self.outputs = set()
-        self._state = 'INIT'
+        self._state = '_init'
         self._sub_commands = []
 
     when = {}
@@ -75,11 +75,11 @@ class Command:
             # At this point, all sub commands are DONE
 
             try:
-                handler = self.when[self._state]
+                handler = getattr(self, self._state)
             except KeyError:
                 raise NotImplementedError(self.__class__, self._state) from None
 
-            ret = handler(self, *sub_commands)
+            ret = handler(*sub_commands)
             # Sugar: allow omitting sub commands or passing only one instead of
             # a list
             if isinstance(ret, tuple):
@@ -240,29 +240,6 @@ class UniqueCommand(Command):
     def __str__(self):
         return f'{self.__class__.__name__.lower()} {self.name}'
 
-class When:
-    """
-    Decorator factory to make declaring automata simpler
-    """
-    def __init__(self):
-        self._functions = {}
-
-    def __call__(self, key):
-        """
-        Decorator to register a method as handler for a particular state (Use
-        the instance of the When class as the decorator)
-        """
-        def _wrapper(function):
-            self._functions[key] = function
-            return function
-        return _wrapper
-
-    def __getitem__(self, key):
-        """
-        Accessor for the registered decorated methods
-        """
-        return self._functions[key]
-
 class Script(Command):
     """
     A collection of maker methods for Commands
@@ -408,20 +385,15 @@ class Rget(UniqueCommand):
     """
     Recursively gets a resource and all its parts
     """
-    when = When()
-
-    @when('INIT')
     def _init(self):
-        return 'PARENT', self.do_once('GET', self.name)
+        return '_get', self.do_once('GET', self.name)
 
-    @when('PARENT')
     def _get(self, get):
-        return 'CHILDREN', [
+        return '_sub_gets', [
                 self.do_once('RGET', child_name)
                 for child_name in get.result
                 ]
 
-    @when('CHILDREN')
     def _sub_gets(self, *_):
         return Status.DONE
 
@@ -436,14 +408,10 @@ class Collect(Command):
     def __str__(self):
         return 'collect'
 
-    when = When()
-
-    @when('INIT')
     def _init(self):
-        return 'COLLECT', self.commands
+        return '_collect', self.commands
 
-    @when('COLLECT')
-    def _end(self, *commands):
+    def _collect(self, *commands):
         self.result = [ c.result for c in commands ]
         return Status.DONE
 
@@ -473,17 +441,14 @@ class SSubmit(UniqueCommand):
     children. Return said children as result on success.
     """
     _dry = False
-    when = When()
 
-    @when('INIT')
     def _init(self):
         """
         Emit the initial stat
         """
         # metadata
-        return 'SORT', self.do_once('STAT', self.name)
+        return '_sort', self.do_once('STAT', self.name)
 
-    @when('SORT')
     def _sort(self, stat):
         """
         Sort out queries, remote jobs and literals
@@ -505,12 +470,11 @@ class SSubmit(UniqueCommand):
 
         # Else, regular job, process dependencies first
         cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
-        return 'DEPS', [
+        return '_deps', [
                 self.do_once(cmd, dep)
                 for dep in task_deps(task_dict)
                 ]
 
-    @when('DEPS')
     def _deps(self, *_):
         """
         Check deps availability before proceeding to main submit
@@ -522,9 +486,8 @@ class SSubmit(UniqueCommand):
             return Status.DONE
 
         # Task itself
-        return 'MAIN', self.do_once('SUBMIT', self.name)
+        return '_main', self.do_once('SUBMIT', self.name)
 
-    @when('MAIN')
     def _main(self, main_sub):
         """
         Check the main result and return possible children tasks
@@ -546,17 +509,13 @@ class RSubmit(UniqueCommand):
     """
     _dry = False
 
-    when = When()
-
-    @when('INIT')
     def _init(self):
         """
         Emit the simple submit
         """
         cmd = 'DRYSSUBMIT' if self._dry else 'SSUBMIT'
-        return 'MAIN', self.do_once(cmd, self.name)
+        return '_main', self.do_once(cmd, self.name)
 
-    @when('MAIN')
     def _main(self, ssub):
         """
         Check the main result and proceed with possible children tasks
@@ -564,10 +523,9 @@ class RSubmit(UniqueCommand):
         children = ssub.result
 
         cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
-        return 'CHILDREN', [ self.do_once(cmd, child_name)
+        return '_children', [ self.do_once(cmd, child_name)
                 for child_name in children ]
 
-    @when('CHILDREN')
     def _children(self, *_):
         """
         Check completion of children and propagate result
@@ -590,9 +548,6 @@ class Query(Command):
     def __str__(self):
         return f'query on {self.subject} {self.query}'
 
-    when = When()
-
-    @when('INIT')
     def _init(self):
         """
         Process the query and decide on further commands to issue
@@ -604,26 +559,26 @@ class Query(Command):
         # Query terminator, this is a query leaf and requests the task result
         # itself ; issue a RUN
         if self.query is True:
-            return 'RUN', self.do_once('RUN', self.subject)
+            return '_run', self.do_once('RUN', self.subject)
 
         # Status of task, issue a STAT command
         if self.query in ('$done', ('$done', True)):
-            return 'STATUS', self.do_once('STAT', self.subject)
+            return '_status', self.do_once('STAT', self.subject)
 
         # Definition of task, issue a STAT command
         if self.query in ('$def', ('$def', True)):
-            return 'DEF', self.do_once('STAT', self.subject)
+            return '_def', self.do_once('STAT', self.subject)
 
         # Base of task, issue a SRUN
         if self.query in ('$base', ('$base', True)):
-            return 'BASE', self.do_once('SRUN', self.subject)
+            return '_base', self.do_once('SRUN', self.subject)
 
         # Recursive queries
         # ================
 
         # Query set, turn each in its own query
         if hasattr(self.query, 'items'):
-            return 'QUERYSET', [
+            return '_queryset', [
                     Query(self.script, self.subject, (key, value))
                     for key, value in self.query.items()
                     ]
@@ -638,24 +593,22 @@ class Query(Command):
 
         # Arg query, get the task definition first
         if query_key == '$args':
-            return 'ARGS', self.do_once('STAT', self.subject)
+            return '_args', self.do_once('STAT', self.subject)
 
         # Children query, run the task first
         if query_key == '$children':
-            return 'CHILDREN', self.do_once('SSUBMIT', self.subject)
+            return '_children', self.do_once('SSUBMIT', self.subject)
 
         # Iterator, get the raw object first
         if query_key == '*':
-            return 'ITERATOR', self.do_once('SRUN', self.subject)
+            return '_iterator', self.do_once('SRUN', self.subject)
 
         # Direct indexing, get raw object first
         if query_key.isidentifier() or query_key.isnumeric():
-            return 'INDEX', self.do_once('SRUN', self.subject)
-
+            return '_index', self.do_once('SRUN', self.subject)
 
         raise NotImplementedError(self.query)
 
-    @when('STATUS')
     def _status(self, stat_cmd):
         """
         Check and returns status request
@@ -665,7 +618,6 @@ class Query(Command):
         self.result = task_done
         return Status.DONE
 
-    @when('DEF')
     def _def(self, stat_cmd):
         """
         Check and returns definition request
@@ -675,7 +627,6 @@ class Query(Command):
         self.result = task_dict
         return Status.DONE
 
-    @when('ARGS')
     def _args(self, stat_cmd):
         """
         Build list of sub-queries for arguments of subject task from the
@@ -702,9 +653,8 @@ class Query(Command):
             sub_commands.append(
                 Query(self.script, target, subquery)
                 )
-        return 'DICT_QUERYSET', sub_commands
+        return '_dict_queryset', sub_commands
 
-    @when('CHILDREN')
     def _children(self, ssub_cmd):
         """
         Build a list of sub-queries for children of subject task
@@ -732,9 +682,8 @@ class Query(Command):
             sub_commands.append(
                 Query(self.script, target, subquery)
                 )
-        return 'DICT_QUERYSET', sub_commands
+        return '_dict_queryset', sub_commands
 
-    @when('DICT_QUERYSET')
     def _dict_queryset(self, *query_items):
         """
         Check and merge argument query items
@@ -750,7 +699,6 @@ class Query(Command):
 
         return Status.DONE
 
-    @when('QUERYSET')
     def _queryset(self, *query_items):
         """
         Check and merge query items
@@ -761,7 +709,6 @@ class Query(Command):
         self.result = result
         return Status.DONE
 
-    @when('ITERATOR')
     def _iterator(self, _):
         """
         Check simple run, extract raw result and build subqueries
@@ -779,9 +726,8 @@ class Query(Command):
                     Query(self.script, task.name, subquery)
                     )
 
-        return 'ITEMS', subquery_commands
+        return '_items', subquery_commands
 
-    @when('ITEMS')
     def _items(self, *items):
         """
         Check and pack items
@@ -789,7 +735,6 @@ class Query(Command):
         self.result = [ item.result for item in items ]
         return Status.DONE
 
-    @when('INDEX')
     def _index(self, _):
         """
         Subquery for a simple item
@@ -811,9 +756,8 @@ class Query(Command):
                 f'task, cannot apply subquery "{subquery}" to it'
                 )
 
-        return 'ITEM', Query(self.script, task.name, subquery)
+        return '_item', Query(self.script, task.name, subquery)
 
-    @when('ITEM')
     def _item(self, item):
         """
         Return result of simple indexed command
@@ -822,7 +766,6 @@ class Query(Command):
         return Status.DONE
 
 
-    @when('BASE')
     def _base(self, _):
         """
         Return base result
@@ -830,7 +773,6 @@ class Query(Command):
         self.result = self.script.store.get_native(self.subject, shallow=True)
         return Status.DONE
 
-    @when('RUN')
     def _run(self, _):
         """
         Return full result
@@ -863,18 +805,13 @@ class Run(UniqueCommand):
     """
     Combined rsubmit + rget
     """
-    when = When()
-
-    @when('INIT')
     def _init(self):
-        return 'RSUB', self.do_once('RSUBMIT', self.name)
+        return '_rsub', self.do_once('RSUBMIT', self.name)
 
-    @when('RSUB')
     def _rsub(self, _):
-        return 'RGET', self.do_once('RGET', self.name)
+        return '_rget', self.do_once('RGET', self.name)
 
-    @when('RGET')
-    def _rsub(self, _):
+    def _rget(self, _):
         return Status.DONE
 
 @once
@@ -883,16 +820,11 @@ class SRun(UniqueCommand):
     Shallow run: combined ssubmit + get, fetches the raw result of a task but
     not its children
     """
-    when = When()
-
-    @when('INIT')
     def _init(self):
-        return 'SSUB', self.do_once('SSUBMIT', self.name)
+        return '_ssub', self.do_once('SSUBMIT', self.name)
 
-    @when('SSUB')
     def _ssub(self, _):
-        return 'GET', self.do_once('GET', self.name)
+        return '_get', self.do_once('GET', self.name)
 
-    @when('GET')
-    def _rget(self, _):
+    def _get(self, _):
         return Status.DONE
