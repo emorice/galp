@@ -89,3 +89,14 @@ def test_query_index(tmpdir):
             store=tmpdir, steps=['galp.tests.steps'])
 
     assert ans == {'x': False}
+
+def test_query_num_index(tmpdir):
+    """
+    Test indexing directly inside task result, with numeric indexing
+    """
+    graph = [ gts.query.do_nothing(1), gts.query.do_nothing(2) ]
+
+    ans = galp.run(galp.Query(graph, {'1': '$done'}),
+            store=tmpdir, steps=['galp.tests.steps'])
+
+    assert ans == {'1': False}

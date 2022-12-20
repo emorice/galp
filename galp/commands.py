@@ -649,7 +649,7 @@ class Query(Command):
             return 'ITERATOR', self.do_once('SRUN', self.subject)
 
         # Direct indexing, get raw object first
-        if query_key.isidentifier():
+        if query_key.isidentifier() or query_key.isnumeric():
             return 'INDEX', self.do_once('SRUN', self.subject)
 
 
@@ -799,7 +799,7 @@ class Query(Command):
         index, subquery = self.query
 
         try:
-            task = shallow_obj[index]
+            task = shallow_obj[int(index) if index.isnumeric() else index]
         except Exception as exc:
             raise RuntimeError(
                 f'Query failed, cannot access item "{index}" of task {self.subject}'
