@@ -6,6 +6,7 @@ import sys
 import time
 from enum import Enum
 from collections import deque
+from weakref import WeakSet
 
 import logging
 
@@ -37,8 +38,10 @@ class Command:
     def __init__(self, script):
         self.script = script
         self.status = Status.PENDING
+        if script:
+            script.pending.add(self)
         self.result = None
-        self.outputs = set()
+        self.outputs = WeakSet()
         self._state = '_init'
         self._sub_commands = []
 
@@ -251,12 +254,16 @@ class Script(Command):
             soon as any command fails.
     """
     def __init__(self, verbose=True, store=None, keep_going=False):
+        # Strong references to all pending commands
+        self.pending = set()
+
         super().__init__(self)
         self.commands = {}
         self.new_commands = deque()
         self.verbose = verbose
         self.keep_going=keep_going
         self.store = store
+
 
         self._task_dicts = {}
 
@@ -272,7 +279,7 @@ class Script(Command):
         execution of the command as far as possible, and of the callback if
         ready.
         """
-        cb_command = Callback(command, callback)
+        cb_command = Callback(self, command, callback)
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
         advance_all([command])
@@ -282,6 +289,14 @@ class Script(Command):
         """
         Hook called when the graph status changes
         """
+        # Dereference non-pending commands, thus allowing deletion if nobody else
+        # keeps a strong reference to the command.
+        # This is intended so that commands triggering a callback stay in memory
+        # until they're final, then get collected once the callback has fired.
+        if command in self.pending and new_status in (Status.DONE,
+                Status.FAILED):
+            self.pending.remove(command)
+
         if not self.verbose:
             return
         del old_status
@@ -404,12 +419,16 @@ class Collect(Command):
 class Callback(Command):
     """
     An arbitrary callback function, used to tie in other code
+
+    It is important that a callback command is attached to a script, else it can
+    be collected before having a chance to fire since downstream links are
+    weakrefs.
     """
-    def __init__(self, command, callback):
+    def __init__(self, script, command, callback):
         self._callback = callback
         self._in = command
         self._in.out(self)
-        super().__init__(script=None)
+        super().__init__(script=script)
 
     def __str__(self):
         return f'callback {self._callback.__name__}'
