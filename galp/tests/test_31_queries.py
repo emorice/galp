@@ -98,3 +98,16 @@ def test_query_num_index(tmpdir):
             store=tmpdir, steps=['galp.tests.steps'])
 
     assert ans == {'1': False}
+
+def test_base_task(tmpdir):
+    """
+    Run a step on top of a base query
+    """
+
+    graph = gts.query.index_type(
+            galp.Query(gts.query.do_meta(), '$base'),
+            1)
+
+    ans = galp.run(graph, store=tmpdir, steps=['galp.tests.steps'])
+
+    assert ans == str(galp.graph.TaskReference)

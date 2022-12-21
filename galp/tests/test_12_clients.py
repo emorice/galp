@@ -105,7 +105,7 @@ async def test_unique_submission(peer_client):
     try:
         async with timeout(6):
             # Process one STAT for the task, two for the args and reply NOTFOUNG
-            for name in (task.name, task.args[0].name, task.args[1].name):
+            for name in (task.name, task.args[0][1].name, task.args[1][1].name):
                 await peer.recv_message()
                 await peer.send_message(
                     peer.protocol.not_found(

@@ -30,6 +30,7 @@ from galp.protocol import ProtocolEndException, IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.commands import Script
+from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep
 
@@ -111,7 +112,7 @@ class WorkerProtocol(ReplyProtocol):
         super().__init__(name, router)
         self.worker = worker
         self.store = store
-        self.script = Script()
+        self.script = Script(store=self.store)
 
     def on_invalid(self, route, reason):
         logging.error('Bad request: %s', reason)
@@ -238,12 +239,17 @@ class WorkerProtocol(ReplyProtocol):
         while self.script.new_commands:
             verb, name = self.script.new_commands.popleft()
             if verb != 'GET':
+                if verb in ('STAT', 'SUBMIT'):
+                    # Avoid hanging if a higher layer mistakenly try to use a
+                    # client-side command
+                    raise NotImplementedError(verb)
                 continue
             try:
                 children = self.store.get_children(name)
                 self.script.commands[verb, name].done(children)
                 continue
             except StoreReadError:
+                logging.exception('In %s %s:', verb, name)
                 self.script.commands[verb, name].failed('StoreReadError')
                 continue
             except KeyError:
@@ -301,15 +307,17 @@ class Worker:
         """
         Callback to schedule a task for execution.
         """
-        def _start_task(status):
+        def _start_task(status, inputs):
             task = asyncio.create_task(
-                self.run_submission(status, client_route, name, task_dict)
+                self.run_submission(status, client_route, name, task_dict,
+                    inputs)
                 )
             self.galp_jobs.put_nowait(task)
 
         script = self.protocol.script
         collect = script.collect([
-                script.do_once('RGET', t) for t in [
+                Query(script, task_name, op_name)
+                for op_name, task_name in [
                     *task_dict['arg_names'],
                     *task_dict['kwarg_names'].values()
                     ]
@@ -331,13 +339,7 @@ class Worker:
     # Task execution logic
     # ====================
 
-    def _get_native(self, name):
-        """
-        Get native resource object from any available source
-        """
-        return self.protocol.store.get_native(name)
-
-    async def run_submission(self, status, route, name, task_dict):
+    async def run_submission(self, status, route, name, task_dict, inputs):
         """
         Actually run the task
         """
@@ -363,19 +365,15 @@ class Worker:
 
             handle = step.make_handle(name)
 
-            # Load args from store, usually from disk.
+            # Unpack inputs from flattened input list
             try:
-                args = map(self._get_native, arg_names)
-                kwargs = {
-                    kw.decode('ascii'): self._get_native(kwarg_name)
-                    for kw, kwarg_name in kwarg_names.items()
-                    }
-            except KeyError as exc:
-                # Could not find argument
-                raise IllegalRequestError(route,
-                    f'Missing dependency: {exc.args[0]}'
-                    f' for step {name} ({step_name})'
-                    ) from exc
+                inputs = list(reversed(inputs))
+                args = []
+                for _name in arg_names:
+                    args.append(inputs.pop())
+                kwargs = {}
+                for keyword in kwarg_names:
+                    kwargs[keyword.decode('ascii')] = inputs.pop()
             except UnicodeDecodeError as exc:
                 # Either you tried to use python's non-ascii keywords feature,
                 # or more likely you messed up the encoding on the caller side.

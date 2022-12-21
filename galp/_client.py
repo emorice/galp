@@ -199,7 +199,7 @@ class Client:
         """
 
         # Register the termination command
-        def _end(status):
+        def _end(status, _result):
             raise ProtocolEndException(status)
 
         script = self.protocol.script

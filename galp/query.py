@@ -2,8 +2,12 @@
 Implementation of complex queries within the command asynchronous system
 """
 
+import logging
+
 from .graph import TaskType
 from .commands import Command, Status
+from .cache import StoreReadError
+from .serializer import DeserializeError
 
 def run_task(script, task, dry=False):
     """
@@ -85,8 +89,13 @@ class Query(Command):
         """
         Execute handler for operator after the required commands are done
         """
-        self.result = self.op.result(sub_commands)
-        return Status.DONE
+        try:
+            self.result = self.op.result(sub_commands)
+            return Status.DONE
+        except (StoreReadError, DeserializeError) as exc:
+            logging.exception('In %s:', self)
+            self.result = exc
+            return Status.FAILED
 
 def parse_query(query):
     """
@@ -189,17 +198,18 @@ class Base(Operator):
     Base operator, returns shallow object itself with the linked tasks left as
     references
     """
-    requires = 'SRUN'
+    requires = 'GET'
 
     def _result(self, _srun_cmd, _subs):
         return self.store.get_native(
                 self.subject, shallow=True)
 
+
 class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
-    requires = 'RUN'
+    requires = 'RGET'
 
     def _result(self, _run_cmd, _subs):
         return self.store.get_native(

@@ -207,7 +207,7 @@ class LowerProtocol(BaseSplitProtocol):
     # Internal parsing utilities
     # ==========================
 
-    def _validate(self, condition, route, reason='Unknown error'):
+    def _validate(self, condition, route, reason):
         """
         Calls invalid message callback
         """
@@ -238,8 +238,8 @@ class LowerProtocol(BaseSplitProtocol):
         b_block = msg[1]
         msg = msg[2:]
 
-        self._validate(len(b_sent) == self._counter_size, 'Bad send counter size')
-        self._validate(len(b_block) == self._counter_size, 'Bad block counter size')
+        self._validate(len(b_sent) == self._counter_size, route, 'Bad send counter size')
+        self._validate(len(b_block) == self._counter_size, route, 'Bad block counter size')
         sent = int.from_bytes(b_sent, self._counter_endianness)
         block = int.from_bytes(b_block, self._counter_endianness)
 

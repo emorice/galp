@@ -150,7 +150,12 @@ def test_task(worker_socket):
         arg_names=[], kwarg_names={}, vtags=[]
         ))
 
-    socket.send_multipart(make_msg(b'SUBMIT', name, step_name))
+    socket.send_multipart(make_msg(b'SUBMIT', name,
+        msgpack.packb({
+            'step_name': step_name,
+            'arg_names': [],
+            'kwarg_names': {}})
+        ))
 
     assert_ready(socket)
 
@@ -187,7 +192,12 @@ def test_reference(worker_socket):
 
     task2 = galp.steps.galp_double(task1)
 
-    worker_socket.send_multipart(make_msg(b'SUBMIT', task1.name, task1.step.key))
+    worker_socket.send_multipart(make_msg(b'SUBMIT', task1.name,
+        msgpack.packb({
+            'step_name': task1.step.key,
+            'arg_names': [],
+            'kwarg_names': {}})
+        ))
 
     assert_ready(worker_socket)
 
@@ -197,9 +207,12 @@ def test_reference(worker_socket):
     assert is_body(doing, [b'DOING', task1.name])
     assert body_startswith(done, [b'DONE', task1.name])
 
-    worker_socket.send_multipart(
-        make_msg(b'SUBMIT', task2.name, task2.step.key, b'', task1.name)
-        )
+    worker_socket.send_multipart(make_msg(b'SUBMIT', task2.name,
+        msgpack.packb({
+            'step_name': task2.step.key,
+            'arg_names': [task1.name],
+            'kwarg_names': {}})
+        ))
 
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)

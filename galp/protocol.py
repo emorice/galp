@@ -6,7 +6,7 @@ import logging
 
 import msgpack
 
-from galp.graph import Task, TaskName
+from galp.graph import Task, TaskName, task_input_load
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
@@ -235,14 +235,10 @@ class Protocol(LowerProtocol):
                 `step_name`, a list of `vtags`, a list of positional `arg_names`
                 and a dictionary of `kwarg_names`.
         """
-        msg = [b'SUBMIT', task_dict['name'], task_dict['step_name']]
-        # Pos args
-        for arg_name in task_dict['arg_names']:
-            msg += [ b'', arg_name ]
-        # Kw args
-        for keyword, kwarg_name in task_dict['kwarg_names'].items():
-            msg += [ keyword , kwarg_name ]
-        return route, msg
+        name = task_dict['name']
+        payload = msgpack.packb(task_dict)
+
+        return route, [b'SUBMIT', name, payload]
 
     def stat(self, route, name):
         """
@@ -376,42 +372,23 @@ class Protocol(LowerProtocol):
 
     @event.on('SUBMIT')
     def _on_submit(self, route, msg):
-        task_dict = {}
-
-        self._validate(
-            len(msg) >= 3, route,
-            'SUBMIT without name or step') # SUBMIT name step
-        task_dict['name'] = TaskName(msg[1])
-        task_dict['step_name'] = msg[2]
-
-        # Collect args
-        argstack = msg[3:]
-        argstack.reverse()
-        task_dict['arg_names'] = []
-        task_dict['kwarg_names'] = {}
-        while argstack != []:
-            try:
-                keyword = argstack.pop()
-                arg_name = TaskName(argstack.pop())
-            except IndexError:
-                self._validate(False, route, 'SUBMIT with argument index but no argument value')
-            if keyword == b'':
-                task_dict['arg_names'].append(arg_name)
-            else:
-                task_dict['kwarg_names'][keyword] = arg_name
-
+        self._validate(len(msg) == 3, route, 'SUBMIT with wrong number of parts')
+        name = TaskName(msg[1])
+        task_dict = self._load_task_dict(msg[2])
+        task_dict['name'] = name
         return self.on_submit(route, task_dict)
 
     @staticmethod
     def _load_task_dict(payload):
         task_dict = msgpack.unpackb(payload)
+
         for key in ['arg_names', 'children']:
             if key in task_dict:
-                task_dict[key] = [TaskName(name) for name in task_dict[key]]
+                task_dict[key] = [task_input_load(td) for td in task_dict[key]]
         for key in ['kwarg_names']:
             if key in task_dict:
-                task_dict[key] = { kw: TaskName(name)
-                        for kw, name in task_dict[key].items()}
+                task_dict[key] = { kw: task_input_load(td)
+                        for kw, td in task_dict[key].items()}
         for key in ['parent']:
             if key in task_dict:
                 task_dict[key] = TaskName(task_dict[key])
@@ -419,11 +396,11 @@ class Protocol(LowerProtocol):
 
     @event.on('FOUND')
     def _on_found(self, route, msg):
-        self._validate(len(msg) == 3, 'FOUND with wrong number of parts')
+        self._validate(len(msg) == 3, route, 'FOUND with wrong number of parts')
         name = TaskName(msg[1])
         task_dict = self._load_task_dict(msg[2])
         task_dict['name'] = name
-        self.on_found(route, task_dict)
+        return self.on_found(route, task_dict)
 
     @event.on('STAT')
     def _on_stat(self, route, msg):

@@ -416,7 +416,7 @@ class Callback(Command):
 
     def _eval(self):
         if self._in.status != Status.PENDING:
-            self._callback(self._in.status)
+            self._callback(self._in.status, self._in.result)
             return Status.DONE, []
         return Status.PENDING, []
 
@@ -456,9 +456,12 @@ class SSubmit(UniqueCommand):
 
         # Else, regular job, process dependencies first
         cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
+        # FIXME: optimize type of command based on type of link
+        # Always doing a RSUB will work, but it will run things more eagerly that
+        # needed or propagate failures too aggressively.
         return '_deps', [
                 self.do_once(cmd, dep)
-                for dep in task_deps(task_dict)
+                for op_name, dep in task_deps(task_dict)
                 ]
 
     def _deps(self, *_):

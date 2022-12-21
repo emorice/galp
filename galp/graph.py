@@ -53,19 +53,62 @@ def ensure_task(obj):
         return obj()
     return LiteralTask(obj)
 
+def ensure_task_input(obj):
+    """
+    Makes object a task or a simple query
+    """
+    if isinstance(obj, Query):
+        # Only allowed query for now, will be extended in the future
+        if obj.query in ['$base']:
+            return obj.query, obj.subject
+    # Everything else is treated as task to be recursively run and loaded
+    return '$sub', ensure_task(obj)
+
+def task_input_doc(task_input):
+    """
+    Converts the return of ensure_task_input to a representation suitable for
+    hashing and transmission. This generally discard the input definition itself.
+    """
+    op_name, task = task_input
+
+    if op_name != '$sub':
+        return op_name, task.name
+    # Omit '$sub' for backward compat.
+    # TODO: uniformize at next breaking change
+    return task.name
+
+def task_input_task(task_input):
+    """
+    Recover the task object from a task input, discarding the link type
+    """
+    _op_name, task = task_input
+    return task
+
+def task_input_load(ti_doc):
+    """
+    Type a task input from a generic document
+    """
+    if isinstance(ti_doc, bytes):
+        # Backward compatible sub-style link
+        return '$sub', TaskName(ti_doc)
+    # Generic input
+    op_name, task_name = ti_doc
+    return str(op_name), TaskName(task_name)
+
+
 def task_deps(task_dict):
     """
     Gather the list of dependencies names from a task dictionnary
     """
     # Step-style Task, the dependencies are the tasks given as arguments
     if 'arg_names' in task_dict:
-        return [ TaskName(dep) for dep in [
+        return [ task_input_load(ti_doc) for ti_doc in [
             *task_dict['arg_names'],
             *task_dict['kwarg_names'].values()
             ]]
     # SubTask, the dependency is the parent task
     if 'parent' in task_dict:
-        return [ task_dict['parent'] ]
+        return [ ('$sub', task_dict['parent']) ]
 
     # Removed: dependencies are now defined as tasks that need to be done before
     # the raw task result can be reached. Literal children are not dependencies
@@ -381,8 +424,8 @@ class Task(TaskType):
                     ) from exc
 
         self.step = step
-        self.args = [ensure_task(arg) for arg in args]
-        self.kwargs = { kw.encode('ascii'): ensure_task(arg) for kw, arg in kwargs.items() }
+        self.args = [ensure_task_input(arg) for arg in args]
+        self.kwargs = { kw.encode('ascii'): ensure_task_input(arg) for kw, arg in kwargs.items() }
         self.vtags = (
             [ ascii(vtag) ]
             if vtag is not None else [])
@@ -396,8 +439,8 @@ class Task(TaskType):
         task_dict = {
             'step_name': self.step.key,
             'vtags': self.vtags,
-            'arg_names': [ arg.name for arg in self.args ],
-            'kwarg_names': { kw: kwarg.name for kw, kwarg in self.kwargs.items() }
+            'arg_names': [ task_input_doc(arg) for arg in self.args ],
+            'kwarg_names': { kw: task_input_doc(kwarg) for kw, kwarg in self.kwargs.items() }
             }
         if name:
             task_dict['name'] = self.name
@@ -406,8 +449,8 @@ class Task(TaskType):
     @property
     def dependencies(self):
         """Shorthand for all the tasks this task directly depends on"""
-        deps = list(self.args)
-        deps.extend(self.kwargs.values())
+        deps = [task_input_task(ti) for ti in self.args]
+        deps.extend([task_input_task(ti) for ti in self.kwargs.values()])
         return deps
 
     @classmethod
