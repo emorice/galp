@@ -6,7 +6,8 @@ import logging
 
 import msgpack
 
-from galp.graph import Task, TaskName, task_input_load
+from galp.task_types import TaskDict, TaskName
+from galp.graph import Task, task_input_load
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
 
@@ -46,7 +47,7 @@ class Protocol(LowerProtocol):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
 
-    def on_done(self, route, name, task_dict, children):
+    def on_done(self, route, name: TaskName, task_dict: TaskDict, children: list[TaskName]):
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
@@ -83,11 +84,11 @@ class Protocol(LowerProtocol):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
-    def on_submit(self, route, task_dict):
+    def on_submit(self, route, task_dict: TaskDict):
         """A `SUBMIT` message was received"""
         return self.on_unhandled(b'SUBMIT')
 
-    def on_found(self, route, task_dict):
+    def on_found(self, route, task_dict: TaskDict):
         """A `FOUND` message was received"""
         return self.on_unhandled(b'FOUND')
 
@@ -120,7 +121,7 @@ class Protocol(LowerProtocol):
         """
         return route, [b'DOING', name]
 
-    def done(self, route, name, task_dict, children):
+    def done(self, route, name, task_dict: TaskDict, children):
         """
         Builds a DONE message
 
@@ -223,7 +224,7 @@ class Protocol(LowerProtocol):
 
         return self.submit(route, task_dict)
 
-    def submit(self, route, task_dict):
+    def submit(self, route, task_dict: TaskDict):
         """
         Low-level submit routine.
 
@@ -249,7 +250,7 @@ class Protocol(LowerProtocol):
         """
         return route, [b'STAT', name]
 
-    def found(self, route, task_dict):
+    def found(self, route, task_dict: TaskDict):
         """
         Builds a FOUND message
 
@@ -379,19 +380,35 @@ class Protocol(LowerProtocol):
         return self.on_submit(route, task_dict)
 
     @staticmethod
-    def _load_task_dict(payload):
-        task_dict = msgpack.unpackb(payload)
+    def _load_task_dict(payload) -> TaskDict:
+        """
+        Parse/validate a task-like dict object
 
-        for key in ['arg_names', 'children']:
-            if key in task_dict:
-                task_dict[key] = [task_input_load(td) for td in task_dict[key]]
-        for key in ['kwarg_names']:
-            if key in task_dict:
-                task_dict[key] = { kw: task_input_load(td)
-                        for kw, td in task_dict[key].items()}
-        for key in ['parent']:
-            if key in task_dict:
-                task_dict[key] = TaskName(task_dict[key])
+        There are libraries around that could automate that, but for now we use
+        very few of these validators.
+        """
+        in_dict = msgpack.unpackb(payload)
+
+        task_dict: TaskDict = {}
+        for key, value in in_dict.items():
+            if key == 'arg_names':
+                task_dict['arg_names'] = [task_input_load(td) for td in value]
+            elif key  == 'kwarg_names':
+                task_dict['kwarg_names'] = { kw: task_input_load(td)
+                            for kw, td in value.items()}
+            elif key == 'children':
+                task_dict['children'] = [TaskName(name) for name in value]
+            elif key == 'parent':
+                task_dict['parent'] = TaskName(value)
+            elif key == 'step_name':
+                task_dict['step_name'] = bytes(value)
+            elif key == 'vtags':
+                task_dict['vtags'] = [str(tag) for tag in value]
+            elif key == 'name':
+                task_dict['name'] = TaskName(value)
+            else:
+                raise TypeError(f'Unhandled key {key} found in expected '
+                        'task-like document')
         return task_dict
 
     @event.on('FOUND')

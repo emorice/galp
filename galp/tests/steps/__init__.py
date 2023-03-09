@@ -230,6 +230,16 @@ def meta(values):
         ]
 
 @export
+def meta_meta(values):
+    """
+    More complicated meta graph involving a literal in between steps
+    """
+    intermediate_list =  [
+        identity(value) for value in values
+        ]
+    return meta(intermediate_list)
+
+@export
 def meta_error():
     """
     A valid meta step returning a task which itself fails

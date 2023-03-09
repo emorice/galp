@@ -7,10 +7,11 @@ import time
 from enum import Enum
 from collections import deque
 from weakref import WeakSet
+from typing import TypeVar, Generic
 
 import logging
 
-from .graph import task_deps
+from .graph import task_deps, TaskName
 
 class Status(Enum):
     """
@@ -31,19 +32,21 @@ def once(cls):
     _once_commands[cls.__name__.upper()] = cls
     return cls
 
-class Command:
+CommandResult = TypeVar('CommandResult')
+
+class Command(Generic[CommandResult]):
     """
     An asynchronous command
     """
-    def __init__(self, script):
+    def __init__(self, script: 'Script') -> None:
         self.script = script
         self.status = Status.PENDING
         if script:
             script.pending.add(self)
-        self.result = None
-        self.outputs = WeakSet()
+        self.result: CommandResult | None = None
+        self.outputs : WeakSet[Command] = WeakSet()
         self._state = '_init'
-        self._sub_commands = []
+        self._sub_commands : list[Command] = []
 
     def out(self, cmd):
         """
@@ -198,13 +201,14 @@ class Command:
         self.result = result
         advance_all(self.advance(status))
 
-    def do_once(self, verb, name, *args, **kwargs):
+    def do_once(self, verb: str, name: TaskName, *args, **kwargs) -> 'UniqueCommand':
         """
         Creates a unique command
         """
         key =  verb, name
         cls = _once_commands[verb]
 
+        assert isinstance(name, TaskName)
         if key in self.script.commands:
             cmd = self.script.commands[key]
             return cmd
@@ -230,11 +234,11 @@ def advance_all(commands):
         command = commands.pop()
         commands.extend(command.advance())
 
-class UniqueCommand(Command):
+class UniqueCommand(Command[CommandResult]):
     """
     Any command that is fully defined and identified by a task name
     """
-    def __init__(self, script, name):
+    def __init__(self, script: 'Script', name: TaskName):
         self.name = name
         super().__init__(script)
 
@@ -352,8 +356,7 @@ class Script(Command):
             return Status.FAILED
         return Status.PENDING
 
-
-class InertCommand(UniqueCommand):
+class InertCommand(UniqueCommand[CommandResult]):
     """
     Command tied to an external event
     """
@@ -370,11 +373,10 @@ class Get(InertCommand):
     """
 
 @once
-class Submit(InertCommand):
+class Submit(InertCommand[list[TaskName]]):
     """
     Remotely execute a single step
     """
-
 @once
 class Stat(InertCommand):
     """
@@ -440,7 +442,7 @@ class Callback(Command):
         return Status.PENDING, []
 
 @once
-class SSubmit(UniqueCommand):
+class SSubmit(UniqueCommand[list[TaskName]]):
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
@@ -496,7 +498,7 @@ class SSubmit(UniqueCommand):
         # Task itself
         return '_main', self.do_once('SUBMIT', self.name)
 
-    def _main(self, main_sub):
+    def _main(self, main_sub: Submit) -> Status:
         """
         Check the main result and return possible children tasks
         """

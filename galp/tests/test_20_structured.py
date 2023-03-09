@@ -38,6 +38,15 @@ async def test_meta_step(assert_task_equal):
             (1, 2, 3)
             )
 
+async def test_meta_meta_step(assert_task_equal):
+    """
+    Nested meta steps
+    """
+    await assert_task_equal(
+            gts.meta_meta( ((1, 2, 3), (4, 5)) ),
+            ((1, 2, 3), (4, 5))
+            )
+
 def test_resume_meta(run):
     """
     Run a meta-task with a failing child twice to force resumed collection

@@ -6,23 +6,15 @@ import inspect
 import warnings
 import functools
 
+from typing import Any
 from dataclasses import dataclass
 
 import msgpack
 
 import galp
-from galp.serializer import Serializer, TaskType, StepType
-
-class TaskName(bytes):
-    """
-    Simpler wrapper around bytes with a shortened, more readable repr
-    """
-    def __repr__(self):
-        return self.__str__()
-
-    def __str__(self):
-        _hex = self.hex()
-        return _hex[:7]
+from galp.task_types import (TaskName, TaskType, StepType, TaskDict, TaskInput,
+        TaskInputDoc)
+from galp.serializer import Serializer
 
 _serializer = Serializer() # Actually stateless, safe
 
@@ -35,13 +27,16 @@ def hash_one(payload):
 def obj_to_name(canon_rep):
     """
     Generate a task name from a canonical representation of task made from basic
-    types
+    types.
+
+    (Current implememtation may not be canonical yet, this is an aspirational
+    docstring)
     """
     payload = msgpack.packb(canon_rep)
     name = TaskName(hash_one(payload))
     return name
 
-def ensure_task(obj):
+def ensure_task(obj: Any) -> TaskType:
     """Makes object into a task in some way.
 
     If it's a step, try to call it to get a task.
@@ -53,7 +48,7 @@ def ensure_task(obj):
         return obj()
     return LiteralTask(obj)
 
-def ensure_task_input(obj):
+def ensure_task_input(obj: Any) -> TaskInput:
     """
     Makes object a task or a simple query
     """
@@ -64,7 +59,7 @@ def ensure_task_input(obj):
     # Everything else is treated as task to be recursively run and loaded
     return '$sub', ensure_task(obj)
 
-def task_input_doc(task_input):
+def task_input_doc(task_input: TaskInput) -> TaskInputDoc:
     """
     Converts the return of ensure_task_input to a representation suitable for
     hashing and transmission. This generally discard the input definition itself.
@@ -77,16 +72,18 @@ def task_input_doc(task_input):
     # TODO: uniformize at next breaking change
     return task.name
 
-def task_input_task(task_input):
+def task_input_task(task_input: TaskInput) -> TaskType:
     """
     Recover the task object from a task input, discarding the link type
     """
     _op_name, task = task_input
     return task
 
-def task_input_load(ti_doc):
+def task_input_load(ti_doc) -> TaskInputDoc:
     """
     Type a task input from a generic document
+
+    This should essentialy validate a received task doc
     """
     if isinstance(ti_doc, bytes):
         # Backward compatible sub-style link
@@ -95,8 +92,7 @@ def task_input_load(ti_doc):
     op_name, task_name = ti_doc
     return str(op_name), TaskName(task_name)
 
-
-def task_deps(task_dict):
+def task_deps(task_dict: TaskDict) -> list[TaskInputDoc]:
     """
     Gather the list of dependencies names from a task dictionnary
     """
@@ -158,7 +154,7 @@ class Step(StepType):
             pass
         functools.update_wrapper(self, self.function)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs) -> 'Task':
         """
         Symbolically call the function wrapped by this step, returning a Task
         object representing the eventual result.
@@ -171,7 +167,7 @@ class Step(StepType):
 
         return self.make_task(args, all_kwargs)
 
-    def make_task(self, args, kwargs):
+    def make_task(self, args, kwargs) -> 'Task':
         """
         Create actual Task object from the given args.
 
@@ -432,11 +428,11 @@ class Task(TaskType):
         self.name = self.gen_name(self.to_dict())
         self.handle = Handle(self.name, items)
 
-    def to_dict(self, name=False):
+    def to_dict(self, name=False) -> TaskDict:
         """
         Returns a dictionnary representation of the task.
         """
-        task_dict = {
+        task_dict: TaskDict = {
             'step_name': self.step.key,
             'vtags': self.vtags,
             'arg_names': [ task_input_doc(arg) for arg in self.args ],
@@ -454,14 +450,14 @@ class Task(TaskType):
         return deps
 
     @classmethod
-    def gen_name(cls, task_dict):
+    def gen_name(cls, task_dict: TaskDict) -> bytes:
         """Create a resource name.
 
         Args:
             step_name: bytes
             arg_names: list of bytes
             kwarg_names: bytes-keyed dict of bytes.
-            vtags: list of bytes
+            vtags: list of strings
 
         Returns:
             digest as bytes.
@@ -535,13 +531,13 @@ class SubTask(TaskType):
         """
         return [self.parent]
 
-    def to_dict(self, name=False):
+    def to_dict(self, name=False) -> TaskDict:
         """
         Returns a dictionnary representation of the task.
         """
         # FIXME: this definition is duplicated in the store, where we need dicts
         # but don't have task objects.
-        task_dict = {
+        task_dict: TaskDict = {
             'parent': self.parent.name
             }
         if name:
@@ -608,7 +604,7 @@ class LiteralTask(TaskType):
         # Todo: more robust hashing, but this is enough for most case where
         # literal resources are a good fit (more complex objects would tend to be
         # actual step outputs)
-        self.data, self.dependencies = _serializer.dumps(obj)
+        self.data, self._dependencies = _serializer.dumps(obj)
 
         rep = [
             self.__class__.__name__, self.data,
@@ -618,12 +614,16 @@ class LiteralTask(TaskType):
         self.name = obj_to_name(rep)
         self.handle = Handle(self.name)
 
-    def to_dict(self, name=False):
+    @property
+    def dependencies(self) -> list[TaskType]:
+        return self._dependencies
+
+    def to_dict(self, name=False) -> TaskDict:
         """
         Dictionary representation of task
         """
-        task_dict = {
-            'children': [ dep.name for dep in self.dependencies ]
+        task_dict: TaskDict = {
+            'children': [ dep.name for dep in self._dependencies ]
             }
         if name:
             task_dict['name'] = self.name
@@ -775,13 +775,16 @@ class Query(TaskType):
         rep = [self.__class__.__name__, self.to_dict()]
 
         self.name = obj_to_name(rep)
-        self.dependencies = [self.subject]
 
-    def to_dict(self, name=False):
+    @property
+    def dependencies(self):
+        return [self.subject]
+
+    def to_dict(self, name=False) -> TaskDict:
         """
         Dictionary representation of the task
         """
-        task_dict = {
+        task_dict: TaskDict = {
                 'subject': self.subject.name,
                 'query': self.query,
                 }
@@ -798,10 +801,19 @@ class TaskReference(TaskType):
 
     The only valid operation on such a task is to read its name.
     """
-    name: bytes
+    name: TaskName
 
-    def to_dict(self):
+    def to_dict(self) -> TaskDict:
         """
         Task definition is explictly missing
         """
-        return None
+        raise RuntimeError('TaskReferences do not contain task definition '
+                'information')
+
+    @property
+    def dependencies(self):
+        """
+        Task definition is explictly missing
+        """
+        raise RuntimeError('TaskReferences do not contain task definition '
+                'information')

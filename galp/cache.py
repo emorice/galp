@@ -2,10 +2,13 @@
 Caching utils
 """
 
+from typing import Any
+
 import diskcache
 import msgpack
 
-from galp.graph import NonIterableHandleError, TaskName, Handle, TaskReference
+from galp.task_types import TaskName, TaskType
+from galp.graph import NonIterableHandleError, Handle, TaskReference, LiteralTask
 from galp.serializer import Serializer, CHILD_EXT_CODE
 
 class StoreReadError(Exception):
@@ -24,7 +27,7 @@ class CacheStack():
     If a path is given, the store may hold some elements in memory. The current
     implementation does not, in order to priorize a low memory footprint.
     """
-    def __init__(self, dirpath, serializer: Serializer):
+    def __init__(self, dirpath, serializer: Serializer) -> None:
         self.dirpath = dirpath
 
         if dirpath is None:
@@ -35,7 +38,7 @@ class CacheStack():
         self.serializer = serializer
 
 
-    def contains(self, name):
+    def contains(self, name: TaskName) -> bool:
         """
         Whether the store contains a named resource
 
@@ -46,10 +49,10 @@ class CacheStack():
         """
         return name + b'.children' in self.serialcache
 
-    def __contains__(self, name):
+    def __contains__(self, name: TaskName) -> bool:
         return self.contains(name)
 
-    def get_native(self, name, shallow=False):
+    def get_native(self, name: TaskName, shallow=False) -> Any:
         """
         Get a native object form the cache.
 
@@ -79,7 +82,7 @@ class CacheStack():
         native = self.serializer.loads(data, native_children)
         return native
 
-    def get_children(self, name):
+    def get_children(self, name: TaskName) -> list[TaskName]:
         """
         Gets the list of sub-resources of a resource in store
         """
@@ -97,12 +100,12 @@ class CacheStack():
 
         return children
 
-    def get_serial(self, name):
+    def get_serial(self, name: TaskName) -> tuple[bytes, list[TaskName]]:
         """
         Get a serialized object form the cache.
 
         Returns:
-            a tuple of one bytes object and one int (data, children).
+            a tuple of one bytes object and one list of taskname (data, children).
             If there is no data, None is returned instead.
         """
         children = self.get_children(name)
@@ -116,7 +119,7 @@ class CacheStack():
             children
             )
 
-    def put_native(self, handle, obj):
+    def put_native(self, handle, obj: Any) -> list[TaskName]:
         """Puts a native object in the cache.
 
         For now this eagerly serializes it and commits it to persistent cache.
@@ -195,7 +198,7 @@ class CacheStack():
 
         self.serialcache[key] = msgpack.packb(task_dict)
 
-    def put_task(self, task):
+    def put_task(self, task: TaskType):
         """
         Recursively store a task definition
 
@@ -215,7 +218,7 @@ class CacheStack():
         for child in task.dependencies:
             self.put_task(child)
 
-        if hasattr(task, 'literal'):
+        if isinstance(task, LiteralTask):
             self.put_native(task.handle, task.literal)
 
     def get_task(self, name):

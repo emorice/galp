@@ -6,3 +6,4 @@ numpy
 pyarrow
 plotly
 beautifulsoup4
+mypy

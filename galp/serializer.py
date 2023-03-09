@@ -2,14 +2,13 @@
 Serialization utils
 """
 
-from typing import Any, List
+from typing import Any, List, Callable
 import logging
 
 import msgpack
 import dill
 
-TaskType = type('TaskType', tuple(), {})
-StepType = type('StepType', tuple(), {})
+from galp.task_types import TaskType, StepType
 
 class DeserializeError(ValueError):
     """
@@ -41,7 +40,7 @@ def ext_hook(native_children):
         raise DeserializeError(f'Unknown ExtType {code}')
     return _hook
 
-def default(children):
+def default(children: list[TaskType]) -> Callable:
     """
     Out-of-band sub-tasks and dill fallback
 
@@ -82,7 +81,7 @@ class Serializer:
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj) -> bytes:
+    def dumps(self, obj: Any) -> tuple[bytes, list[TaskType]]:
         """
         Serialize the data.
 
@@ -94,7 +93,7 @@ class Serializer:
         Args:
             obj: object to serialize
         """
-        children = []
+        children : list[TaskType] = []
         # Modifies children in place
         payload = msgpack.packb(obj, default=default(children), use_bin_type=True)
         return payload, children
