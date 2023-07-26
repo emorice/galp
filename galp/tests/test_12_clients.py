@@ -80,7 +80,7 @@ async def test_fill_queue(blocked_client):
     with pytest.raises(asyncio.TimeoutError):
         async with timeout(1):
             await client.transport.send_message(
-                client.protocol.submit_task(route, task)
+                client.protocol.submit(route, task.named_def)
                 )
 
 async def test_unique_submission(peer_client):
@@ -89,6 +89,7 @@ async def test_unique_submission(peer_client):
     """
     peer, client = peer_client
     task = gts.sleeps(1, 42)
+    tdef = task.task_def
 
     submit_counter = [0]
     stat_counter = [0]
@@ -104,8 +105,8 @@ async def test_unique_submission(peer_client):
         )
     try:
         async with timeout(6):
-            # Process one STAT for the task, two for the args and reply NOTFOUNG
-            for name in (task.name, task.args[0][1].name, task.args[1][1].name):
+            # Process one STAT for the task, two for the args and reply NOTFOUND
+            for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
                 await peer.send_message(
                     peer.protocol.not_found(

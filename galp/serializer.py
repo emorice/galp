@@ -8,7 +8,7 @@ import logging
 import msgpack
 import dill
 
-from galp.task_types import TaskNode, StepType
+from galp.task_types import Task, StepType, NamedTaskDef, TaskName
 
 class DeserializeError(ValueError):
     """
@@ -17,51 +17,6 @@ class DeserializeError(ValueError):
     """
     def __init__(self, msg=None):
         super().__init__(msg or 'Failed to deserialize')
-
-CHILD_EXT_CODE = 0
-_DILL_EXT_CODE = 1
-
-def ext_hook(native_children):
-    """
-    ExtType to object for msgpack
-    """
-    def _hook(code, data):
-        if code == CHILD_EXT_CODE:
-            if not len(data) == 4:
-                raise DeserializeError(f'Invalid child index {data}')
-            index = int.from_bytes(data, 'little')
-            try:
-                return native_children[index]
-            except (KeyError, IndexError) as exc:
-                raise DeserializeError(f'Missing child index {data}') from exc
-        if code == _DILL_EXT_CODE:
-            logging.warning('Unsafe deserialization with dill')
-            return dill.loads(data)
-        raise DeserializeError(f'Unknown ExtType {code}')
-    return _hook
-
-def default(children: list[TaskNode]) -> Callable:
-    """
-    Out-of-band sub-tasks and dill fallback
-
-    Modifies children in-place
-    """
-    def _default(obj):
-        if isinstance(obj, StepType):
-            obj = obj()
-        if isinstance(obj, TaskNode):
-            index = len(children)
-            children.append(obj)
-            return msgpack.ExtType(
-                CHILD_EXT_CODE,
-                index.to_bytes(4, 'little')
-                )
-
-        return msgpack.ExtType(
-                _DILL_EXT_CODE,
-                dill.dumps(obj)
-                )
-    return _default
 
 class Serializer:
     """
@@ -76,12 +31,12 @@ class Serializer:
         Re-raises DeserializeError on any exception.
         """
         try:
-            return msgpack.unpackb(data, ext_hook=ext_hook(native_children),
+            return msgpack.unpackb(data, ext_hook=_ext_hook(native_children),
                     raw=False, use_list=False)
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj: Any) -> tuple[bytes, list[TaskNode]]:
+    def dumps(self, obj: Any) -> tuple[bytes, list[Task]]:
         """
         Serialize the data.
 
@@ -93,7 +48,90 @@ class Serializer:
         Args:
             obj: object to serialize
         """
-        children : list[TaskNode] = []
+        children : list[Task] = []
         # Modifies children in place
-        payload = msgpack.packb(obj, default=default(children), use_bin_type=True)
+        payload = msgpack.packb(obj, default=_default(children), use_bin_type=True)
         return payload, children
+
+def serialize_child(index):
+    """
+    Serialized representation of a reference to the index-th child task of an
+    object.
+
+    This is also used when storing scattered tasks.
+    """
+    return msgpack.ExtType(
+        _CHILD_EXT_CODE,
+        index.to_bytes(4, 'little')
+        )
+
+def load_task_def(name: bytes, def_buffer: bytes):
+    """
+    Util to deserialize a named task def with the name and def split
+
+    This is use both in cache and protocol, so it makes more sense to keep it
+    here despite it not being related to the rest of the serialization code for
+    now.
+    """
+    return NamedTaskDef.model_validate({
+        'name': name,
+        'task_def': msgpack.unpackb(
+                    def_buffer
+                    )
+            })
+
+def dump_task_def(named_def: NamedTaskDef) -> tuple[TaskName, bytes]:
+    """
+    Converse of load_task_def
+    """
+    return named_def.name, msgpack.dumps(named_def.task_def.model_dump())
+
+
+# Private serializer helpers
+# ==========================
+# This should not be exposed to the serializer consumers
+
+_CHILD_EXT_CODE = 0
+_DILL_EXT_CODE = 1
+
+def _default(children: list[Task]) -> Callable:
+    """
+    Out-of-band sub-tasks and dill fallback
+
+    Modifies children in-place
+    """
+    def _children_default(obj):
+        if isinstance(obj, StepType):
+            obj = obj()
+        if isinstance(obj, Task):
+            index = len(children)
+            children.append(obj)
+            return msgpack.ExtType(
+                _CHILD_EXT_CODE,
+                index.to_bytes(4, 'little')
+                )
+
+        return msgpack.ExtType(
+                _DILL_EXT_CODE,
+                dill.dumps(obj)
+                )
+    return _children_default
+
+def _ext_hook(native_children):
+    """
+    ExtType to object for msgpack
+    """
+    def _hook(code, data):
+        if code == _CHILD_EXT_CODE:
+            if not len(data) == 4:
+                raise DeserializeError(f'Invalid child index {data}')
+            index = int.from_bytes(data, 'little')
+            try:
+                return native_children[index]
+            except (KeyError, IndexError) as exc:
+                raise DeserializeError(f'Missing child index {data}') from exc
+        if code == _DILL_EXT_CODE:
+            logging.warning('Unsafe deserialization with dill')
+            return dill.loads(data)
+        raise DeserializeError(f'Unknown ExtType {code}')
+    return _hook

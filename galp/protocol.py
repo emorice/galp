@@ -4,12 +4,10 @@ GALP protocol implementation
 
 import logging
 
-import msgpack
-
-from galp.task_types import TaskDict, TaskName
-from galp.graph import Task, task_input_load
+from galp.task_types import TaskName, NamedTaskDef, CoreTaskDef
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
+from galp.serializer import load_task_def, dump_task_def
 
 # Errors and exceptions
 # =====================
@@ -47,7 +45,7 @@ class Protocol(LowerProtocol):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
 
-    def on_done(self, route, name: TaskName, task_dict: TaskDict, children: list[TaskName]):
+    def on_done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
@@ -59,44 +57,44 @@ class Protocol(LowerProtocol):
         """An `EXITED` message was received"""
         return self.on_unhandled(b'EXITED')
 
-    def on_failed(self, route, name):
+    def on_failed(self, route, name: TaskName):
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
 
-    def on_get(self, route, name):
+    def on_get(self, route, name: TaskName):
         """A `GET` request was received for resource `name`"""
         return self.on_unhandled(b'GET')
 
-    def on_illegal(self, route, reason):
+    def on_illegal(self, route, reason: bytes):
         """An `ILLEGAL` message was received"""
         return self.on_unhandled(b'ILLEGAL')
 
-    def on_not_found(self, route, name):
+    def on_not_found(self, route, name: TaskName):
         """A `NOTFOUND` message was received"""
         return self.on_unhandled(b'NOTFOUND')
 
-    def on_put(self, route, name, serialized):
+    def on_put(self, route, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
         """A `PUT` message was received for resource `name`
         """
         return self.on_unhandled(b'PUT')
 
-    def on_ready(self, route, peer):
+    def on_ready(self, route, peer: bytes):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
-    def on_submit(self, route, task_dict: TaskDict):
+    def on_submit(self, route, named_def: NamedTaskDef):
         """A `SUBMIT` message was received"""
         return self.on_unhandled(b'SUBMIT')
 
-    def on_found(self, route, task_dict: TaskDict):
+    def on_found(self, route, named_def: NamedTaskDef):
         """A `FOUND` message was received"""
         return self.on_unhandled(b'FOUND')
 
-    def on_stat(self, route, name):
+    def on_stat(self, route, name: TaskName):
         """A `STAT` message was received"""
         return self.on_unhandled(b'STAT')
 
-    def on_unhandled(self, verb):
+    def on_unhandled(self, verb: bytes):
         """
         A message without an overriden callback was received.
         """
@@ -104,7 +102,7 @@ class Protocol(LowerProtocol):
 
     # Default handlers
     # ================
-    def on_invalid(self, route, reason):
+    def on_invalid(self, route, reason: str):
         """
         An invalid message was received.
         """
@@ -112,7 +110,7 @@ class Protocol(LowerProtocol):
 
     # Send methods
     # ============
-    def doing(self, route, name):
+    def doing(self, route, name: TaskName):
         """
         Builds a DOING message
 
@@ -121,22 +119,22 @@ class Protocol(LowerProtocol):
         """
         return route, [b'DOING', name]
 
-    def done(self, route, name, task_dict: TaskDict, children):
+    def done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
         """
         Builds a DONE message
 
         Args:
             name: the name of the task
         """
-        payload = msgpack.packb(task_dict)
+        name, payload = dump_task_def(named_def)
         return route, [b'DONE', name, payload, *children]
 
-    def exited(self, route, peer):
+    def exited(self, route, peer: bytes):
         """Signal the given peer has exited"""
         msg = [b'EXITED', peer]
         return route, msg
 
-    def failed(self, route, name):
+    def failed(self, route, name: TaskName):
         """
         Builds a FAILED message
 
@@ -145,7 +143,7 @@ class Protocol(LowerProtocol):
         """
         return route, [b'FAILED', name]
 
-    def get(self, route, name):
+    def get(self, route, name: TaskName):
         """
         Builds a GET message
 
@@ -155,7 +153,7 @@ class Protocol(LowerProtocol):
         msg = [b'GET', name]
         return route, msg
 
-    def illegal(self, route, reason):
+    def illegal(self, route, reason: str):
         """
         Builds an ILLEGAL message.
 
@@ -166,7 +164,7 @@ class Protocol(LowerProtocol):
         """
         return route, [b'ILLEGAL', reason.encode('ascii')]
 
-    def not_found(self, route, name):
+    def not_found(self, route, name: TaskName):
         """
         Builds a NOTFOUND message
 
@@ -175,24 +173,22 @@ class Protocol(LowerProtocol):
         """
         return route, [b'NOTFOUND', name]
 
-    def put(self, route, name, serialized):
+    def put(self, route, name, serialized: tuple[bytes, list[TaskName]]):
         """
         Builds a PUT message
 
         Args:
             name: the name of the task
             serialized: a tuple of a bytes object, the payload, and a list of
-                byes objects, the names of the sub-objects needed.
+                bytes objects, the names of the sub-objects needed.
 
         """
         data, children = serialized
-        if data is None:
-            data = b''
         logging.debug('-> putting %d bytes', len(data))
         msg_body = [b'PUT', name, data, *children]
         return route, msg_body
 
-    def ready(self, route, peer):
+    def ready(self, route, peer: bytes):
         """
         Sends a READY message.
 
@@ -203,7 +199,8 @@ class Protocol(LowerProtocol):
         """
         return route, [b'READY', peer]
 
-    def submit_task(self, route, task):
+
+    def submit(self, route, named_def: NamedTaskDef):
         """Sends SUBMIT for given task object.
 
         Literal and derived tasks should not be passed at all and will trigger
@@ -212,36 +209,14 @@ class Protocol(LowerProtocol):
 
         Handle them in a wrapper or override.
         """
+        if not isinstance(named_def.task_def, CoreTaskDef):
+            raise ValueError('Only core tasks can be passed to Protocol layer')
 
-        if hasattr(task, 'literal'):
-            raise ValueError('Literal tasks must never be passed to '
-                'Protocol layer')
-        if hasattr(task, 'parent'):
-            raise ValueError('Derived tasks must never be passed to '
-                'Protocol layer')
-
-        task_dict = task.to_dict(name=True)
-
-        return self.submit(route, task_dict)
-
-    def submit(self, route, task_dict: TaskDict):
-        """
-        Low-level submit routine.
-
-        See also submit_task.
-
-        Args:
-            task_dict: dictionary containing all the serializable part of the
-                task object to transmit. Contains the task `name`, the
-                `step_name`, a list of `vtags`, a list of positional `arg_names`
-                and a dictionary of `kwarg_names`.
-        """
-        name = task_dict['name']
-        payload = msgpack.packb(task_dict)
+        name, payload = dump_task_def(named_def)
 
         return route, [b'SUBMIT', name, payload]
 
-    def stat(self, route, name):
+    def stat(self, route, name: TaskName):
         """
         Builds a STAT message
 
@@ -250,21 +225,17 @@ class Protocol(LowerProtocol):
         """
         return route, [b'STAT', name]
 
-    def found(self, route, task_dict: TaskDict):
+    def found(self, route, named_def: NamedTaskDef):
         """
         Builds a FOUND message
-
-        Args:
-            task_dict: representation of the task including name
         """
-        name = task_dict['name']
-        payload = msgpack.packb(task_dict)
+        name, payload = dump_task_def(named_def)
 
         return route, [b'FOUND', name, payload]
 
     # Main logic methods
     # ==================
-    def on_verb(self, route, msg_body):
+    def on_verb(self, route, msg_body: list[bytes]):
         """Parse given message, calling callbacks as needed.
 
         Returns:
@@ -281,7 +252,7 @@ class Protocol(LowerProtocol):
     # Internal message handling methods
     event = EventNamespace()
 
-    def handler(self, event_name):
+    def handler(self, event_name: str):
         """Shortcut to call handler methods"""
         def _handler(*args, **kwargs):
             return self.event.handler(event_name)(self, *args, **kwargs)
@@ -329,12 +300,10 @@ class Protocol(LowerProtocol):
     def _on_done(self, route, msg):
         self._validate(len(msg) >= 3, route, 'DONE without name or definition')
 
-        name = TaskName(msg[1])
-        task_dict = self._load_task_dict(msg[2])
-        task_dict['name'] = name
+        named_def = load_task_def(name=msg[1], def_buffer=msg[2])
         children = [ TaskName(child_name) for child_name in msg[3:] ]
 
-        return self.on_done(route, name, task_dict, children)
+        return self.on_done(route, named_def, children)
 
     @event.on('FAILED')
     def _on_failed(self, route, msg):
@@ -374,50 +343,14 @@ class Protocol(LowerProtocol):
     @event.on('SUBMIT')
     def _on_submit(self, route, msg):
         self._validate(len(msg) == 3, route, 'SUBMIT with wrong number of parts')
-        name = TaskName(msg[1])
-        task_dict = self._load_task_dict(msg[2])
-        task_dict['name'] = name
-        return self.on_submit(route, task_dict)
-
-    @staticmethod
-    def _load_task_dict(payload) -> TaskDict:
-        """
-        Parse/validate a task-like dict object
-
-        There are libraries around that could automate that, but for now we use
-        very few of these validators.
-        """
-        in_dict = msgpack.unpackb(payload)
-
-        task_dict: TaskDict = {}
-        for key, value in in_dict.items():
-            if key == 'arg_names':
-                task_dict['arg_names'] = [task_input_load(td) for td in value]
-            elif key  == 'kwarg_names':
-                task_dict['kwarg_names'] = { kw: task_input_load(td)
-                            for kw, td in value.items()}
-            elif key == 'children':
-                task_dict['children'] = [TaskName(name) for name in value]
-            elif key == 'parent':
-                task_dict['parent'] = TaskName(value)
-            elif key == 'step_name':
-                task_dict['step_name'] = bytes(value)
-            elif key == 'vtags':
-                task_dict['vtags'] = [str(tag) for tag in value]
-            elif key == 'name':
-                task_dict['name'] = TaskName(value)
-            else:
-                raise TypeError(f'Unhandled key {key} found in expected '
-                        'task-like document')
-        return task_dict
+        named_def = load_task_def(name=msg[1], def_buffer=msg[2])
+        return self.on_submit(route, named_def)
 
     @event.on('FOUND')
     def _on_found(self, route, msg):
         self._validate(len(msg) == 3, route, 'FOUND with wrong number of parts')
-        name = TaskName(msg[1])
-        task_dict = self._load_task_dict(msg[2])
-        task_dict['name'] = name
-        return self.on_found(route, task_dict)
+        named_def = load_task_def(name=msg[1], def_buffer=msg[2])
+        return self.on_found(route, named_def)
 
     @event.on('STAT')
     def _on_stat(self, route, msg):

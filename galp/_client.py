@@ -11,12 +11,13 @@ import time
 
 from enum import IntEnum, auto
 from collections import defaultdict
+from typing import Callable
 
 import zmq
 import zmq.asyncio
 
 from galp import async_utils
-from galp.graph import ensure_task
+from galp.graph import ensure_task_node
 from galp.cache import CacheStack
 from galp.serializer import Serializer, DeserializeError
 from galp.protocol import ProtocolEndException
@@ -25,6 +26,8 @@ from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.commands import Script
 from galp.query import run_task
+from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, NamedTaskDef,
+        CoreTaskDef, QueryTaskDef)
 
 class TaskStatus(IntEnum):
     """
@@ -122,8 +125,8 @@ class Client:
         self.command_queue.enqueue(command_key)
         self.new_command.set()
 
-    async def gather(self, *tasks, return_exceptions=False, timeout=None,
-            dry_run=False):
+    async def gather(self, *tasks, return_exceptions: bool = False, timeout=None,
+            dry_run: bool = False):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
         and returns the actual results.
@@ -139,13 +142,13 @@ class Client:
                 required tasks are either done or failed.
         """
 
-        tasks = list(map(ensure_task, tasks))
+        task_nodes = list(map(ensure_task_node, tasks))
 
         # Update the task graph
-        self.protocol.add(tasks)
+        self.protocol.add(task_nodes)
 
         err, cmd_results = await asyncio.wait_for(
-            self.run_collection(tasks, return_exceptions=return_exceptions,
+            self.run_collection(task_nodes, return_exceptions=return_exceptions,
                 dry_run=dry_run),
             timeout=timeout)
 
@@ -157,8 +160,9 @@ class Client:
 
         results = []
         failed = None
-        for task, cmd_result in zip(tasks, cmd_results):
-            if hasattr(task, 'query'):
+        for task, cmd_result in zip(task_nodes, cmd_results):
+            tdef = task.task_def
+            if isinstance(tdef, QueryTaskDef):
                 # For queries, result is inline
                 results.append(cmd_result)
             else:
@@ -170,7 +174,7 @@ class Client:
                 # On failure, more details on the error can be provided inline
                 except (KeyError, DeserializeError) as exc:
                     new_exc = TaskFailedError('Failed to collect task '
-                            f'[{task}]: {cmd_result}')
+                            f'[{task.named_def}]: {cmd_result}')
                     new_exc.__cause__ = exc
                     failed = new_exc
                     results.append(new_exc)
@@ -193,7 +197,8 @@ class Client:
             return results[0]
         return results
 
-    async def run_collection(self, tasks, return_exceptions, dry_run):
+    async def run_collection(self, tasks: list[TaskNode],
+            return_exceptions: bool, dry_run: bool):
         """
         Processes messages until the collection target is achieved
         """
@@ -238,7 +243,7 @@ class BrokerProtocol(ReplyProtocol):
     """
     Main logic of the interaction of a client with a broker
     """
-    def __init__(self, name, router, schedule):
+    def __init__(self, name: str, router: bool, schedule: Callable):
         super().__init__(name, router)
 
         self.schedule = schedule
@@ -257,18 +262,18 @@ class BrokerProtocol(ReplyProtocol):
 
         # Should be phased out, currently used only with the RUNNING state to
         # prevent re-sending a submit after receiving a DOING notification
-        self._status = defaultdict(lambda: TaskStatus.UNKNOWN)
+        self._status : defaultdict[TaskName, TaskStatus] = defaultdict(lambda: TaskStatus.UNKNOWN)
 
         # Task definitions, either given to add() or collected through STAT/FOUND
-        self._tasks = {}
+        self._tasks : dict[TaskName, NamedTaskDef] = {}
 
         # Public attributes: counters for the number of SUBMITs sent and DOING
         # received for each task
         # Used for reporting and testing cache behavior
-        self.submitted_count = defaultdict(int)
-        self.run_count = defaultdict(int)
+        self.submitted_count : defaultdict[TaskName, int] = defaultdict(int)
+        self.run_count : defaultdict[TaskName, int] = defaultdict(int)
 
-    def add(self, tasks):
+    def add(self, tasks: list[TaskNode]) -> None:
         """
         Browse the graph and add it to the tasks we're tracking, in an
         idempotent way.
@@ -283,12 +288,12 @@ class BrokerProtocol(ReplyProtocol):
         sync function.
         """
 
-        oset, cset = set(tasks), set()
+        oset = {t.name: t for t in tasks}
+        cset: set[TaskName] = set()
 
         while oset:
             # Get a task
-            task_details = oset.pop()
-            name = task_details.name
+            name, task_node = oset.popitem()
             cset.add(name)
 
             # Check if already added by a previous call to `add`
@@ -296,17 +301,20 @@ class BrokerProtocol(ReplyProtocol):
                 continue
 
             # Add the deps to the open set
-            for dep_details in task_details.dependencies:
-                dep = dep_details.name
-                if dep not in cset:
-                    oset.add(dep_details)
+            for dep_node in task_node.dependencies:
+                dep_name = dep_node.name
+                if dep_name not in cset:
+                    # The graph should be locally generated, and only contain
+                    # true tasks not references
+                    assert isinstance(dep_node, TaskNode)
+                    oset[dep_name] = dep_node
 
             # Store the embedded object if literal task
-            if hasattr(task_details, 'literal'):
-                self.store.put_native(task_details.handle, task_details.literal)
+            if isinstance(task_node.task_def, LiteralTaskDef):
+                self.store.put_native(name, task_node.data)
 
-            # Save the dictionary representation of the task object
-            self._tasks[name] = task_details.to_dict(name=True)
+            # Save the task_definition
+            self._tasks[name] = task_node.named_def
 
     def write_next(self, command_key):
         """
@@ -336,22 +344,22 @@ class BrokerProtocol(ReplyProtocol):
     # ======================
     # For simplicity these set the route inside them
 
-    def submit_task_by_name(self, task_name):
+    def submit_task_by_name(self, task_name: TaskName):
         """Loads task dicts, handles literals and subtasks, and manage stats"""
 
         # Task dict was added by a stat call
-        task_dict = self._tasks.get(task_name)
-        if task_dict:
-            if 'step_name' in task_dict:
-                self.submitted_count[task_name] += 1
-                return self.submit(self.route, task_dict)
-            # Literals and SubTasks are always satisfied, and never have
-            # recursive children
-            return self.on_done(None, task_name, task_dict, [])
+        named_def = self._tasks.get(task_name)
+        if named_def is None:
+            raise ValueError(f"Task {task_name.hex()} is unknown")
+        tdef = named_def.task_def
+        if isinstance(tdef, CoreTaskDef):
+            self.submitted_count[task_name] += 1
+            return self.submit(self.route, named_def)
+        # Literals and SubTasks are always satisfied, and never have
+        # recursive children
+        return self.on_done(None, named_def, [])
 
-        raise ValueError(f"Task {task_name.hex()} is unknown")
-
-    def get(self, route, name):
+    def get(self, route, name: TaskName):
         """
         Send GET for task if not locally available
         """
@@ -381,7 +389,7 @@ class BrokerProtocol(ReplyProtocol):
 
         return reply
 
-    def on_put(self, route, name, serialized):
+    def on_put(self, route, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
         """
         Receive data, and schedule sub-gets if necessary and check for
         termination
@@ -405,16 +413,17 @@ class BrokerProtocol(ReplyProtocol):
         # Schedule for sub-GETs to be sent in the future
         self.schedule_new()
 
-    def on_done(self, route, name, task_dict, children):
+    def on_done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
         """Given that done_task just finished, mark it as done, letting the
         command system schedule any dependent ready to be submitted, schedule
         GETs for final tasks, etc.
         """
+        name = named_def.name
         self._status[name] = TaskStatus.COMPLETED
 
         # If it was a remotely defined task, store its definition too
         if name not in self._tasks:
-            self._tasks[name] = task_dict
+            self._tasks[name] = named_def
 
         # trigger downstream commands
         command = self.script.commands.get(('SUBMIT', name))
@@ -425,7 +434,7 @@ class BrokerProtocol(ReplyProtocol):
         command = self.script.commands.get(('STAT', name))
         if command:
             # Triplet (is_done, dict, children?)
-            command.done((True, task_dict, children))
+            command.done((True, named_def, children))
             self.schedule_new()
 
     def on_doing(self, route, name):
@@ -473,14 +482,14 @@ class BrokerProtocol(ReplyProtocol):
                 command.failed('NOTFOUND')
                 assert not self.script.new_commands
 
-    def on_found(self, route, task_dict):
+    def on_found(self, route, named_def: NamedTaskDef):
         """
         Mark STAT as completed
         """
-        name = task_dict['name']
-        self._tasks[name] = task_dict
+        name = named_def.name
+        self._tasks[name] = named_def
         # Triplet (is_done, dict, children?)
-        self.script.commands['STAT', name].done((False, task_dict, None))
+        self.script.commands['STAT', name].done((False, named_def, None))
         self.schedule_new()
 
     def on_illegal(self, route, reason):

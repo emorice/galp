@@ -1,10 +1,10 @@
 """
-Query system
+query system
 """
 import galp
 import galp.tests.steps as gts
 
-from galp.graph import TaskReference
+from galp.task_types import TaskReference
 
 def test_query_status(tmpdir):
     """
@@ -13,7 +13,7 @@ def test_query_status(tmpdir):
 
     graph = [ gts.query.do_nothing(1), gts.query.do_nothing(2) ]
 
-    ans = galp.run(galp.Query(graph, {'*': {'$args': {'0': True}, '$done': True}}),
+    ans = galp.run(galp.query(graph, {'*': {'$args': {'0': True}, '$done': True}}),
             store=tmpdir)
 
     assert ans ==  {'*': [
@@ -28,10 +28,9 @@ def test_query_def(tmpdir):
 
     task = gts.query.do_nothing(1)
 
-    ans = galp.run(galp.Query(task, '$def'), store=tmpdir)
+    ans = galp.run(galp.query(task, '$def'), store=tmpdir)
 
-    assert 'step_name' in ans
-    assert ans['step_name'] == task.step.key
+    assert ans.task_def.step == gts.query.do_nothing.key
 
 def test_query_children(tmpdir):
     """
@@ -40,12 +39,12 @@ def test_query_children(tmpdir):
 
     task = gts.query.do_meta()
 
-    ans = galp.run(galp.Query(task, {'$children': {'0': '$def'}}),
+    ans = galp.run(galp.query(task, {'$children': {'0': '$def'}}),
         store=tmpdir,
         steps=['galp.tests.steps'])
 
     assert '$children' in ans
-    assert all(c['step_name']  == gts.query.do_nothing(0).step.key
+    assert all(c.task_def.step  == gts.query.do_nothing.key
             for _k, c in ans['$children'].items())
 
 def test_query_all_children(tmpdir):
@@ -55,13 +54,13 @@ def test_query_all_children(tmpdir):
 
     task = gts.query.do_meta()
 
-    ans = galp.run(galp.Query(task, {'$children': {'*': '$def'}}),
+    ans = galp.run(galp.query(task, {'$children': {'*': '$def'}}),
         store=tmpdir,
         steps=['galp.tests.steps'])
 
     assert '$children' in ans
     assert sum(
-            c['step_name']  == gts.query.do_nothing(0).step.key
+            c.task_def.step  == gts.query.do_nothing.key
             for _k, c in ans['$children'].items()
             ) == 2
 
@@ -71,7 +70,7 @@ def test_query_base(tmpdir):
     """
     graph = [ gts.query.do_nothing(1), gts.query.do_nothing(2) ]
 
-    ans = galp.run(galp.Query(graph, '$base'),
+    ans = galp.run(galp.query(graph, '$base'),
             store=tmpdir, steps=['galp.tests.steps'])
 
     assert len(ans) == 2
@@ -83,7 +82,7 @@ def test_query_index(tmpdir):
     """
     graph = {'x': gts.query.do_nothing(1), 'y': gts.query.do_nothing(2)}
 
-    ans = galp.run(galp.Query(graph, {'x': '$done'}),
+    ans = galp.run(galp.query(graph, {'x': '$done'}),
             store=tmpdir, steps=['galp.tests.steps'])
 
     assert ans == {'x': False}
@@ -94,7 +93,7 @@ def test_query_num_index(tmpdir):
     """
     graph = [ gts.query.do_nothing(1), gts.query.do_nothing(2) ]
 
-    ans = galp.run(galp.Query(graph, {'1': '$done'}),
+    ans = galp.run(galp.query(graph, {'1': '$done'}),
             store=tmpdir, steps=['galp.tests.steps'])
 
     assert ans == {'1': False}
@@ -105,9 +104,9 @@ def test_base_task(tmpdir):
     """
 
     graph = gts.query.index_type(
-            galp.Query(gts.query.do_meta(), '$base'),
+            galp.query(gts.query.do_meta(), '$base'),
             1)
 
     ans = galp.run(graph, store=tmpdir, steps=['galp.tests.steps'])
 
-    assert ans == str(galp.graph.TaskReference)
+    assert ans == str(TaskReference)

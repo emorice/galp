@@ -4,19 +4,20 @@ Implementation of complex queries within the command asynchronous system
 
 import logging
 
-from .graph import TaskType
-from .commands import Command, Status
+from .task_types import TaskNode, QueryTaskDef, TaskName, Task, CoreTaskDef
+from .commands import Command, Status, Script
 from .cache import StoreReadError
 from .serializer import DeserializeError
 
-def run_task(script, task, dry=False):
+def run_task(script: Script, task: TaskNode, dry: bool = False) -> Command:
     """
     Creates command appropriate to type of task (query or non-query)
     """
-    if hasattr(task, 'query'):
+    tdef = task.task_def
+    if isinstance(tdef, QueryTaskDef):
         if dry:
             raise NotImplementedError('Cannot dry-run queries yet')
-        return Query(script, task.subject.name, task.query)
+        return Query(script, tdef.subject, tdef.query)
 
     if dry:
         return script.do_once('DRYRUN', task.name)
@@ -30,7 +31,7 @@ class Query(Command):
         subject: the name of the task to apply the query to
         query: the native object representing the query
     """
-    def __init__(self, script, subject, query):
+    def __init__(self, script: Script, subject: TaskName, query):
         self.subject = subject
         self.query = query
         self.op = None
@@ -150,7 +151,7 @@ class Operator:
         self.subject = query.subject
         self._req_cmd = None
 
-    requires = None
+    requires: str | None = None
 
     _ops = {}
     def __init_subclass__(cls, /, named=True, **kwargs):
@@ -204,7 +205,6 @@ class Base(Operator):
         return self.store.get_native(
                 self.subject, shallow=True)
 
-
 class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
@@ -246,7 +246,8 @@ class Args(Operator):
         Build list of sub-queries for arguments of subject task from the
         definition obtained from STAT
         """
-        _task_done, task_dict, _children = stat_cmd.result
+        _task_done, named_def, _children = stat_cmd.result
+        tdef = named_def.task_def
 
         # FIXME: this should delegate handling of the sub-query
         is_compound, arg_subqueries = parse_query(self.sub_query)
@@ -257,7 +258,7 @@ class Args(Operator):
         if not hasattr(arg_subqueries, 'items'):
             arg_subqueries = { index: True for index in arg_subqueries }
 
-        if not 'arg_names' in task_dict:
+        if not isinstance(tdef, CoreTaskDef):
             raise TypeError('Object is not a job-type Task, cannot use a "args"'
                 ' query here.')
 
@@ -265,9 +266,9 @@ class Args(Operator):
         for index, sub_query in arg_subqueries.items():
             try:
                 num_index = int(index)
-                target = task_dict['arg_names'][num_index]
+                target = tdef.args[num_index].name
             except ValueError: # keyword argument
-                target = task_dict['kwarg_names'][index]
+                target = tdef.kwargs[index].name
             sub_commands.append(
                 Query(self.script, target, sub_query)
                 )
@@ -352,7 +353,7 @@ class GetItem(Operator, named=False):
                 f'{self.subject}'
                 ) from exc
 
-        if not isinstance(task, TaskType):
+        if not isinstance(task, Task):
             raise TypeError(
                 f'Item "{self.index}" of task {self.subject} is not itself a '
                 f'task, cannot apply sub_query "{sub_query}" to it'
@@ -401,7 +402,7 @@ class Iterate(Operator, named=False):
         sub_query_commands = []
 
         for task in shallow_obj:
-            if not isinstance(task, TaskType):
+            if not isinstance(task, Task):
                 raise TypeError('Object is not a collection of tasks, cannot'
                     ' use a "*" query here')
             sub_query_commands.append(

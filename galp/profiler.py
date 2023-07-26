@@ -8,6 +8,8 @@ import cProfile
 import logging
 
 from galp.config import ConfigError
+from galp.task_types import TaskName
+from galp.graph import Step
 
 class Profiler:
     """
@@ -18,28 +20,28 @@ class Profiler:
             profiling will be turned off.
     """
 
-    def __init__(self, config=None):
+    def __init__(self, config=None) -> None:
         if config is not None:
             try:
                 self.dir = config['dir']
-            except KeyError:
+            except KeyError as exc:
                 raise ConfigError('Profiler is none but no profile.dir '
-                    'was specified')
+                    'was specified') from exc
             os.makedirs(config['dir'], exist_ok=True)
 
             if 'steps' in config:
                 try:
-                    self.patterns = [re.compile(pat.encode('ascii')) for pat in config['steps']]
+                    self.patterns = [re.compile(pat) for pat in config['steps']]
                     logging.info('Profiler loaded patterns: %s', self.patterns)
-                except re.error as e:
-                    raise ConfigError(f'Invalid step pattern {e}')
-            self.on = True
+                except re.error as exc:
+                    raise ConfigError(f'Invalid step pattern {exc}') from exc
+            self.is_on = True
         else:
-            self.on = False
+            self.is_on = False
 
-    def wrap(self, name, step):
+    def wrap(self, name: TaskName, step: Step):
         """Wrap the function in the necessary call to profiler if needed"""
-        if self.on and any(pat.search(step.key) for pat in self.patterns):
+        if self.is_on and any(pat.search(step.key) for pat in self.patterns):
             logging.warning('Profiling on for %s in %s', step.key, name)
             def _wrapped(*args, **kwargs):
                 nonlocal step
@@ -51,4 +53,3 @@ class Profiler:
                 return result[0]
             return _wrapped
         return step.function
-

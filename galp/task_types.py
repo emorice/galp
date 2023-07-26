@@ -7,8 +7,12 @@ from enum import Enum
 from dataclasses import dataclass
 
 from pydantic_core import CoreSchema, core_schema
-from pydantic import GetCoreSchemaHandler, BaseModel, Field
+from pydantic import GetCoreSchemaHandler, BaseModel, Field, field_serializer
+from pydantic.functional_serializers import PlainSerializer
+from typing_extensions import Annotated
 
+import galp
+from . import graph
 
 class TaskName(bytes):
     """
@@ -28,6 +32,7 @@ class TaskName(bytes):
         """
         Pydantic magic straight out of the docs to validate as bytes
         """
+        _ = source_type
         return core_schema.no_info_after_validator_function(cls, handler(bytes))
 
 class TaskOp(str, Enum):
@@ -48,14 +53,35 @@ class TaskInput(BaseModel):
      * '$base', task : means that the task should be run non-recursively and the
         immediate result passed as input to the downstream task
     """
-    op: TaskOp
+    op: Annotated[TaskOp, PlainSerializer(lambda op: op.value)]
     name: TaskName
+
+class TaskType(str, Enum):
+    """
+    Enum corresponding to the possible task subclasses
+    """
+    CORE = 'core'
+    CHILD = 'child'
+    LITERAL = 'literal'
+    QUERY = 'query'
 
 class BaseTaskDef(BaseModel):
     """
     Base class for task def objects
+
+    Attributes:
+        task_type: constant string identifying the task def subclass
+        scatter: number of child tasks statically allowed
     """
-    task_type: str
+    task_type: TaskType
+    scatter: int | None = None
+
+    @field_serializer('task_type')
+    def serialize_type(self, task_type: TaskType, _info) -> str:
+        """
+        Always dump the type as a string
+        """
+        return task_type.value
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         """
@@ -81,11 +107,11 @@ class CoreTaskDef(BaseTaskDef):
     Information defining a core Task, i.e. bound to the remote execution of a
     function
     """
-    task_type: Literal['core']
+    task_type: Literal[TaskType.CORE] = TaskType.CORE
 
     args: list[TaskInput]
     kwargs: dict[str, TaskInput]
-    step: bytes
+    step: str
     vtags: list[str] # ideally ascii
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
@@ -96,20 +122,20 @@ class ChildTaskDef(BaseTaskDef):
     """
     Information defining a child Task, i.e. one item of Task returning a tuple.
     """
-    task_type: Literal['child']
+    task_type: Literal[TaskType.CHILD] = TaskType.CHILD
 
     parent: TaskName
     index: int
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         # SubTask, the (base) dependency is the parent task
-        return [ TaskInput(op='$base', name=self.parent) ]
+        return [ TaskInput(op=TaskOp.BASE, name=self.parent) ]
 
 class LiteralTaskDef(BaseTaskDef):
     """
     Information defining a literal Task, i.e. a constant.
     """
-    task_type: Literal['child']
+    task_type: Literal[TaskType.LITERAL] = TaskType.LITERAL
 
     children: list[TaskName]
 
@@ -118,7 +144,8 @@ class LiteralTaskDef(BaseTaskDef):
             case TaskOp.BASE:
                 return []
             case TaskOp.SUB:
-                return self.children
+                return [TaskInput(op=TaskOp.SUB, name=child) for child in
+                        self.children]
 
 class QueryTaskDef(BaseTaskDef):
     """
@@ -130,12 +157,18 @@ class QueryTaskDef(BaseTaskDef):
 
     Also, child tasks could eventually be implemented as queries too.
     """
-    task_type: Literal['query']
+    task_type: Literal[TaskType.QUERY] = TaskType.QUERY
 
     subject: TaskName
     query: Any # Query type is not well specified yet
 
-TaskDef = Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef]
+    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
+        raise NotImplementedError
+
+TaskDef = Annotated[
+        Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef],
+        Field(discriminator='task_type')
+        ]
 
 class NamedTaskDef(BaseModel):
     """
@@ -143,18 +176,52 @@ class NamedTaskDef(BaseModel):
     procedure
     """
     name: TaskName
-    task_def: TaskDef = Field(discriminator='task_type')
+    task_def: TaskDef
+
+class Task(ABC):
+    """
+    Root of task type hierarchy
+    """
+
+    @property
+    def name(self) -> TaskName:
+        """
+        Task name
+        """
+        raise NotImplementedError
+
+
+class TaskReference(Task):
+    """
+    A reference to an existing task by name, stripped of all the task definition
+    details.
+
+    The only valid operation on such a task is to read its name.
+    """
+    _name: TaskName
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self) -> TaskName:
+        return self._name
 
 @dataclass
-class TaskNode:
+class TaskNode(Task):
     """
     A task, with links to all its dependencies
 
     Dependencies here means $sub-dep, including children.
 
+    Attributes:
+        named_def: the name and definition of the task
+        dependencies: list of either task nodes or task references required to
+            reconstruct this tasks' result
+        data: constant value of the task, for Literal tasks
     """
     named_def: NamedTaskDef
-    dependencies: dict[TaskName, 'TaskNode']
+    dependencies: list[Task]
     data: Any = None
 
     @property
@@ -164,18 +231,33 @@ class TaskNode:
         """
         return self.named_def.name
 
+    @property
+    def task_def(self) -> TaskDef:
+        """
+        Shortcut
+        """
+        return self.named_def.task_def
+
+    @property
+    def scatter(self) -> int | None:
+        """
+        Shortcut for nested scatter field
+        """
+        return self.named_def.task_def.scatter
+
     def __iter__(self):
         """
         If the tasks was declared to return a tuple of statically known length,
         returns a generator yielding sub-task objects allowing to refer to
         individual members of the result independently.
         """
-        return (SubTask(self, sub_handle) for sub_handle in self.handle)
+        return (graph.make_child_task(self, i) for i in
+                range(self.scatter))
 
     def __getitem__(self, index):
-        if self.handle.has_items:
-            # Soft getitem, the referenced task is a scatter type
-            return SubTask(self, self.handle[index])
+        if self.scatter is not None:
+            assert index <= self.scatter, 'Indexing past declared scatter'
+            return graph.make_child_task(self, index)
         # Hard getitem, we actually insert an extra task
         return galp.steps.getitem(self, index)
 

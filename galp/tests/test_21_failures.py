@@ -31,7 +31,7 @@ def poisoned_cache(tmpdir, request):
     task = gts.arange(5)
 
     # Valid name
-    name = task.handle.name
+    name = task.name
     # Either children value
     children = request.param
     # Invalid data but we should fail before that
@@ -144,7 +144,7 @@ async def test_return_exceptions(client):
         3)
 
     assert isinstance(ans_fail, galp.TaskFailedError)
-    assert ans_ok == task_ok.step.function() # pylint: disable=no-member
+    assert ans_ok == gts.hello.function() # pylint: disable=no-member
 
 async def test_cache_corruption_get(poisoned_cache, client):
     """
@@ -163,7 +163,7 @@ async def test_cache_corruption_get(poisoned_cache, client):
         client.collect(task3),
         3)
 
-    assert ans == task3.step.function()
+    assert ans == gts.hello.function()
 
 async def test_remote_cache_corruption(poisoned_cache, client):
     """
@@ -184,7 +184,7 @@ async def test_remote_cache_corruption(poisoned_cache, client):
         client.collect(task3),
         3)
 
-    assert ans == task3.step.function()
+    assert ans == gts.hello.function()
 
 async def test_refcount(client):
     """
@@ -230,7 +230,7 @@ async def test_vmlimit(make_galp_set, make_client):
     Worker  fails tasks if going above virtual memory limit
     """
     unlimited_ep, _ = make_galp_set(1)
-    limited_ep, _ = make_galp_set(1, extra_pool_args=['--vm', '1G'])
+    limited_ep, _ = make_galp_set(1, extra_pool_args=['--vm', '2G'])
 
     unlimited_client = make_client(unlimited_ep)
     limited_client = make_client(limited_ep)
@@ -241,4 +241,3 @@ async def test_vmlimit(make_galp_set, make_client):
 
     with pytest.raises(galp.TaskFailedError):
         ans = await limited_client.collect(task_b, timeout=3)
-

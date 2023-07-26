@@ -6,7 +6,7 @@ import asyncio
 from .local_system_utils import local_system, LocalSystem
 from .local_system_utils import temp_system, TempSystem
 from .client import Client, TaskFailedError
-from .graph import Block, StepSet, Query
+from .graph import Block, StepSet, query
 from .serializer import DeserializeError
 from . import steps
 

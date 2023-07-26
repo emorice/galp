@@ -14,6 +14,7 @@ import logging
 import argparse
 import resource
 
+from typing import Any, Awaitable
 from dataclasses import dataclass
 
 import psutil
@@ -24,7 +25,7 @@ import galp.steps
 import galp.cli
 
 from galp.config import load_config
-from galp.cache import StoreReadError
+from galp.cache import StoreReadError, CacheStack
 from galp.lower_protocol import MessageList
 from galp.protocol import ProtocolEndException, IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
@@ -32,7 +33,8 @@ from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.commands import Script
 from galp.query import Query
 from galp.profiler import Profiler
-from galp.graph import NoSuchStep
+from galp.graph import NoSuchStep, Block
+from galp.task_types import NamedTaskDef, CoreTaskDef, TaskName
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -108,7 +110,7 @@ class WorkerProtocol(ReplyProtocol):
     """
     Handler for messages from the broker
     """
-    def __init__(self, worker, store, name, router):
+    def __init__(self, worker: 'Worker', store: CacheStack, name: str, router: bool):
         super().__init__(name, router)
         self.worker = worker
         self.store = store
@@ -139,7 +141,7 @@ class WorkerProtocol(ReplyProtocol):
             logging.exception('GET: Cache ERROR: %s', name)
         return self.not_found(route, name)
 
-    def on_submit(self, route, task_dict):
+    def on_submit(self, route, named_def: NamedTaskDef):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -148,22 +150,24 @@ class WorkerProtocol(ReplyProtocol):
 
         This the only asynchronous handler, all others are semantically blocking.
         """
-        logging.info('SUBMIT: %s', task_dict['step_name'].decode('ascii'))
-        name = task_dict['name']
+        tdef = named_def.task_def
+        assert isinstance(tdef, CoreTaskDef)
+        logging.info('SUBMIT: %s', tdef.step)
+        name = named_def.name
 
         # Store hook. For now we just check the local cache, later we'll have a
         # central locking mechanism
         # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name)
-            return self.done(route, name, task_dict, [])
+            return self.done(route, named_def, [])
 
         # If not in cache, resolve metadata and run the task
         replies = MessageList([self.doing(route, name)])
 
         # Schedule the task first. It won't actually start until its inputs are
         # marked as available, and will return the list of GETs that are needed
-        self.worker.schedule_task(route, name, task_dict)
+        self.worker.schedule_task(route, named_def)
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
@@ -171,7 +175,7 @@ class WorkerProtocol(ReplyProtocol):
 
         return replies + more_replies
 
-    def on_put(self, route, name, serialized):
+    def on_put(self, route, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
         """
         Put object in store, and mark the command as done
         """
@@ -191,14 +195,14 @@ class WorkerProtocol(ReplyProtocol):
             logging.exception('STAT: ERROR %s', name)
         return self.not_found(route, name)
 
-    def _on_stat_io_unsafe(self, route, name):
+    def _on_stat_io_unsafe(self, route, name: TaskName):
         """
         STAT handler allowed to raise store read errors
         """
         # Try first to extract both definition and children
-        task_dict = None
+        named_def = None
         try:
-            task_dict = self.store.get_task(name)
+            named_def = self.store.get_task_def(name)
         except KeyError:
             pass
 
@@ -209,23 +213,21 @@ class WorkerProtocol(ReplyProtocol):
             pass
 
         # Case 1: both def and children, DONE
-        if task_dict is not None and children is not None:
+        if named_def is not None and children is not None:
             logging.info('STAT: DONE %s', name)
-            return self.done(route, name, task_dict, children)
+            return self.done(route, named_def, children)
 
         # Case 2: only def, FOUND
-        if task_dict is not None:
+        if named_def is not None:
             logging.info('STAT: FOUND %s', name)
-            return self.found(route, task_dict)
+            return self.found(route, named_def)
 
         # Case 3: only children
         # This means a legacy store that was missing tasks definition
-        # persistency. We still return DONE for backwards compatibility, but
-        # with and empty dict as the placeholder for the missing dict. New
-        # features such as queries may not work on this task.
-        if children is not None:
-            logging.info('STAT: DONE %s', name)
-            return self.done(route, name, {}, children)
+        # persistency, or a corruption. This was originally treated as DONE, but
+        # in the current model there is no way to make the peer accept a missing
+        # or fake definition
+        # if children is not None:
 
         # Case 4: nothing
         logging.info('STAT: NOT FOUND %s', name)
@@ -259,14 +261,22 @@ class WorkerProtocol(ReplyProtocol):
                 )
         return messages
 
+@dataclass
+class JobResult:
+    route: Any
+    named_def: NamedTaskDef
+    success: bool
+    result: list[TaskName]
+
 class Worker:
     """
     Class representing an an async worker, wrapping transport, protocol and task
     execution logic.
     """
-    def __init__(self, endpoint, storedir, step_dir, profiler):
+    def __init__(self, endpoint: str, store: CacheStack, step_dir: Block,
+            profiler: Profiler):
         self.protocol = WorkerProtocol(
-            self, storedir,
+            self, store,
             'BK', router=False)
         self.transport = ZmqAsyncTransport(
             self.protocol,
@@ -277,7 +287,7 @@ class Worker:
         self.profiler = profiler
 
         # Submitted jobs
-        self.galp_jobs = asyncio.Queue()
+        self.galp_jobs : asyncio.Queue[Awaitable[JobResult]] = asyncio.Queue()
 
     def run(self):
         """
@@ -290,36 +300,38 @@ class Worker:
             ]
         return tasks
 
-    async def monitor_jobs(self):
+    async def monitor_jobs(self) -> None:
         """
         Loops that waits for tasks to finsish to send back done/failed messages
         """
         while True:
             task = await self.galp_jobs.get()
-            route, name, success, task_dict, result = await task
-            if success:
-                reply = self.protocol.done(route, name, task_dict, result)
+            job = await task
+            if job.success:
+                reply = self.protocol.done(job.route, job.named_def,  job.result)
             else:
-                reply = self.protocol.failed(route, name)
+                reply = self.protocol.failed(job.route, job.named_def.name)
             await self.transport.send_message(reply)
 
-    def schedule_task(self, client_route, name, task_dict):
+    def schedule_task(self, client_route, named_def: NamedTaskDef):
         """
         Callback to schedule a task for execution.
         """
         def _start_task(status, inputs):
             task = asyncio.create_task(
-                self.run_submission(status, client_route, name, task_dict,
+                self.run_submission(status, client_route, named_def,
                     inputs)
                 )
             self.galp_jobs.put_nowait(task)
 
+        tdef = named_def.task_def
+        assert isinstance(tdef, CoreTaskDef)
         script = self.protocol.script
         collect = script.collect([
-                Query(script, task_name, op_name)
-                for op_name, task_name in [
-                    *task_dict['arg_names'],
-                    *task_dict['kwarg_names'].values()
+                Query(script, tin.name, tin.op)
+                for tin in [
+                    *tdef.args,
+                    *tdef.kwargs.values()
                     ]
                 ])
         script.callback(collect, _start_task)
@@ -339,14 +351,17 @@ class Worker:
     # Task execution logic
     # ====================
 
-    async def run_submission(self, status, route, name, task_dict, inputs):
+    async def run_submission(self, status, route, named_def: NamedTaskDef,
+            inputs) -> JobResult:
         """
         Actually run the task
         """
-
-        step_name = task_dict['step_name']
-        arg_names = task_dict['arg_names']
-        kwarg_names = task_dict['kwarg_names']
+        name = named_def.name
+        tdef = named_def.task_def
+        assert isinstance(tdef, CoreTaskDef)
+        step_name = tdef.step
+        arg_tins = tdef.args
+        kwarg_tins = tdef.kwargs
 
         try:
             if status:
@@ -354,31 +369,28 @@ class Worker:
                         ' for step %s (%s)', name, step_name)
                 raise NonFatalTaskError
 
-            logging.info('Executing step %s (%s)',
-                name, step_name.decode('ascii'))
+            logging.info('Executing step %s (%s)', name, step_name)
 
             try:
                 step = self.step_dir.get(step_name)
             except NoSuchStep as exc:
-                logging.exception('No such step known to worker: %s', step_name.decode('ascii'))
+                logging.exception('No such step known to worker: %s', step_name)
                 raise NonFatalTaskError from exc
-
-            handle = step.make_handle(name)
 
             # Unpack inputs from flattened input list
             try:
                 inputs = list(reversed(inputs))
                 args = []
-                for _name in arg_names:
+                for _tin in arg_tins:
                     args.append(inputs.pop())
                 kwargs = {}
-                for keyword in kwarg_names:
-                    kwargs[keyword.decode('ascii')] = inputs.pop()
+                for keyword in kwarg_tins:
+                    kwargs[keyword] = inputs.pop()
             except UnicodeDecodeError as exc:
                 # Either you tried to use python's non-ascii keywords feature,
                 # or more likely you messed up the encoding on the caller side.
                 raise IllegalRequestError(route,
-                    f'Cannot decode keyword {exc.object}'
+                    f'Cannot decode keyword {exc.object!r}'
                     f' for step {name} ({step_name})'
                     ) from exc
 
@@ -395,19 +407,19 @@ class Worker:
                 result = self.profiler.wrap(name, step)(*args, **kwargs)
             except Exception as exc:
                 logging.exception('Submitted task step failed: %s [%s]',
-                step_name.decode('ascii'), name)
+                step_name, name)
                 raise NonFatalTaskError from exc
 
             # Store the result back, along with the task definition
-            self.protocol.store.put_task_dict(name, task_dict)
-            children = self.protocol.store.put_native(handle, result)
+            self.protocol.store.put_task_def(named_def)
+            children = self.protocol.store.put_native(name, result, tdef.scatter)
 
-            return route, name, True, task_dict, children
+            return JobResult(route, named_def, True, children)
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return route, name, False, task_dict, None
+            return JobResult(route, named_def, False, [])
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.

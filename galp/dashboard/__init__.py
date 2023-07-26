@@ -60,25 +60,20 @@ def create_app(config):
         """
         Execute a no-argument step and displays the result
         """
-        try:
-            b_name = step_name.encode('ascii')
-        except UnicodeEncodeError:
-            abort(404)
-
         steps = app.galp['steps']
         store = app.galp['store']
 
-        if b_name not in steps:
+        if step_name not in steps:
             abort(404)
 
-        step = steps[b_name]
+        step = steps[step_name]
         task = step()
 
 
         if step.is_view:
             # inject deps and check for missing args
             task = step()
-            task_dict = task.to_dict()
+            tdef = task.task_def
 
             # Re-use client logic to parse the graph and sort out which pieces
             # need to be fetched from store
@@ -101,12 +96,12 @@ def create_app(config):
 
             ## Collect args from local and remote store. Since we don't pass any
             ## argument to the step, all arguments are injected, and therefore keyword arguments
-            assert not task_dict['arg_names']
+            assert not tdef.args
             kwargs = {}
-            for keyword, name in task_dict['kwarg_names'].items():
-                galp.commands.advance_all([proto.script.do_once('RGET', name)])
+            for keyword, tin in tdef.kwargs.items():
+                galp.commands.advance_all([proto.script.do_once('RGET', tin.name)])
                 proto.schedule_new()
-                kwargs[keyword.decode('ascii')] = proto.store.get_native(name)
+                kwargs[keyword] = proto.store.get_native(tin.name)
 
             # Run the step
             result = step.function(**kwargs)

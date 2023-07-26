@@ -11,4 +11,5 @@ def identity(arg):
     """
     Returns its arg unchanged
     """
+    print(arg)
     return arg

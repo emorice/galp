@@ -109,7 +109,8 @@ async def test_stepwise_collect(client):
 
     assert tuple(ans_four), tuple(ans_two) == ( (4,), (2,) )
 
-async def assert_cache(clients, task=galp.steps.galp_hello()):
+async def assert_cache(clients, task=galp.steps.galp_hello(),
+        expected=galp.steps.galp_hello.function()):
     """
     Test worker-side cache.
     """
@@ -119,7 +120,7 @@ async def assert_cache(clients, task=galp.steps.galp_hello()):
 
     ans2 = await asyncio.wait_for(client2.collect(task), 3)
 
-    assert ans1 == ans2 == [task.step.function()]
+    assert ans1 == ans2 == [expected]
 
     # May be more that 1 since drop-n-retry was adopted
     assert client1.protocol.submitted_count[task.name] >= 1
@@ -227,7 +228,6 @@ async def test_npargserializer(disjoined_client_pair):
 
     assert ans2 == [45]
 
-#@pytest.mark.xfail
 async def test_sync_client(async_sync_client_pair):
     """
     Tests the sync client's get functionnality
@@ -237,7 +237,7 @@ async def test_sync_client(async_sync_client_pair):
 
     async_ans = await asyncio.wait_for(aclient.collect(res), 3)
 
-    sync_ans = sclient.get_native(res.handle)
+    sync_ans = sclient.get_native(res.name)
 
     assert async_ans == [sync_ans] == [42]
 
@@ -247,7 +247,7 @@ async def test_serialize_df(client):
     """
     task = gts.some_table()
 
-    the_table = task.step.function()
+    the_table = gts.some_table.function()
 
     ans = await asyncio.wait_for(client.collect(task), 3)
 
@@ -269,7 +269,7 @@ async def test_tuple(client):
     ans_b = await asyncio.wait_for(client.collect(task_b), 3)
     ans_a = await asyncio.wait_for(client.collect(task_a), 3)
 
-    gt_a, gt_b = task.step.function()
+    gt_a, gt_b = gts.some_tuple.function()
 
     np.testing.assert_array_equal(ans_a[0], gt_a)
     assert gt_b == ans_b[0]
@@ -284,20 +284,21 @@ async def test_collect_tuple(client):
 
     ans = await asyncio.wait_for(client.collect(task), 3)
 
-    assert ans[0] == task.step.function()
+    assert ans[0] == gts.native_tuple.function()
 
 async def test_cache_tuple(client_pair):
     """
     Test caching behavior for composite resources.
     """
-    await assert_cache(client_pair, gts.native_tuple())
+    await assert_cache(client_pair, gts.native_tuple(),
+            gts.native_tuple.function())
 
 async def test_light_syntax(client):
     task = gts.light_syntax()
 
     ans = await asyncio.wait_for(client.collect(*task), 6)
 
-    assert tuple(ans) == task.step.function()
+    assert tuple(ans) == gts.light_syntax.function()
 
 async def test_parallel_tasks(client_pool):
     """

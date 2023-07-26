@@ -11,7 +11,9 @@ from typing import TypeVar, Generic
 
 import logging
 
-from .graph import task_deps, TaskName
+from .task_types import (
+        TaskName, LiteralTaskDef, QueryTaskDef, NamedTaskDef, TaskOp
+        )
 
 class Status(Enum):
     """
@@ -43,7 +45,7 @@ class Command(Generic[CommandResult]):
         self.status = Status.PENDING
         if script:
             script.pending.add(self)
-        self.result: CommandResult | None = None
+        self.result: CommandResult = None
         self.outputs : WeakSet[Command] = WeakSet()
         self._state = '_init'
         self._sub_commands : list[Command] = []
@@ -367,7 +369,7 @@ class InertCommand(UniqueCommand[CommandResult]):
         return Status.PENDING, []
 
 @once
-class Get(InertCommand):
+class Get(InertCommand[list[TaskName]]):
     """
     Get a single resource part
     """
@@ -377,21 +379,22 @@ class Submit(InertCommand[list[TaskName]]):
     """
     Remotely execute a single step
     """
+
 @once
-class Stat(InertCommand):
+class Stat(InertCommand[tuple[bool, NamedTaskDef, list[TaskName] | None]]):
     """
     Get a task's metadata
     """
 
 @once
-class Rget(UniqueCommand):
+class Rget(UniqueCommand[None]):
     """
     Recursively gets a resource and all its parts
     """
     def _init(self):
         return '_get', self.do_once('GET', self.name)
 
-    def _get(self, get):
+    def _get(self, get: Get):
         return '_sub_gets', [
                 self.do_once('RGET', child_name)
                 for child_name in get.result
@@ -400,7 +403,7 @@ class Rget(UniqueCommand):
     def _sub_gets(self, *_):
         return Status.DONE
 
-class Collect(Command):
+class Collect(Command[list]):
     """
     A collection of other commands
     """
@@ -456,15 +459,16 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         # metadata
         return '_sort', self.do_once('STAT', self.name)
 
-    def _sort(self, stat):
+    def _sort(self, stat: Stat):
         """
         Sort out queries, remote jobs and literals
         """
-        _task_done, task_dict, children = stat.result
+        _task_done, named_def, children = stat.result
+        task_def = named_def.task_def
 
         # Short circuit for tasks already processed and literals
-        if 'children' in task_dict:
-            children = task_dict['children']
+        if isinstance(task_def, LiteralTaskDef):
+            children = task_def.children
 
         if children is not None:
             self.result = children
@@ -472,7 +476,7 @@ class SSubmit(UniqueCommand[list[TaskName]]):
 
         # Query, should never have reached this layer as queries have custom run
         # mechanics
-        if 'query' in task_dict:
+        if isinstance(task_def, QueryTaskDef):
             raise NotImplementedError
 
         # Else, regular job, process dependencies first
@@ -481,8 +485,8 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         # Always doing a RSUB will work, but it will run things more eagerly that
         # needed or propagate failures too aggressively.
         return '_deps', [
-                self.do_once(cmd, dep)
-                for op_name, dep in task_deps(task_dict)
+                self.do_once(cmd, tin.name)
+                for tin in task_def.dependencies(TaskOp.BASE)
                 ]
 
     def _deps(self, *_):
@@ -513,7 +517,7 @@ class DrySSubmit(SSubmit):
     _dry = True
 
 @once
-class RSubmit(UniqueCommand):
+class RSubmit(UniqueCommand[None]):
     """
     Recursive submit, with children, aka an SSubmit plus a RSubmit per child
     """
@@ -526,7 +530,7 @@ class RSubmit(UniqueCommand):
         cmd = 'DRYSSUBMIT' if self._dry else 'SSUBMIT'
         return '_main', self.do_once(cmd, self.name)
 
-    def _main(self, ssub):
+    def _main(self, ssub: SSubmit):
         """
         Check the main result and proceed with possible children tasks
         """
@@ -562,7 +566,7 @@ class DryRun(RSubmit):
     _dry = True
 
 @once
-class Run(UniqueCommand):
+class Run(UniqueCommand[None]):
     """
     Combined rsubmit + rget
     """
@@ -576,7 +580,7 @@ class Run(UniqueCommand):
         return Status.DONE
 
 @once
-class SRun(UniqueCommand):
+class SRun(UniqueCommand[None]):
     """
     Shallow run: combined ssubmit + get, fetches the raw result of a task but
     not its children

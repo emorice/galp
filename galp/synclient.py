@@ -7,6 +7,7 @@ import zmq
 
 from galp.protocol import Protocol
 from galp.serializer import Serializer
+from galp.task_types import TaskName
 
 class SynClient(Protocol):
     """
@@ -26,13 +27,13 @@ class SynClient(Protocol):
     def __del__(self):
         self.socket.close(linger=1)
 
-    def get_native(self, handle, timeout=3):
+    def get_native(self, name: TaskName, timeout=3):
         """
         Synchronously sends a GET and get result
         """
         self.socket.send_multipart(
             self.write_message(
-                self.get(self.route, handle.name)
+                self.get(self.route, name)
                 )
             )
 

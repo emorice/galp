@@ -8,7 +8,6 @@ from bs4 import BeautifulSoup
 
 import galp
 import galp.tests.steps as gts
-from galp.graph import ensure_task
 from galp.dashboard import create_app
 
 # pylint: disable=redefined-outer-name

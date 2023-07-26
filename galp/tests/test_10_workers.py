@@ -142,19 +142,10 @@ def test_task(worker_socket):
     socket, *_ = worker_socket
 
     task = galp.steps.galp_hello()
-    # pylint: disable=no-member
-    step_name = task.step.key
-
-    name = galp.graph.Task.gen_name(dict(
-        step_name=step_name,
-        arg_names=[], kwarg_names={}, vtags=[]
-        ))
+    name = task.name
 
     socket.send_multipart(make_msg(b'SUBMIT', name,
-        msgpack.packb({
-            'step_name': step_name,
-            'arg_names': [],
-            'kwarg_names': {}})
+        msgpack.packb(task.task_def.model_dump())
         ))
 
     assert_ready(socket)
@@ -193,10 +184,7 @@ def test_reference(worker_socket):
     task2 = galp.steps.galp_double(task1)
 
     worker_socket.send_multipart(make_msg(b'SUBMIT', task1.name,
-        msgpack.packb({
-            'step_name': task1.step.key,
-            'arg_names': [],
-            'kwarg_names': {}})
+        msgpack.packb(task1.task_def.model_dump())
         ))
 
     assert_ready(worker_socket)
@@ -208,10 +196,7 @@ def test_reference(worker_socket):
     assert body_startswith(done, [b'DONE', task1.name])
 
     worker_socket.send_multipart(make_msg(b'SUBMIT', task2.name,
-        msgpack.packb({
-            'step_name': task2.step.key,
-            'arg_names': [task1.name],
-            'kwarg_names': {}})
+        msgpack.packb(task2.task_def.model_dump())
         ))
 
     doing = asserted_zmq_recv_multipart(worker_socket)

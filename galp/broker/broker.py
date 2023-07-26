@@ -10,6 +10,7 @@ import zmq
 from galp.protocol import IllegalRequestError
 from galp.forward_protocol import ForwardProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.task_types import TaskName, NamedTaskDef
 
 class Broker:
     """
@@ -116,7 +117,7 @@ class WorkerProtocol(BrokerProtocol):
             del self.task_from_route[key]
         self.idle_workers.append(worker_route)
 
-    def on_done(self, route, name, task_dict, children):
+    def on_done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 

@@ -7,9 +7,10 @@ from typing import Any
 import diskcache
 import msgpack
 
-from galp.task_types import TaskName, TaskType
-from galp.graph import NonIterableHandleError, Handle, TaskReference, LiteralTask
-from galp.serializer import Serializer, CHILD_EXT_CODE
+from galp.task_types import (TaskName, TaskReference, Task, NamedTaskDef,
+        TaskNode, LiteralTaskDef)
+from galp.graph import make_child_task_def
+from galp.serializer import Serializer, serialize_child, load_task_def
 
 class StoreReadError(Exception):
     """
@@ -119,17 +120,15 @@ class CacheStack():
             children
             )
 
-    def put_native(self, handle, obj: Any) -> list[TaskName]:
+    def put_native(self, name: TaskName, obj: Any, scatter: int | None = None) -> list[TaskName]:
         """Puts a native object in the cache.
 
         For now this eagerly serializes it and commits it to persistent cache.
-        Recursive call if handle is iterable. Returns the child tasks
+        Recursive call if scatter is given. Returns the child tasks
         encountered when serializing (the true Task objects inside obj, not the
         "virtual" tasks of iterable handles)
 
         Args:
-            handle: either a graph.Handle object, or a task name. Handle allows
-                to instruct the store to split the native object into items first.
             obj: the native object to store
 
         Returns:
@@ -138,44 +137,37 @@ class CacheStack():
             added to the store for `get_native` to be able to construct the full
             object.
         """
-        # Accept either a handle or just a name
-        if isinstance(handle, bytes):
-            handle = Handle(handle)
 
-        try:
+        if scatter is not None:
             # Logical composite handle
             ## Recursively store the children
-            children = []
+            child_names = []
             struct = []
-            for i, (sub_handle, sub_obj) in enumerate(zip(handle, obj)):
-                children.append(sub_handle.name)
-                # FIXME: this hardcodes the dictionnary representation of a
-                # sub-task
-                self.put_task_dict(sub_handle.name, {'parent': handle.name})
-                self.put_native(sub_handle, sub_obj)
-                # FIXME: this hardcodes the serialization of a task object
-                struct.append(
-                    msgpack.ExtType(
-                        code=CHILD_EXT_CODE,
-                        data=i.to_bytes(4, 'little')
-                        )
-                    )
+            _len = 0
+            for i, sub_obj in enumerate(obj):
+                sub_ndef = make_child_task_def(name, i)
+                child_names.append(sub_ndef.name)
+                self.put_task_def(sub_ndef)
+                # Recursive scatter is nor a thing yet, though we easily could
+                self.put_native(sub_ndef.name, sub_obj, scatter=None)
+                struct.append(serialize_child(i))
+                _len += 1
+            assert _len == scatter
+
             payload = msgpack.packb(struct)
-            self.put_serial(handle.name, (payload, children))
+            self.put_serial(name, (payload, child_names))
             return []
-        except NonIterableHandleError:
-            pass
 
         data, children = self.serializer.dumps(obj)
         child_names = [ c.name for c in children ]
-        self.put_serial(handle.name, (data, child_names))
+        self.put_serial(name, (data, child_names))
 
         # Recursively store the child task definitions
         for child in children:
             self.put_task(child)
         return child_names
 
-    def put_serial(self, name, serialized):
+    def put_serial(self, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
         """
         Simply pass the underlying object to the underlying cold cache.
 
@@ -188,17 +180,17 @@ class CacheStack():
         self.serialcache[name + b'.data'] = data
         self.serialcache[name + b'.children'] = msgpack.packb(children)
 
-    def put_task_dict(self, name, task_dict):
+    def put_task_def(self, named_def: NamedTaskDef) -> None:
         """
         Non-recursively store the dictionnary describing the task
         """
-        key = name + b'.task'
+        key = named_def.name + b'.task'
         if key in self.serialcache:
             return
 
-        self.serialcache[key] = msgpack.packb(task_dict)
+        self.serialcache[key] = msgpack.packb(named_def.task_def.model_dump())
 
-    def put_task(self, task: TaskType):
+    def put_task(self, task: Task) -> None:
         """
         Recursively store a task definition
 
@@ -206,30 +198,24 @@ class CacheStack():
         resource.
         """
 
-        task_dict = task.to_dict()
-
-        # Skip if the task definition is missing (reference to previously
-        # defined task)
-        if task_dict is None:
+        if not isinstance(task, TaskNode):
+            # Task reference. The definition must have been recorded previously,
+            # so there is nothing to do
             return
 
-        self.put_task_dict(task.name, task_dict)
+        self.put_task_def(task.named_def)
 
         for child in task.dependencies:
             self.put_task(child)
 
-        if isinstance(task, LiteralTask):
-            self.put_native(task.handle, task.literal)
+        if isinstance(task.named_def.task_def, LiteralTaskDef):
+            self.put_native(task.name, task.data)
 
-    def get_task(self, name):
+    def get_task_def(self, name: TaskName) -> NamedTaskDef:
         """
-        Returns a task definition (dict), non-recursively
+        Loads a task definition, non-recursively
         """
-        task_dict = msgpack.unpackb(
-            self.serialcache[name + b'.task']
-            )
-        task_dict['name'] = name
-        return task_dict
+        return load_task_def(name, self.serialcache[name + b'.task'])
 
 def add_store_argument(parser, optional=False):
     """

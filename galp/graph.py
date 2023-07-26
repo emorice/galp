@@ -6,14 +6,12 @@ import inspect
 import warnings
 import functools
 
-from typing import Any
-from dataclasses import dataclass
+from typing import Any, Callable
 
 import msgpack
 
-import galp
-from galp.task_types import (TaskName, StepType, TaskNode, TaskInput,
-        LiteralTaskDef, CoreTaskDef, NamedTaskDef, TaskType)
+from galp.task_types import (TaskName, StepType, TaskNode, TaskInput, Task,
+        LiteralTaskDef, CoreTaskDef, NamedTaskDef, ChildTaskDef, QueryTaskDef, TaskOp)
 from galp.serializer import Serializer
 
 _serializer = Serializer() # Actually stateless, safe
@@ -48,26 +46,32 @@ def ensure_task_node(obj: Any) -> TaskNode:
         return obj()
     return make_literal_task(obj)
 
-def ensure_task_input(obj: Any) -> tuple[TaskInput, TaskNode]:
+def ensure_task_input(obj: Any) -> tuple[TaskInput, Task]:
     """
     Makes object a task or a simple query
 
     Returns: a tuple (tin, node) where tin is a task input suitable for
         referencing the task while node is the full task object
     """
-    if isinstance(obj, Query):
+    if isinstance(obj, TaskNode) and isinstance(obj.task_def, QueryTaskDef):
         # Only allowed query for now, will be extended in the future
-        if obj.query in ['$base']:
-            return TaskInput(op='$base', name=obj.subject.name), obj.subject
-
+        dep, = obj.dependencies
+        if obj.task_def.query in ['$base']:
+            return (
+                    TaskInput(op=TaskOp.BASE, name=obj.task_def.subject),
+                    dep
+                    )
     # Everything else is treated as task to be recursively run and loaded
     node = ensure_task_node(obj)
     return (
-            TaskInput(op='$sub', name=node.name),
-            {node.name: node}
+            TaskInput(op=TaskOp.SUB, name=node.name),
+            node
             )
 
 def make_literal_task(obj: Any) -> TaskNode:
+    """
+    Build a Literal TaskNode out of an arbitrary python object
+    """
     # Todo: more robust hashing, but this is enough for most case where
     # literal resources are a good fit (more complex objects would tend to be
     # actual step outputs)
@@ -81,18 +85,88 @@ def make_literal_task(obj: Any) -> TaskNode:
         ]
     name = obj_to_name(rep)
 
-    # Fixme
-    #self.handle = Handle(self.name)
-
     ndef = NamedTaskDef(name=name, task_def=tdef)
 
     return TaskNode(
             named_def=ndef,
-            dependencies={dep.name: dep for dep in dependencies}
+            dependencies=dependencies,
+            data=obj,
             )
 
     #def __str__(self):
     #    return f'{self.name} [literal] {self.literal}'
+
+def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
+                   vtag: str | None = None, items: int | None = None) -> TaskNode:
+    """
+    Build a core task from a function call
+    """
+    # Before anything else, type check the call. This ensures we don't wait
+    # until actually trying to run the task to realize we're missing
+    # arguments.
+    try:
+        full_kwargs = dict(kwargs, **{
+            kw: WorkerSideInject()
+            for kw in _WORKER_INJECTABLES
+            if kw in step.kw_names
+            })
+        inspect.signature(step.function).bind(*args, **full_kwargs)
+    except TypeError as exc:
+        raise TypeError(
+                f'{step.function.__name__}() {str(exc)}'
+                ) from exc
+
+    # Collect all arguments as nodes
+    arg_inputs = []
+    kwarg_inputs = {}
+    nodes = []
+    for arg in args:
+        tin, node = ensure_task_input(arg)
+        arg_inputs.append(tin)
+        nodes.append(node)
+    for key, arg in kwargs.items():
+        tin, node = ensure_task_input(arg)
+        kwarg_inputs[key] = tin
+        nodes.append(node)
+
+    tdef = CoreTaskDef(
+        args=arg_inputs,
+        kwargs=kwarg_inputs,
+        step=step.key,
+        vtags=([ascii(vtag) ] if vtag is not None else []),
+        scatter=items
+        )
+
+    name = obj_to_name(tdef.model_dump())
+    ndef = NamedTaskDef(name=name, task_def=tdef)
+
+    return TaskNode(named_def=ndef, dependencies=nodes)
+
+def make_child_task_def(parent: TaskName, index: int) -> NamedTaskDef:
+    """
+    Derive a Child NamedTaskDef from a given parent name
+
+    This does not check whether the operation is legal
+    """
+    tdef = ChildTaskDef(parent=parent, index=index)
+    return NamedTaskDef(
+            task_def=tdef,
+            name=obj_to_name(tdef.model_dump())
+            )
+
+def make_child_task(parent: TaskNode, index: int) -> TaskNode:
+    """
+    Derive a Child TaskNode from a given task node
+
+    This does not check whether the operation is legal
+    """
+    assert parent.task_def.scatter is not None
+    assert index <= parent.task_def.scatter
+
+    return TaskNode(
+            named_def=make_child_task_def(parent.name, index),
+            dependencies=[parent]
+            )
 
 class Step(StepType):
     """Object wrapping a function that can be called as a pipeline step
@@ -108,9 +182,9 @@ class Step(StepType):
             handle pointing to the individual items.
     """
 
-    def __init__(self, scope, function, is_view=False, **task_options):
+    def __init__(self, scope: 'Block', function: Callable, is_view: bool = False, **task_options):
         self.function = function
-        self.key = bytes(function.__module__ + '::' + function.__qualname__, 'ascii')
+        self.key = function.__module__ + '::' + function.__qualname__
         self.task_options = task_options
         self.scope = scope
         self.kw_names = {}
@@ -131,7 +205,7 @@ class Step(StepType):
             pass
         functools.update_wrapper(self, self.function)
 
-    def __call__(self, *args, **kwargs) -> 'Task':
+    def __call__(self, *args, **kwargs) -> TaskNode:
         """
         Symbolically call the function wrapped by this step, returning a Task
         object representing the eventual result.
@@ -144,20 +218,13 @@ class Step(StepType):
 
         return self.make_task(args, all_kwargs)
 
-    def make_task(self, args, kwargs) -> 'Task':
+    def make_task(self, args, kwargs) -> TaskNode:
         """
         Create actual Task object from the given args.
 
         Does not perform the injection
         """
-        return Task(self, args, kwargs, **self.task_options)
-
-    def make_handle(self, name):
-        """
-        Make initial handles.
-        """
-        items = self.task_options.get('items')
-        return Handle(name, items=items)
+        return make_core_task(self, args, kwargs, **self.task_options)
 
     def collect_kwargs(self, given, injected):
         """
@@ -367,150 +434,6 @@ class SubStep(StepType):
         """
         return self.parent.make_task(args, kwargs)[self.index]
 
-def make_core_task(step: StepType, args: list[Any], kwargs: dict[str, Any],
-                   vtag: str | None = None, items: int | None = None) -> TaskNode:
-    """
-    Build a core task from a function call
-    """
-    # Before anything else, type check the call. This ensures we don't wait
-    # until actually trying to run the task to realize we're missing
-    # arguments.
-    try:
-        full_kwargs = dict(kwargs, **{
-            kw: WorkerSideInject()
-            for kw in _WORKER_INJECTABLES
-            if kw in step.kw_names
-            })
-        inspect.signature(step.function).bind(*args, **full_kwargs)
-    except TypeError as exc:
-        raise TypeError(
-                f'{step.function.__name__}() {str(exc)}'
-                ) from exc
-
-    # Collect all arguments as nodes
-    arg_inputs = []
-    kwarg_inputs = {}
-    nodes = {}
-    for arg in args:
-        tin, node = ensure_task_input(arg)
-        arg_inputs.append(tin)
-        nodes[tin.name] = node
-    for key, arg in kwargs.items():
-        tin, node = ensure_task_input(arg)
-        kwarg_inputs[key] = tin
-        nodes[tin.name] = node
-
-    tdef = CoreTaskDef(
-        args=arg_inputs,
-        kwargs=kwarg_inputs,
-        step=step.name,
-        vtags=([ascii(vtag) ] if vtag is not None else [])
-        )
-
-    name = obj_to_name(tdef.model_dump())
-    ndef = NamedTaskDef(name=name, task_def=tdef)
-
-    return TaskNode(named_def=ndef, dependencies=nodes)
-
-    # FIXME: we need to clear that handle stuff at sine point
-    # self.handle = Handle(self.name, items)
-
-
-
-
-class SubTask(TaskType):
-    """
-    A Task refering to an item of a Task representing a collection.
-
-    Submission of a SubTask will cause the original Task to be submitted and
-    executed. However, using a subtask as an argument or a Client.collect target
-    will only cause one specific item to be serialized and sent over the
-    network to the next step.
-    """
-
-    def __init__(self, parent, handle):
-        self.parent = parent
-        self.handle = handle
-        self.name = handle.name
-
-    @classmethod
-    def gen_name(cls, parent_name, index):
-        """
-        Create a resource name.
-        """
-
-        rep = [ cls.__name__, parent_name, str(index) ]
-
-        return obj_to_name(rep)
-
-    @property
-    def dependencies(self):
-        """
-        List of tasks this task depends on.
-
-        In this case this case it is the actual task we are derived from
-        """
-        return [self.parent]
-
-    def to_dict(self, name=False) -> TaskDict:
-        """
-        Returns a dictionnary representation of the task.
-        """
-        # FIXME: this definition is duplicated in the store, where we need dicts
-        # but don't have task objects.
-        task_dict: TaskDict = {
-            'parent': self.parent.name
-            }
-        if name:
-            task_dict['name'] = self.name
-        return task_dict
-
-    def __str__(self):
-        return '{self.name} [sub] {self.parent}'
-
-@dataclass
-class Handle():
-    """Generic structure representing a resource, i.e. the result of the task,
-    primarily identified by its name but also containing metadata
-    """
-    name: bytes
-    items: int = 0
-
-    @property
-    def has_items(self):
-        """
-        Whether the resource is known to be iterable
-        """
-        return bool(self.items)
-
-    @property
-    def n_items(self):
-        """
-        How many sub-resources this resource consists of, if known, else 0.
-        """
-        if self.items:
-            return self.items
-        return 0
-
-    def __iter__(self):
-        if not self.has_items:
-            raise NonIterableHandleError
-        return (
-            Handle(
-                SubTask.gen_name(self.name, i),
-                0
-                )
-            for i in range(self.items)
-            )
-
-    def __getitem__(self, index):
-        if not self.has_items:
-            raise NonIterableHandleError
-        return Handle(
-                SubTask.gen_name(self.name, index),
-                0)
-
-
 class NoSuchStep(ValueError):
     """
     No step with the given name has been registered
@@ -589,7 +512,7 @@ class Block:
         """
         return self.step(*decorated, **options)
 
-    def get(self, key):
+    def get(self, key: str) -> Step:
         """Return step by full name"""
         try:
             return self._steps[key]
@@ -632,67 +555,16 @@ class StepSet(Block):
                 ' future', FutureWarning, stacklevel=2)
         super().__init__(*args, **kwargs)
 
-class NonIterableHandleError(TypeError):
+def query(subject: Any, query: Any) -> TaskNode:
     """
-    Specific sub-exception raised when trying to iterate an atomic handle.
+    Build a Query task node
     """
-
-class Query(TaskType):
-    """
-    A task referencing specific attributes of an other task.
-
-    Args:
-        subject: the task to which to apply the query
-        query: the query description. The query specification will be documented
-            elsewhere and linked here, if you're reading this remind the package
-            author to do it.
-    """
-    def __init__(self, subject, query):
-        self.subject = ensure_task(subject)
-        self.query = query
-
-        rep = [self.__class__.__name__, self.to_dict()]
-
-        self.name = obj_to_name(rep)
-
-    @property
-    def dependencies(self):
-        return [self.subject]
-
-    def to_dict(self, name=False) -> TaskDict:
-        """
-        Dictionary representation of the task
-        """
-        task_dict: TaskDict = {
-                'subject': self.subject.name,
-                'query': self.query,
-                }
-        if name:
-            task_dict['name'] = self.name
-
-        return task_dict
-
-@dataclass
-class TaskReference(TaskType):
-    """
-    A reference to an existing task by name, stripped of all the task definition
-    details.
-
-    The only valid operation on such a task is to read its name.
-    """
-    name: TaskName
-
-    def to_dict(self) -> TaskDict:
-        """
-        Task definition is explictly missing
-        """
-        raise RuntimeError('TaskReferences do not contain task definition '
-                'information')
-
-    @property
-    def dependencies(self):
-        """
-        Task definition is explictly missing
-        """
-        raise RuntimeError('TaskReferences do not contain task definition '
-                'information')
+    subj_node = ensure_task_node(subject)
+    tdef = QueryTaskDef(query=query, subject=subj_node.name)
+    return TaskNode(
+            named_def=NamedTaskDef(
+                name=obj_to_name(tdef.model_dump()),
+                task_def=tdef
+                ),
+            dependencies=[subj_node]
+            )

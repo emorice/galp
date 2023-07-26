@@ -22,7 +22,7 @@ async def test_standalone():
     async with timeout(3):
         async with galp.temp_system(steps=['galp.tests.steps']) as client:
             res = await client.run(task)
-        assert res == task.step.function()
+        assert res == gts.hello.function()
 
 async def test_standalone_jobs():
     """
@@ -33,7 +33,7 @@ async def test_standalone_jobs():
     async with timeout(3):
         async with galp.temp_system(steps=['galp.tests.steps'], pool_size=2) as client:
             res = await client.run(task)
-        assert res == task.step.function()
+        assert res == gts.hello.function()
 
 async def test_explicit():
     """
