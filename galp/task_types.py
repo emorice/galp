@@ -56,15 +56,6 @@ class TaskInput(BaseModel):
     op: Annotated[TaskOp, PlainSerializer(lambda op: op.value)]
     name: TaskName
 
-class TaskType(str, Enum):
-    """
-    Enum corresponding to the possible task subclasses
-    """
-    CORE = 'core'
-    CHILD = 'child'
-    LITERAL = 'literal'
-    QUERY = 'query'
-
 class BaseTaskDef(BaseModel):
     """
     Base class for task def objects
@@ -73,15 +64,7 @@ class BaseTaskDef(BaseModel):
         task_type: constant string identifying the task def subclass
         scatter: number of child tasks statically allowed
     """
-    task_type: TaskType
     scatter: int | None = None
-
-    @field_serializer('task_type')
-    def serialize_type(self, task_type: TaskType, _info) -> str:
-        """
-        Always dump the type as a string
-        """
-        return task_type.value
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         """
@@ -107,11 +90,11 @@ class CoreTaskDef(BaseTaskDef):
     Information defining a core Task, i.e. bound to the remote execution of a
     function
     """
-    task_type: Literal[TaskType.CORE] = TaskType.CORE
+    task_type: Literal['core'] = Field('core', repr=False)
 
+    step: str
     args: list[TaskInput]
     kwargs: dict[str, TaskInput]
-    step: str
     vtags: list[str] # ideally ascii
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
@@ -122,7 +105,7 @@ class ChildTaskDef(BaseTaskDef):
     """
     Information defining a child Task, i.e. one item of Task returning a tuple.
     """
-    task_type: Literal[TaskType.CHILD] = TaskType.CHILD
+    task_type: Literal['child'] = Field('child', repr=False)
 
     parent: TaskName
     index: int
@@ -135,7 +118,7 @@ class LiteralTaskDef(BaseTaskDef):
     """
     Information defining a literal Task, i.e. a constant.
     """
-    task_type: Literal[TaskType.LITERAL] = TaskType.LITERAL
+    task_type: Literal['literal'] = Field('literal', repr=False)
 
     children: list[TaskName]
 
@@ -157,7 +140,7 @@ class QueryTaskDef(BaseTaskDef):
 
     Also, child tasks could eventually be implemented as queries too.
     """
-    task_type: Literal[TaskType.QUERY] = TaskType.QUERY
+    task_type: Literal['query'] = Field('query', repr=False)
 
     subject: TaskName
     query: Any # Query type is not well specified yet
