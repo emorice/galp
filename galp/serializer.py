@@ -8,7 +8,7 @@ import logging
 import msgpack
 import dill
 
-from galp.task_types import TaskType, StepType
+from galp.task_types import TaskNode, StepType
 
 class DeserializeError(ValueError):
     """
@@ -40,7 +40,7 @@ def ext_hook(native_children):
         raise DeserializeError(f'Unknown ExtType {code}')
     return _hook
 
-def default(children: list[TaskType]) -> Callable:
+def default(children: list[TaskNode]) -> Callable:
     """
     Out-of-band sub-tasks and dill fallback
 
@@ -49,7 +49,7 @@ def default(children: list[TaskType]) -> Callable:
     def _default(obj):
         if isinstance(obj, StepType):
             obj = obj()
-        if isinstance(obj, TaskType):
+        if isinstance(obj, TaskNode):
             index = len(children)
             children.append(obj)
             return msgpack.ExtType(
@@ -81,7 +81,7 @@ class Serializer:
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj: Any) -> tuple[bytes, list[TaskType]]:
+    def dumps(self, obj: Any) -> tuple[bytes, list[TaskNode]]:
         """
         Serialize the data.
 
@@ -93,7 +93,7 @@ class Serializer:
         Args:
             obj: object to serialize
         """
-        children : list[TaskType] = []
+        children : list[TaskNode] = []
         # Modifies children in place
         payload = msgpack.packb(obj, default=default(children), use_bin_type=True)
         return payload, children

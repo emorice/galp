@@ -12,19 +12,19 @@ from dataclasses import dataclass
 import msgpack
 
 import galp
-from galp.task_types import (TaskName, TaskType, StepType, TaskDict, TaskInput,
-        TaskInputDoc)
+from galp.task_types import (TaskName, StepType, TaskNode, TaskInput,
+        LiteralTaskDef, CoreTaskDef, NamedTaskDef, TaskType)
 from galp.serializer import Serializer
 
 _serializer = Serializer() # Actually stateless, safe
 
-def hash_one(payload):
+def hash_one(payload: bytes) -> bytes:
     """
     Hash argument with sha256
     """
     return hashlib.sha256(payload).digest()
 
-def obj_to_name(canon_rep):
+def obj_to_name(canon_rep: Any) -> TaskName:
     """
     Generate a task name from a canonical representation of task made from basic
     types.
@@ -36,86 +36,63 @@ def obj_to_name(canon_rep):
     name = TaskName(hash_one(payload))
     return name
 
-def ensure_task(obj: Any) -> TaskType:
+def ensure_task_node(obj: Any) -> TaskNode:
     """Makes object into a task in some way.
 
     If it's a step, try to call it to get a task.
     Else, wrap into a Literal task
     """
-    if isinstance(obj, TaskType):
+    if isinstance(obj, TaskNode):
         return obj
     if isinstance(obj, StepType):
         return obj()
-    return LiteralTask(obj)
+    return make_literal_task(obj)
 
-def ensure_task_input(obj: Any) -> TaskInput:
+def ensure_task_input(obj: Any) -> tuple[TaskInput, TaskNode]:
     """
     Makes object a task or a simple query
+
+    Returns: a tuple (tin, node) where tin is a task input suitable for
+        referencing the task while node is the full task object
     """
     if isinstance(obj, Query):
         # Only allowed query for now, will be extended in the future
         if obj.query in ['$base']:
-            return obj.query, obj.subject
+            return TaskInput(op='$base', name=obj.subject.name), obj.subject
+
     # Everything else is treated as task to be recursively run and loaded
-    return '$sub', ensure_task(obj)
+    node = ensure_task_node(obj)
+    return (
+            TaskInput(op='$sub', name=node.name),
+            {node.name: node}
+            )
 
-def task_input_doc(task_input: TaskInput) -> TaskInputDoc:
-    """
-    Converts the return of ensure_task_input to a representation suitable for
-    hashing and transmission. This generally discard the input definition itself.
-    """
-    op_name, task = task_input
+def make_literal_task(obj: Any) -> TaskNode:
+    # Todo: more robust hashing, but this is enough for most case where
+    # literal resources are a good fit (more complex objects would tend to be
+    # actual step outputs)
+    obj_bytes, dependencies = _serializer.dumps(obj)
 
-    if op_name != '$sub':
-        return op_name, task.name
-    # Omit '$sub' for backward compat.
-    # TODO: uniformize at next breaking change
-    return task.name
+    tdef = LiteralTaskDef(children=[dep.name for dep in dependencies])
+    # Literals are an exception to naming: they are named by value, so the
+    # name is *not* derived purely from the definition object
+    rep = [
+        tdef.model_dump(), obj_bytes
+        ]
+    name = obj_to_name(rep)
 
-def task_input_task(task_input: TaskInput) -> TaskType:
-    """
-    Recover the task object from a task input, discarding the link type
-    """
-    _op_name, task = task_input
-    return task
+    # Fixme
+    #self.handle = Handle(self.name)
 
-def task_input_load(ti_doc) -> TaskInputDoc:
-    """
-    Type a task input from a generic document
+    ndef = NamedTaskDef(name=name, task_def=tdef)
 
-    This should essentialy validate a received task doc
-    """
-    if isinstance(ti_doc, bytes):
-        # Backward compatible sub-style link
-        return '$sub', TaskName(ti_doc)
-    # Generic input
-    op_name, task_name = ti_doc
-    return str(op_name), TaskName(task_name)
+    return TaskNode(
+            named_def=ndef,
+            dependencies={dep.name: dep for dep in dependencies}
+            )
 
-def task_deps(task_dict: TaskDict) -> list[TaskInputDoc]:
-    """
-    Gather the list of dependencies names from a task dictionnary
-    """
-    # Step-style Task, the dependencies are the tasks given as arguments
-    if 'arg_names' in task_dict:
-        return [ task_input_load(ti_doc) for ti_doc in [
-            *task_dict['arg_names'],
-            *task_dict['kwarg_names'].values()
-            ]]
-    # SubTask, the dependency is the parent task
-    if 'parent' in task_dict:
-        return [ ('$sub', task_dict['parent']) ]
-
-    # Removed: dependencies are now defined as tasks that need to be done before
-    # the raw task result can be reached. Literal children are not dependencies
-    # under this definition.
-    # - # Literal, the dependencies are the tasks found embedded when walking the
-    # - # object
-    if 'children' in task_dict:
-        return []
-    # -   return task_dict['children']
-
-    raise NotImplementedError('task_deps', task_dict)
+    #def __str__(self):
+    #    return f'{self.name} [literal] {self.literal}'
 
 class Step(StepType):
     """Object wrapping a function that can be called as a pipeline step
@@ -390,112 +367,56 @@ class SubStep(StepType):
         """
         return self.parent.make_task(args, kwargs)[self.index]
 
-class Task(TaskType):
+def make_core_task(step: StepType, args: list[Any], kwargs: dict[str, Any],
+                   vtag: str | None = None, items: int | None = None) -> TaskNode:
     """
-    Object wrapping a step invocation with its arguments
-
-    Args:
-        args: positional arguments to the step
-        kwargs: keyword arguments to the step
-        vtag: arbitrary object whose ascii() representation will be hashed and
-            used in name generation, thus invalidating any previous names each
-            time the vtag in the code is changed.
-        items: length of the tuple returned by the task for eager unpacking
+    Build a core task from a function call
     """
-    def __init__(self, step, args, kwargs, vtag=None, items=None):
+    # Before anything else, type check the call. This ensures we don't wait
+    # until actually trying to run the task to realize we're missing
+    # arguments.
+    try:
+        full_kwargs = dict(kwargs, **{
+            kw: WorkerSideInject()
+            for kw in _WORKER_INJECTABLES
+            if kw in step.kw_names
+            })
+        inspect.signature(step.function).bind(*args, **full_kwargs)
+    except TypeError as exc:
+        raise TypeError(
+                f'{step.function.__name__}() {str(exc)}'
+                ) from exc
 
-        # Before anything else, type check the call. This ensures we don't wait
-        # until actually trying to run the task to realize we're missing
-        # arguments.
-        try:
-            full_kwargs = dict(kwargs, **{
-                kw: WorkerSideInject()
-                for kw in _WORKER_INJECTABLES
-                if kw in step.kw_names
-                })
-            inspect.signature(step.function).bind(*args, **full_kwargs)
-        except TypeError as exc:
-            raise TypeError(
-                    f'{step.function.__name__}() {str(exc)}'
-                    ) from exc
+    # Collect all arguments as nodes
+    arg_inputs = []
+    kwarg_inputs = {}
+    nodes = {}
+    for arg in args:
+        tin, node = ensure_task_input(arg)
+        arg_inputs.append(tin)
+        nodes[tin.name] = node
+    for key, arg in kwargs.items():
+        tin, node = ensure_task_input(arg)
+        kwarg_inputs[key] = tin
+        nodes[tin.name] = node
 
-        self.step = step
-        self.args = [ensure_task_input(arg) for arg in args]
-        self.kwargs = { kw.encode('ascii'): ensure_task_input(arg) for kw, arg in kwargs.items() }
-        self.vtags = (
-            [ ascii(vtag) ]
-            if vtag is not None else [])
-        self.name = self.gen_name(self.to_dict())
-        self.handle = Handle(self.name, items)
+    tdef = CoreTaskDef(
+        args=arg_inputs,
+        kwargs=kwarg_inputs,
+        step=step.name,
+        vtags=([ascii(vtag) ] if vtag is not None else [])
+        )
 
-    def to_dict(self, name=False) -> TaskDict:
-        """
-        Returns a dictionnary representation of the task.
-        """
-        task_dict: TaskDict = {
-            'step_name': self.step.key,
-            'vtags': self.vtags,
-            'arg_names': [ task_input_doc(arg) for arg in self.args ],
-            'kwarg_names': { kw: task_input_doc(kwarg) for kw, kwarg in self.kwargs.items() }
-            }
-        if name:
-            task_dict['name'] = self.name
-        return task_dict
+    name = obj_to_name(tdef.model_dump())
+    ndef = NamedTaskDef(name=name, task_def=tdef)
 
-    @property
-    def dependencies(self):
-        """Shorthand for all the tasks this task directly depends on"""
-        deps = [task_input_task(ti) for ti in self.args]
-        deps.extend([task_input_task(ti) for ti in self.kwargs.values()])
-        return deps
+    return TaskNode(named_def=ndef, dependencies=nodes)
 
-    @classmethod
-    def gen_name(cls, task_dict: TaskDict) -> bytes:
-        """Create a resource name.
+    # FIXME: we need to clear that handle stuff at sine point
+    # self.handle = Handle(self.name, items)
 
-        Args:
-            step_name: bytes
-            arg_names: list of bytes
-            kwarg_names: bytes-keyed dict of bytes.
-            vtags: list of strings
 
-        Returns:
-            digest as bytes.
 
-        We simply mash together the step name, the tags and the args name in order.
-        The only difficulty is the order of keyword arguments, so we sort kwargs
-        by keyword (in original byte representation). We also sort the vtags, so
-        that they are seen as a set.
-        """
-
-        canon_rep = [
-            cls.__name__,
-            task_dict['step_name'], # Step name
-            sorted(task_dict['vtags']), # Set of tags
-            task_dict['arg_names'], # List of pos args
-            sorted(list(task_dict['kwarg_names'].items())) # Map of kw args
-            ]
-
-        return obj_to_name(canon_rep)
-
-    def __iter__(self):
-        """
-        If the function underlying the task is type-hinted as returning a tuple,
-        returns a generator yielding sub-task objects allowing to refer to
-        individual members of the result independently.
-
-        """
-        return (SubTask(self, sub_handle) for sub_handle in self.handle)
-
-    def __getitem__(self, index):
-        if self.handle.has_items:
-            # Soft getitem, the referenced task is a scatter type
-            return SubTask(self, self.handle[index])
-        # Hard getitem, we actually insert an extra task
-        return galp.steps.getitem(self, index)
-
-    def __str__(self):
-        return f'{self.name} {str(self.step.key, "ascii")}'
 
 class SubTask(TaskType):
     """
@@ -589,48 +510,6 @@ class Handle():
                 SubTask.gen_name(self.name, index),
                 0)
 
-class LiteralTask(TaskType):
-    """
-    Task wrapper for data provided direclty as arguments in graph building.
-
-    Args:
-        obj: arbitrary object to wrap.
-        type_hint: needed since there is no step to get the metadata from.
-    """
-
-    def __init__(self, obj):
-        self.literal = obj
-
-        # Todo: more robust hashing, but this is enough for most case where
-        # literal resources are a good fit (more complex objects would tend to be
-        # actual step outputs)
-        self.data, self._dependencies = _serializer.dumps(obj)
-
-        rep = [
-            self.__class__.__name__, self.data,
-            [ dep.name for dep in self.dependencies ]
-            ]
-
-        self.name = obj_to_name(rep)
-        self.handle = Handle(self.name)
-
-    @property
-    def dependencies(self) -> list[TaskType]:
-        return self._dependencies
-
-    def to_dict(self, name=False) -> TaskDict:
-        """
-        Dictionary representation of task
-        """
-        task_dict: TaskDict = {
-            'children': [ dep.name for dep in self._dependencies ]
-            }
-        if name:
-            task_dict['name'] = self.name
-        return task_dict
-
-    def __str__(self):
-        return f'{self.name} [literal] {self.literal}'
 
 class NoSuchStep(ValueError):
     """
