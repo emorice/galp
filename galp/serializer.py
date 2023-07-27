@@ -8,7 +8,9 @@ import logging
 import msgpack
 import dill
 
-from galp.task_types import Task, StepType, NamedTaskDef, TaskName
+from galp.task_types import (Task, StepType, NamedTaskDef, TaskName, TaskDef,
+                             CoreTaskDef, NamedCoreTaskDef, GNamedTaskDef,
+                             is_core)
 
 class DeserializeError(ValueError):
     """
@@ -65,20 +67,34 @@ def serialize_child(index):
         index.to_bytes(4, 'little')
         )
 
-def load_task_def(name: bytes, def_buffer: bytes):
+def load_task_def(name: bytes, def_buffer: bytes,
+                  task_def_t = TaskDef) -> NamedTaskDef:
     """
     Util to deserialize a named task def with the name and def split
 
     This is use both in cache and protocol, so it makes more sense to keep it
     here despite it not being related to the rest of the serialization code for
     now.
+
+    Args:
+        name: name of the task
+        def_buffer: msgpack encoded task def
+        task_def_t: additional type constraint on type of task def
     """
-    return NamedTaskDef.model_validate({
+    return GNamedTaskDef[task_def_t].model_validate({
         'name': name,
         'task_def': msgpack.unpackb(
                     def_buffer
                     )
             })
+
+def load_core_task_def(name: bytes, def_buffer: bytes) -> NamedCoreTaskDef:
+    """
+    Variant of load_task_def statically contrained to a CoreTaskDef
+    """
+    ndef = load_task_def(name, def_buffer, CoreTaskDef)
+    assert is_core(ndef) # hint
+    return ndef
 
 def dump_task_def(named_def: NamedTaskDef) -> tuple[TaskName, bytes]:
     """

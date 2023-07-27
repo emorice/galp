@@ -4,10 +4,11 @@ GALP protocol implementation
 
 import logging
 
-from galp.task_types import TaskName, NamedTaskDef, CoreTaskDef
+from galp.task_types import (TaskName, NamedTaskDef, CoreTaskDef,
+                             NamedCoreTaskDef, is_core)
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
-from galp.serializer import load_task_def, dump_task_def
+from galp.serializer import load_task_def, load_core_task_def, dump_task_def
 
 # Errors and exceptions
 # =====================
@@ -82,7 +83,7 @@ class Protocol(LowerProtocol):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
-    def on_submit(self, route, named_def: NamedTaskDef):
+    def on_submit(self, route, named_def: NamedCoreTaskDef):
         """A `SUBMIT` message was received"""
         return self.on_unhandled(b'SUBMIT')
 
@@ -200,7 +201,7 @@ class Protocol(LowerProtocol):
         return route, [b'READY', peer]
 
 
-    def submit(self, route, named_def: NamedTaskDef):
+    def submit(self, route, named_def: NamedCoreTaskDef):
         """Sends SUBMIT for given task object.
 
         Literal and derived tasks should not be passed at all and will trigger
@@ -209,7 +210,7 @@ class Protocol(LowerProtocol):
 
         Handle them in a wrapper or override.
         """
-        if not isinstance(named_def.task_def, CoreTaskDef):
+        if not is_core(named_def):
             raise ValueError('Only core tasks can be passed to Protocol layer')
 
         name, payload = dump_task_def(named_def)
@@ -341,9 +342,9 @@ class Protocol(LowerProtocol):
         return self.on_ready(route, peer)
 
     @event.on('SUBMIT')
-    def _on_submit(self, route, msg):
+    def _on_submit(self, route, msg: list[bytes]):
         self._validate(len(msg) == 3, route, 'SUBMIT with wrong number of parts')
-        named_def = load_task_def(name=msg[1], def_buffer=msg[2])
+        named_def = load_core_task_def(name=msg[1], def_buffer=msg[2])
         return self.on_submit(route, named_def)
 
     @event.on('FOUND')

@@ -2,12 +2,12 @@
 Abstract task types defintions
 """
 from abc import ABC, abstractmethod
-from typing import Any, Literal, Union
+from typing import Any, Literal, Union, TypeVar, Generic, TypeAlias, TypeGuard
 from enum import Enum
 from dataclasses import dataclass
 
 from pydantic_core import CoreSchema, core_schema
-from pydantic import GetCoreSchemaHandler, BaseModel, Field, field_serializer
+from pydantic import GetCoreSchemaHandler, BaseModel, Field
 from pydantic.functional_serializers import PlainSerializer
 from typing_extensions import Annotated
 
@@ -148,18 +148,26 @@ class QueryTaskDef(BaseTaskDef):
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         raise NotImplementedError
 
-TaskDef = Annotated[
-        Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef],
-        Field(discriminator='task_type')
-        ]
+TaskDef = Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef]
 
-class NamedTaskDef(BaseModel):
+TD_co = TypeVar('TD_co', covariant=True, bound=TaskDef)
+
+class GNamedTaskDef(BaseModel, Generic[TD_co]):
     """
     A task to which a reproducible unique name has been given by a naming
     procedure
     """
     name: TaskName
-    task_def: TaskDef
+    task_def: Annotated[TD_co, Field(discriminator='task_type')]
+
+NamedTaskDef: TypeAlias = GNamedTaskDef[TaskDef]
+NamedCoreTaskDef: TypeAlias = GNamedTaskDef[CoreTaskDef]
+
+def is_core(named_def: NamedTaskDef) -> TypeGuard[NamedCoreTaskDef]:
+    """
+    Check if a named task reference is a core task
+    """
+    return isinstance(named_def.task_def, CoreTaskDef)
 
 class Task(ABC):
     """
@@ -172,7 +180,6 @@ class Task(ABC):
         Task name
         """
         raise NotImplementedError
-
 
 class TaskReference(Task):
     """

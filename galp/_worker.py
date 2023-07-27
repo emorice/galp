@@ -34,7 +34,7 @@ from galp.commands import Script
 from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
-from galp.task_types import NamedTaskDef, CoreTaskDef, TaskName
+from galp.task_types import NamedTaskDef, NamedCoreTaskDef, TaskName
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -141,7 +141,7 @@ class WorkerProtocol(ReplyProtocol):
             logging.exception('GET: Cache ERROR: %s', name)
         return self.not_found(route, name)
 
-    def on_submit(self, route, named_def: NamedTaskDef):
+    def on_submit(self, route, named_def: NamedCoreTaskDef):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -151,7 +151,6 @@ class WorkerProtocol(ReplyProtocol):
         This the only asynchronous handler, all others are semantically blocking.
         """
         tdef = named_def.task_def
-        assert isinstance(tdef, CoreTaskDef)
         logging.info('SUBMIT: %s', tdef.step)
         name = named_def.name
 
@@ -263,6 +262,9 @@ class WorkerProtocol(ReplyProtocol):
 
 @dataclass
 class JobResult:
+    """
+    Result of executing a step
+    """
     route: Any
     named_def: NamedTaskDef
     success: bool
@@ -313,7 +315,7 @@ class Worker:
                 reply = self.protocol.failed(job.route, job.named_def.name)
             await self.transport.send_message(reply)
 
-    def schedule_task(self, client_route, named_def: NamedTaskDef):
+    def schedule_task(self, client_route, named_def: NamedCoreTaskDef):
         """
         Callback to schedule a task for execution.
         """
@@ -325,7 +327,6 @@ class Worker:
             self.galp_jobs.put_nowait(task)
 
         tdef = named_def.task_def
-        assert isinstance(tdef, CoreTaskDef)
         script = self.protocol.script
         collect = script.collect([
                 Query(script, tin.name, tin.op)
@@ -351,14 +352,13 @@ class Worker:
     # Task execution logic
     # ====================
 
-    async def run_submission(self, status, route, named_def: NamedTaskDef,
+    async def run_submission(self, status, route, named_def: NamedCoreTaskDef,
             inputs) -> JobResult:
         """
         Actually run the task
         """
         name = named_def.name
         tdef = named_def.task_def
-        assert isinstance(tdef, CoreTaskDef)
         step_name = tdef.step
         arg_tins = tdef.args
         kwarg_tins = tdef.kwargs

@@ -27,7 +27,7 @@ from galp.command_queue import CommandQueue
 from galp.commands import Script
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, NamedTaskDef,
-        CoreTaskDef, QueryTaskDef)
+        CoreTaskDef, QueryTaskDef, is_core)
 
 class TaskStatus(IntEnum):
     """
@@ -351,8 +351,7 @@ class BrokerProtocol(ReplyProtocol):
         named_def = self._tasks.get(task_name)
         if named_def is None:
             raise ValueError(f"Task {task_name.hex()} is unknown")
-        tdef = named_def.task_def
-        if isinstance(tdef, CoreTaskDef):
+        if is_core(named_def):
             self.submitted_count[task_name] += 1
             return self.submit(self.route, named_def)
         # Literals and SubTasks are always satisfied, and never have
