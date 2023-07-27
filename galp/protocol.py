@@ -10,6 +10,7 @@ from galp.task_types import TaskName, NamedTaskDef, NamedCoreTaskDef, is_core
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
 from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
+from galp.messages import Ready
 
 # Errors and exceptions
 # =====================
@@ -81,7 +82,7 @@ class Protocol(LowerProtocol):
         """
         return self.on_unhandled(b'PUT')
 
-    def on_ready(self, route, peer: bytes):
+    def on_ready(self, route, ready_info: Ready):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
@@ -197,7 +198,7 @@ class Protocol(LowerProtocol):
         msg_body = [b'PUT', name, data, *children]
         return route, msg_body
 
-    def ready(self, route, peer: bytes):
+    def ready(self, route, ready_info: Ready):
         """
         Sends a READY message.
 
@@ -206,7 +207,7 @@ class Protocol(LowerProtocol):
                it's unique to the sender, and is usually chosen in a transparent
                way.
         """
-        return route, [b'READY', peer]
+        return route, [b'READY', dump_model(ready_info)]
 
 
     def submit(self, route, named_def: NamedCoreTaskDef):
@@ -344,10 +345,14 @@ class Protocol(LowerProtocol):
         return self.on_put(route, name, (data, children))
 
     @event.on('READY')
-    def _on_ready(self, route, msg):
-        self._validate(len(msg) == 2, route, 'READY without exactly one peer id')
-        peer = msg[1]
-        return self.on_ready(route, peer)
+    def _on_ready(self, route, msg: list[bytes]):
+        self._validate(len(msg) == 2, route, 'READY without exactly one arg')
+
+        ready_info, err = load_model(Ready, msg[1])
+        if ready_info is None:
+            self._validate(False, route, err)
+
+        return self.on_ready(route, ready_info)
 
     @event.on('SUBMIT')
     def _on_submit(self, route, msg: list[bytes]):

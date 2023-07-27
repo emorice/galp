@@ -16,6 +16,7 @@ import galp.worker
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.reply_protocol import ReplyProtocol
 from galp.async_utils import background
+from galp.messages import task_key, Ready, Role
 
 class Pool:
     """
@@ -33,7 +34,7 @@ class Pool:
         self.signal = None
         self.pending_signal = asyncio.Event()
 
-        self.broker_protocol = ReplyProtocol('BK', router=False)
+        self.broker_protocol = BrokerProtocol(pool=self)
         self.broker_transport = ZmqAsyncTransport(
             self.broker_protocol,
             config['endpoint'], zmq.DEALER # pylint: disable=no-member
@@ -59,8 +60,8 @@ class Pool:
                 ):
                 async with run_forkserver(self.config) as forkserver_socket:
                     self.forkserver_socket = forkserver_socket
-                    for _ in range(self.config['pool_size']):
-                        self.start_worker()
+
+                    await self.notify_ready()
                     while True:
                         await self.pending_signal.wait()
                         sig = self.signal
@@ -74,11 +75,11 @@ class Pool:
             self.kill_all()
             raise
 
-    def start_worker(self):
+    def start_worker(self, mission: bytes):
         """
         Starts a worker.
         """
-        self.forkserver_socket.send(b'FORK')
+        self.forkserver_socket.send_multipart([b'FORK', mission])
         b_pid = self.forkserver_socket.recv()
         pid = int.from_bytes(b_pid, 'little')
 
@@ -93,6 +94,17 @@ class Pool:
         await self.broker_transport.send_message(
             self.broker_protocol.exited(
                 self.broker_protocol.default_route(), str(pid).encode('ascii')
+                )
+            )
+
+    async def notify_ready(self):
+        """
+        Sends a message back to broker to signal we joined
+        """
+        await self.broker_transport.send_message(
+            self.broker_protocol.ready(
+                self.broker_protocol.default_route(),
+                Ready(role=Role.POOL, local_id=str(os.getpid()), mission=b'')
                 )
             )
 
@@ -140,6 +152,23 @@ class Pool:
                 rpid, rexit = os.waitpid(pid, 0)
                 logging.info('Child %s exited with code %d', pid, rexit >> 8)
 
+class BrokerProtocol(ReplyProtocol):
+    def __init__(self, pool: Pool) -> None:
+        super().__init__('BK', router=False)
+        self.pool = pool
+
+    def on_verb(self, route, msg_body: list[bytes]):
+        """
+        Any incoming message is treated as a request to spawn a worker for said
+        task
+        """
+        verb = msg_body[0].decode('ascii')
+        if verb in ('STAT', 'SUBMIT', 'GET'):
+            key = task_key(msg_body)
+            self.pool.start_worker(key)
+        else:
+            logging.error('Unexpected verb %s', verb)
+
 def forkserver(config):
     """
     A dedicated loop to fork workers on demand and return the pids.
@@ -155,15 +184,16 @@ def forkserver(config):
         cpu_counter = 0
 
     while True:
-        msg = socket.recv()
-        if msg == b'FORK':
-            if config.get('pin_workers'):
+        msg = socket.recv_multipart()
+        if msg[0] == b'FORK':
+            _config = dict(config, mission=msg[1])
+            if _config.get('pin_workers'):
                 cpu = cpus[cpu_counter]
                 cpu_counter = (cpu_counter + 1) % len(cpus)
                 logging.info('Pinning new worker to cpu %d', cpu)
-                pid = galp.worker.fork(dict(config, pin_cpus=[cpu]))
+                pid = galp.worker.fork(dict(_config, pin_cpus=[cpu]))
             else:
-                pid = galp.worker.fork(config)
+                pid = galp.worker.fork(_config)
             socket.send(pid.to_bytes(4, 'little'))
         else:
             break

@@ -6,60 +6,47 @@ import asyncio
 import logging
 
 from typing import Any
+from dataclasses import dataclass
 
 import zmq
 
 from galp.protocol import IllegalRequestError
-from galp.forward_protocol import ForwardProtocol
+from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.task_types import TaskName, NamedTaskDef
+from galp.task_types import TaskName, NamedTaskDef, Resources
+from galp.messages import task_key, Ready, Role
 
 class Broker:
     """
     Load-balancing client-to-worker and a worker-to-broker loops
     """
-    def __init__(self, client_endpoint, worker_endpoint):
+    def __init__(self, endpoint, n_cpus):
+        self.proto = CommonProtocol('CW', router=True, resources=Resources(cpus=n_cpus))
+        self.transport = ZmqAsyncTransport(
+            self.proto,
+            endpoint, zmq.ROUTER, bind=True)
 
-        # pylint: disable=no-member # False positive
-        self.client_proto = BrokerProtocol('CL', router=True)
-        self.client_transport = ZmqAsyncTransport(
-            self.client_proto,
-            client_endpoint, zmq.ROUTER, bind=True)
-
-        self.worker_proto = WorkerProtocol('WK', router=True)
-        self.worker_transport = ZmqAsyncTransport(
-            self.worker_proto,
-            worker_endpoint, zmq.ROUTER, bind=True)
-
-    async def listen_forward_loop(self, source_transport, dest_transport):
+    async def listen_forward_loop(self, transport):
         """Client-side message processing loop of the broker"""
 
-        proto_name = source_transport.protocol.proto_name
+        proto_name = transport.protocol.proto_name
         logging.info("Broker listening for %s on %s", proto_name,
-            source_transport.endpoint
+            transport.endpoint
             )
 
         while True:
             try:
-                replies = await source_transport.recv_message()
+                replies = await transport.recv_message()
             except IllegalRequestError as err:
                 logging.error('Bad %s request: %s', proto_name, err.reason)
-                await source_transport.send_message(
-                    source_transport.proto.illegal(err.route)
+                await transport.send_message(
+                    transport.proto.illegal(err.route)
                     )
-            await dest_transport.send_messages(replies)
+            await transport.send_messages(replies)
 
-    async def listen_clients(self):
+    async def listen(self):
         """Listen client-side, forward to workers"""
-        return await self.listen_forward_loop(
-            self.client_transport,
-            self.worker_transport)
-
-    async def listen_workers(self):
-        """Listen worker-side, forward to clients"""
-        return await self.listen_forward_loop(
-            self.worker_transport,
-            self.client_transport)
+        return await self.listen_forward_loop(self.transport)
 
     async def run(self):
         """
@@ -68,14 +55,41 @@ class Broker:
         Must be externally cancelled
         """
         return await asyncio.gather(
-            self.listen_workers(),
-            self.listen_clients()
+            self.listen(),
             )
 
-class BrokerProtocol(ForwardProtocol):
+@dataclass
+class Allocation:
     """
-    Common behavior for both sides
+    A request that was accepted, but is not yet treated
     """
+    resources: Resources
+    client_route: Any
+    msg_body: list[bytes]
+
+class CommonProtocol(ReplyProtocol):
+    """
+    Handler for messages received from workers.
+    """
+    def __init__(self, name: str, router: bool, resources: Resources):
+        super().__init__(name, router)
+
+        # List of idle workers
+        self.idle_workers: list[bytes] = []
+
+        # Internal routing id indexed by self-identifiers
+        self.route_from_peer : dict[str, Any] = {}
+
+        # Total resources
+        self.resources = resources
+
+        # Route to a worker spawner
+        self.pool = None
+
+        # verb + name -> (in_route, msg)
+        self.alloc_from_task: dict[bytes, Allocation] = {}
+        self.alloc_from_wroute: dict[Any, Allocation] = {}
+
     def on_invalid(self, route, reason):
         raise IllegalRequestError(route, reason)
 
@@ -86,39 +100,54 @@ class BrokerProtocol(ForwardProtocol):
         """
         logging.debug("No broker action for %s", verb.decode('ascii'))
 
-class WorkerProtocol(BrokerProtocol):
-    """
-    Handler for messages received from workers.
-    """
-    def __init__(self, name: str, router: bool):
-        super().__init__(name, router)
 
-        # List of idle workers
-        self.idle_workers: list[bytes] = []
-
-        # Internal routing id indexed by self-identifiers
-        self.route_from_peer : dict[bytes, Any] = {}
-        # Current task from internal routing id
-        # Task has structure ((verb, payload), route)
-        self.task_from_route : dict[Any, tuple[tuple[bytes, bytes], Any]] = {}
-
-    def on_ready(self, route, peer: bytes):
+    def on_ready(self, route, ready_info: Ready):
         incoming, forward = route
         assert not forward
 
-        self.route_from_peer[peer] = incoming
-        self.idle_workers.append(incoming)
+        match ready_info.role:
+            case Role.POOL:
+                if self.pool is None:
+                    self.pool = incoming
+                else:
+                    assert self.pool == incoming
+                return None
+            case Role.WORKER:
+                # First, update the peer map, we need it to handle kill
+                # notifications
+                self.route_from_peer[ready_info.local_id] = incoming
+
+                # Then check for the expected pending mission and send it
+                pending_alloc = self.alloc_from_task.pop(ready_info.mission, None)
+                if pending_alloc is None:
+                    logging.error('Worker came with unknown mission %s', ready_info.mission)
+                    return None
+
+                # Before sending, mark it as affected to this worker so we can
+                # handle errors and free resources later
+                self.alloc_from_wroute[tuple(incoming)] = pending_alloc
+
+                # in: client, for: the worker
+                return (pending_alloc.client_route, incoming), pending_alloc.msg_body
+            #self.idle_workers.append(incoming)
 
     def mark_worker_available(self, worker_route):
         """
         Add a worker to the idle list after clearing the current task
-        information
+        information and freeing resources
         """
         # route need to be converted from list to tuple to be used as key
         key = tuple(worker_route)
-        if key in self.task_from_route:
-            del self.task_from_route[key]
-        self.idle_workers.append(worker_route)
+
+        # Get task
+        alloc = self.alloc_from_wroute.pop(key, None)
+        if alloc:
+            # Free resources
+            self.resources += alloc.resources
+            # Free worker for reuse
+            self.idle_workers.append(worker_route)
+        # Else, the free came from an unmetered source, for instance a PUT sent
+        # by a client to a worker
 
     def on_done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
         worker_route, _ = route
@@ -143,22 +172,22 @@ class WorkerProtocol(BrokerProtocol):
     def on_exited(self, route, peer: bytes):
         logging.error("Worker %s exited", peer)
 
-        route = self.route_from_peer.get(peer)
+        route = self.route_from_peer.get(peer.decode('ascii'))
         if route is None:
             logging.error("Worker %s is unknown, ignoring exit", peer)
             return None
 
-        task = self.task_from_route.get(tuple(route))
-        if task is None:
+        alloc = self.alloc_from_wroute.pop(tuple(route), None)
+        if alloc is None:
             logging.error("Worker %s was not assigned a task, ignoring exit", peer)
             return None
 
-        command, client_route = task
-        command_name, payload = command
+        # Hacky, stat + name or get + name or sub + payload
+        command_name, payload = alloc.msg_body[:2]
         # Normally the other route part is the worker route, but here the
         # worker died so we set it to empty to make sure the client cannot
         # accidentally try to re-use it.
-        new_route = [], client_route
+        new_route = [], alloc.client_route
 
         if command_name == b'GET':
             return self.not_found(new_route, payload)
@@ -166,36 +195,96 @@ class WorkerProtocol(BrokerProtocol):
             return self.failed_raw(new_route, payload)
         logging.error(
             'Worker %s died while handling %s, no error propagation',
-            peer, command
+            peer, alloc
             )
         return None
 
-    def write_message(self, msg):
-        route, msg_body = msg
+    def on_verb(self, route, msg_body: list[bytes]):
         incoming_route, forward_route = route
-        verb = msg_body[0].decode('ascii')
 
+        # First, call local handlers. We do that even for messages that we
+        # forward as is, as we have some state to update. This also ensures that
+        # the message is valid
+        replies = super().on_verb(route, msg_body)
+
+        # If any handler returned an answer, we stop forwarding here and send it
+        if replies:
+            return replies
+
+        verb = msg_body[0].decode('ascii')
         # If a forward route is already present, the message is addressed at one
-        # specific worker, forward as-is
+        # specific worker, forward as-is.
         if forward_route:
             logging.debug('Forwarding %s', verb)
-            return super().write_message(msg)
+            return route, msg_body
 
-        # Else, it is addressed to any worker, we pick one if available
-        if self.idle_workers:
-            worker_route = self.idle_workers.pop()
-            logging.debug('Worker available, forwarding %s', verb)
+        # Else, we may have to forward or queue the message. We decide based on
+        # the verb whether this should be ultimately sent to a worker
+        if verb not in ('STAT', 'GET', 'SUBMIT'):
+            # Nothing else to do
+            return None
 
-            # We save the up to two components of the message body for forensics
-            # if the worker dies, along with the client route
-            self.task_from_route[tuple(worker_route)] = (msg_body[:2], incoming_route)
+        # Finally, assign a worker if we still have something to process at this
+        # point
 
-            # We fill in the forwarding route
-            new_route = (incoming_route, worker_route)
+        # TODO: we need to decouple resources and available workers:
+        #  * We should track resources and proceed if we have some available.
+        #  These are abstract resource limits, not concrete workers
+        #  * Once we decided to allocate resources, we should procure a worker
+        #  with access to them.
+        #
+        # else:
+        #  drop, or return busy
+        #
+        # on worker join (key)
+        #  get stored msg (key)
+        #  forward(msg, worker)
 
-            # We build the message and return it to transport
-            return super().write_message((new_route, msg_body))
+        # |Pseudo code
+        # |res = extract_from(msg)
+        # Todo: include in incoming msg
+        resources = Resources(cpus=1)
+
+        # |if available(res):
+        if not self.pool:
+            logging.info('Dropping %s (pool not joined)', verb)
+            return None
+        if resources <= self.resources:
+        #  |atomically allocate(res)
+            self.resources -= resources
+            alloc = Allocation(
+                    resources=resources,
+                    client_route=incoming_route,
+                    msg_body=msg_body
+                    )
+            # Try re-using workers
+            if self.idle_workers:
+                worker_route = self.idle_workers.pop()
+                logging.debug('Worker available, forwarding %s', verb)
+
+                # Save task info
+                self.alloc_from_wroute[tuple(worker_route)] = alloc
+                # We save the up to two components of the message body for forensics
+                # if the worker dies, along with the client route
+                #self.task_from_route[tuple(worker_route)] = (msg_body[:2], incoming_route)
+
+                # Incoming: still the incoming client, forward: the worker
+                new_route = incoming_route, worker_route
+
+                # We build the message and return it to transport
+                return new_route, msg_body
+
+            # Else, spawn a new one
+            # For now we send the original request, but it should include the
+            # resource claim too
+            #  |store msg, get key
+            key = task_key(msg_body)
+            self.alloc_from_task[key] = alloc
+            #  |spawn_worker(res, msg?)
+            # Incoming: us, forward: pool
+            new_route = [], self.pool
+            return new_route, msg_body
 
         # Finally, with no route and no worker available, we drop the message
-        logging.info('Dropping %s', verb)
+        logging.info('Dropping %s (no resources)', verb)
         return None

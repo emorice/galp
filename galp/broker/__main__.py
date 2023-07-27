@@ -17,8 +17,8 @@ async def main(args):
     galp.cli.setup("broker", args.log_level)
 
     broker = Broker(
-        client_endpoint=args.client_endpoint,
-        worker_endpoint=args.worker_endpoint
+        endpoint=args.endpoint,
+        n_cpus=args.pool_size
         )
 
     await broker.run()
@@ -26,18 +26,13 @@ async def main(args):
 def add_parser_arguments(parser):
     """Add broker-specific arguments to the given parser"""
     parser.add_argument(
-        'client_endpoint',
+        'endpoint',
         help="Endpoint to bind to, in ZMQ format, e.g. tcp://127.0.0.2:12345 "
             "or ipc://path/to/socket ; see also man zmq_bind. The broker will"
-            "listen for incoming client connections on this endpoint."
+            "listen for incoming connections on this endpoint."
         )
-    parser.add_argument(
-        'worker_endpoint',
-        help="Endpoint to bind to, in ZMQ format, e.g. tcp://127.0.0.2:12345 "
-            "or ipc://path/to/socket ; see also man zmq_bind. The broker will"
-            "listen for incoming worker connections on this endpoint."
-        )
-
+    parser.add_argument('pool_size', type=int,
+        help='Number of cpus to use')
     galp.cli.add_parser_arguments(parser)
 
 _parser = argparse.ArgumentParser()

@@ -35,6 +35,7 @@ from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
 from galp.task_types import NamedCoreTaskDef, TaskName
+from galp.messages import Ready, Role
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -102,7 +103,8 @@ def make_worker_init(config):
         return Worker(
             setup['endpoint'], setup['store'],
             setup['steps'],
-            Profiler(setup.get('profile'))
+            Profiler(setup.get('profile')),
+            mission=setup.get('mission', b'')
             )
     return _make_worker
 
@@ -276,7 +278,7 @@ class Worker:
     execution logic.
     """
     def __init__(self, endpoint: str, store: CacheStack, step_dir: Block,
-            profiler: Profiler):
+            profiler: Profiler, mission: bytes):
         self.protocol = WorkerProtocol(
             self, store,
             'BK', router=False)
@@ -287,6 +289,7 @@ class Worker:
         self.endpoint = endpoint
         self.step_dir = step_dir
         self.profiler = profiler
+        self.mission = mission
 
         # Submitted jobs
         self.galp_jobs : asyncio.Queue[Awaitable[JobResult]] = asyncio.Queue()
@@ -343,7 +346,11 @@ class Worker:
         """
         ready = self.protocol.ready(
             self.protocol.default_route(),
-            str(os.getpid()).encode('ascii')
+            Ready(
+                role=Role.WORKER,
+                local_id=str(os.getpid()),
+                mission=self.mission
+                )
             )
         await self.transport.send_message(ready)
 

@@ -24,16 +24,15 @@ class LocalSystem:
     def __init__(self, pool_size=1, pin_workers=False, **worker_options):
         self._stack = AsyncExitStack()
 
-        self._client_endpoint = b'inproc://galp_cl'
-        worker_endpoint = f'ipc://@galp_wk_{os.getpid()}'.encode('ascii')
+        endpoint = f'ipc://@galp_wk_{os.getpid()}'.encode('ascii')
+        self.endpoint = endpoint
 
         self._broker = Broker(
-            worker_endpoint=worker_endpoint,
-            client_endpoint=self._client_endpoint
+            endpoint=endpoint,
+            n_cpus=pool_size
             )
         self._pool_config = {
-                'pool_size': pool_size,
-                'endpoint': worker_endpoint,
+                'endpoint': endpoint,
                 'pin_workers': pin_workers,
                 **worker_options,
             }
@@ -56,7 +55,7 @@ class LocalSystem:
         self._stack.enter_context(
             _fork_pool(self._pool_config)
             )
-        self.client =  Client(self._client_endpoint)
+        self.client =  Client(self.endpoint)
         return self.client
 
     async def stop(self):

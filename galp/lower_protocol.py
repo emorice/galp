@@ -5,7 +5,7 @@ counters.
 
 import logging
 
-from typing import NoReturn
+from typing import NoReturn, Any
 
 class MessageList(list):
     """
@@ -39,7 +39,7 @@ class BaseProtocol:
     """
     Abstract class defining the interface expected by the transport
     """
-    def write_message(self, msg):
+    def write_message(self, msg: tuple[Any, list[bytes]]):
         """
         Takes an application-specific message description, and returns the
         sequence of bytes to send. Return None to suppress the message instead.
@@ -157,7 +157,7 @@ class LowerProtocol(BaseSplitProtocol):
 
         return MessageList()
 
-    def write_message(self, msg):
+    def write_message(self, msg: tuple[Any, list[bytes]]):
         """
         Concats route and message.
         """

@@ -77,13 +77,12 @@ def make_pool(make_process, port, tmp_path):
     Returns:
         (endpoint, Popen) tuple
     """
-    def _make(endpoint=None, pool_size=1, extra_args=[]):
+    def _make(endpoint=None, extra_args=[]):
         if endpoint is None:
             endpoint = f"tcp://127.0.0.1:{port()}"
 
         phandle = make_process(
             '-m', 'galp.pool',
-            str(pool_size),
             '-c', 'galp/tests/config.toml',
             '--log-level', log_level(),
             endpoint, str(tmp_path),
@@ -99,19 +98,17 @@ def make_broker(make_process, port, tmp_path):
     """Broker fixture, starts a broker in background.
 
     Returns:
-        (client_endpoint, Popen) tuple
+        (endpoint, Popen) tuple
     """
-    def _make():
-        client_endpoint = f"tcp://127.0.0.1:{port()}"
-        worker_endpoint = f"tcp://127.0.0.1:{port()}"
+    def _make(pool_size=1):
+        endpoint = f"tcp://127.0.0.1:{port()}"
 
         phandle = make_process(
             '-m', 'galp.broker',
             '--log-level', log_level(),
-            client_endpoint,
-            worker_endpoint,
+            endpoint, str(pool_size)
             )
-        return client_endpoint, worker_endpoint, phandle
+        return endpoint, phandle
 
     return _make
 
@@ -123,11 +120,11 @@ def make_galp_set(make_broker, make_pool):
     Returns:
         (client_endpoint, (broker_handle, pool_handle))
     """
-    def _make(n, extra_pool_args=[]):
-        cl_ep, w_ep, broker_handle = make_broker()
-        w_ep2, pool_handle = make_pool(w_ep, n, extra_args=extra_pool_args)
-        assert w_ep == w_ep2
-        return cl_ep, (broker_handle, pool_handle)
+    def _make(pool_size, extra_pool_args=[]):
+        endpoint, broker_handle = make_broker(pool_size)
+        ep2, pool_handle = make_pool(endpoint, extra_args=extra_pool_args)
+        assert endpoint == ep2
+        return endpoint, (broker_handle, pool_handle)
 
     return _make
 

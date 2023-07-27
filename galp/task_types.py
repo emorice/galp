@@ -1,10 +1,12 @@
 """
 Abstract task types defintions
 """
+
 from abc import ABC, abstractmethod
 from typing import Any, Literal, Union, TypeVar, Generic, TypeAlias, TypeGuard
 from enum import Enum
 from dataclasses import dataclass
+from functools import total_ordering
 
 from pydantic_core import CoreSchema, core_schema
 from pydantic import GetCoreSchemaHandler, BaseModel, Field
@@ -266,3 +268,19 @@ class StepType(ABC):
     @abstractmethod
     def __call__(self, *args, **kwargs) -> TaskNode:
         raise NotImplementedError
+
+@total_ordering
+class Resources(BaseModel):
+    """
+    Resources claimed by a task
+    """
+    cpus: int = Field(ge=0)
+
+    def __sub__(self, other: 'Resources') -> 'Resources':
+        return Resources(cpus=self.cpus - other.cpus)
+
+    def __add__(self, other: 'Resources') -> 'Resources':
+        return Resources(cpus=self.cpus + other.cpus)
+
+    def __ge__(self, other: 'Resources') -> bool:
+        return self.cpus >= other.cpus
