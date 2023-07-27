@@ -5,6 +5,8 @@ counters.
 
 import logging
 
+from typing import NoReturn
+
 class MessageList(list):
     """
     Litterally just a list of message objects.
@@ -207,9 +209,9 @@ class LowerProtocol(BaseSplitProtocol):
     # Internal parsing utilities
     # ==========================
 
-    def _validate(self, condition, route, reason):
+    def _validate(self, condition, route, reason) -> NoReturn:
         """
-        Calls invalid message callback
+        Calls invalid message callback. Must always raise and be caught
         """
         if not condition:
             self.on_invalid(route, reason)
@@ -287,10 +289,9 @@ class LowerProtocol(BaseSplitProtocol):
         """
         logging.info("No upper-level handler for verb %s", msg_body[:1])
 
-    def on_invalid(self, route, reason):
+    def on_invalid(self, route, reason: str) -> NoReturn:
         """
-        Default action, simply log the error
+        Invalid hander. Must be implemented by subclasses to raise a sensible
+        exception.
         """
-        logging.error(
-            "Received malformed msg (%s), sent from: %s",
-            reason, route)
+        raise NotImplementedError(f'No handler for invalid message ({reason})')

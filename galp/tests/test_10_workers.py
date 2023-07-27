@@ -144,8 +144,8 @@ def test_task(worker_socket):
     task = galp.steps.galp_hello()
     name = task.name
 
-    socket.send_multipart(make_msg(b'SUBMIT', name,
-        msgpack.packb(task.task_def.model_dump())
+    socket.send_multipart(make_msg(b'SUBMIT',
+        msgpack.packb(task.named_def.model_dump())
         ))
 
     assert_ready(socket)
@@ -166,7 +166,8 @@ def test_notfound(worker_socket):
     """Tests the answer of server when asking to send unexisting resource"""
     worker_socket, *_ = worker_socket
 
-    bad_handle = b'RABBIT'
+    # Use a name or the rigth size to pass validation
+    bad_handle = b'RABBIT' * 5 + b'xx'
     worker_socket.send_multipart(make_msg(b'GET', bad_handle))
 
     assert_ready(worker_socket)
@@ -183,8 +184,8 @@ def test_reference(worker_socket):
 
     task2 = galp.steps.galp_double(task1)
 
-    worker_socket.send_multipart(make_msg(b'SUBMIT', task1.name,
-        msgpack.packb(task1.task_def.model_dump())
+    worker_socket.send_multipart(make_msg(b'SUBMIT',
+        msgpack.packb(task1.named_def.model_dump())
         ))
 
     assert_ready(worker_socket)
@@ -195,8 +196,8 @@ def test_reference(worker_socket):
     assert is_body(doing, [b'DOING', task1.name])
     assert body_startswith(done, [b'DONE', task1.name])
 
-    worker_socket.send_multipart(make_msg(b'SUBMIT', task2.name,
-        msgpack.packb(task2.task_def.model_dump())
+    worker_socket.send_multipart(make_msg(b'SUBMIT',
+        msgpack.packb(task2.named_def.model_dump())
         ))
 
     doing = asserted_zmq_recv_multipart(worker_socket)

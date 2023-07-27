@@ -30,7 +30,7 @@ async def test_counters():
         Protocol('B', router=False, capacity=queue_size),
         endpoint, socket_type)
 
-    name = b'1234'
+    name = b'1234' * 8
     route = peer_a.protocol.default_route()
 
     i = 0

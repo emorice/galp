@@ -4,11 +4,12 @@ GALP protocol implementation
 
 import logging
 
-from galp.task_types import (TaskName, NamedTaskDef, CoreTaskDef,
-                             NamedCoreTaskDef, is_core)
+from typing import NoReturn
+
+from galp.task_types import TaskName, NamedTaskDef, NamedCoreTaskDef, is_core
 from galp.lower_protocol import LowerProtocol
 from galp.eventnamespace import EventNamespace, NoHandlerError
-from galp.serializer import load_task_def, load_core_task_def, dump_task_def
+from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
 
 # Errors and exceptions
 # =====================
@@ -17,6 +18,7 @@ class ProtocolEndException(Exception):
     Exception thrown by a handler to signal that no more messages are expected
     and the transport should be closed
     """
+
 class IllegalRequestError(Exception):
     """Base class for all badly formed requests, triggers sending an ILLEGAL
     message back"""
@@ -58,7 +60,7 @@ class Protocol(LowerProtocol):
         """An `EXITED` message was received"""
         return self.on_unhandled(b'EXITED')
 
-    def on_failed(self, route, name: TaskName):
+    def on_failed(self, route, named_def: NamedCoreTaskDef):
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
 
@@ -103,7 +105,7 @@ class Protocol(LowerProtocol):
 
     # Default handlers
     # ================
-    def on_invalid(self, route, reason: str):
+    def on_invalid(self, route, reason: str) -> NoReturn:
         """
         An invalid message was received.
         """
@@ -135,14 +137,20 @@ class Protocol(LowerProtocol):
         msg = [b'EXITED', peer]
         return route, msg
 
-    def failed(self, route, name: TaskName):
+    def failed(self, route, named_def: NamedCoreTaskDef):
         """
         Builds a FAILED message
 
         Args:
-            name: the name of the task
+            named_def: the definition of the task
         """
-        return route, [b'FAILED', name]
+        return self.failed_raw(route, dump_model(named_def))
+
+    def failed_raw(self, route, payload: bytes):
+        """
+        Builds a failed message directly from a packed payload
+        """
+        return route, [b'FAILED', payload]
 
     def get(self, route, name: TaskName):
         """
@@ -213,9 +221,7 @@ class Protocol(LowerProtocol):
         if not is_core(named_def):
             raise ValueError('Only core tasks can be passed to Protocol layer')
 
-        name, payload = dump_task_def(named_def)
-
-        return route, [b'SUBMIT', name, payload]
+        return route, [b'SUBMIT', dump_model(named_def)]
 
     def stat(self, route, name: TaskName):
         """
@@ -307,13 +313,15 @@ class Protocol(LowerProtocol):
         return self.on_done(route, named_def, children)
 
     @event.on('FAILED')
-    def _on_failed(self, route, msg):
-        self._validate(len(msg) >= 2, route, 'FAILED without a name')
-        self._validate(len(msg) <= 2, route, 'FAILED with too many names')
+    def _on_failed(self, route, msg: list[bytes]):
+        self._validate(len(msg) >= 2, route, 'FAILED without an arg')
+        self._validate(len(msg) <= 2, route, 'FAILED with too many args')
 
-        name = TaskName(msg[1])
+        named_def, err = load_model(NamedCoreTaskDef, msg[1])
+        if named_def is None:
+            self._validate(False, route, err)
 
-        return self.on_failed(route, name)
+        return self.on_failed(route, named_def)
 
     @event.on('NOTFOUND')
     def _on_not_found(self, route, msg):
@@ -343,8 +351,12 @@ class Protocol(LowerProtocol):
 
     @event.on('SUBMIT')
     def _on_submit(self, route, msg: list[bytes]):
-        self._validate(len(msg) == 3, route, 'SUBMIT with wrong number of parts')
-        named_def = load_core_task_def(name=msg[1], def_buffer=msg[2])
+        self._validate(len(msg) == 2, route, 'SUBMIT with wrong number of parts')
+
+        named_def, err = load_model(NamedCoreTaskDef, msg[1])
+        if named_def is None:
+            self._validate(False, route, err)
+
         return self.on_submit(route, named_def)
 
     @event.on('FOUND')

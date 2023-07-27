@@ -5,6 +5,8 @@ Broker classes
 import asyncio
 import logging
 
+from typing import Any
+
 import zmq
 
 from galp.protocol import IllegalRequestError
@@ -88,18 +90,19 @@ class WorkerProtocol(BrokerProtocol):
     """
     Handler for messages received from workers.
     """
-    def __init__(self, name, router):
+    def __init__(self, name: str, router: bool):
         super().__init__(name, router)
 
         # List of idle workers
-        self.idle_workers = []
+        self.idle_workers: list[bytes] = []
 
         # Internal routing id indexed by self-identifiers
-        self.route_from_peer = {}
+        self.route_from_peer : dict[bytes, Any] = {}
         # Current task from internal routing id
-        self.task_from_route = {}
+        # Task has structure ((verb, payload), route)
+        self.task_from_route : dict[Any, tuple[tuple[bytes, bytes], Any]] = {}
 
-    def on_ready(self, route, peer):
+    def on_ready(self, route, peer: bytes):
         incoming, forward = route
         assert not forward
 
@@ -137,7 +140,7 @@ class WorkerProtocol(BrokerProtocol):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
-    def on_exited(self, route, peer):
+    def on_exited(self, route, peer: bytes):
         logging.error("Worker %s exited", peer)
 
         route = self.route_from_peer.get(peer)
@@ -151,16 +154,16 @@ class WorkerProtocol(BrokerProtocol):
             return None
 
         command, client_route = task
-        command_name, task_name = command
+        command_name, payload = command
         # Normally the other route part is the worker route, but here the
         # worker died so we set it to empty to make sure the client cannot
         # accidentally try to re-use it.
         new_route = [], client_route
 
         if command_name == b'GET':
-            return self.not_found(new_route, task_name)
+            return self.not_found(new_route, payload)
         if command_name == b'SUBMIT':
-            return self.failed(new_route, task_name)
+            return self.failed_raw(new_route, payload)
         logging.error(
             'Worker %s died while handling %s, no error propagation',
             peer, command

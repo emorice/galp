@@ -2,11 +2,13 @@
 Serialization utils
 """
 
-from typing import Any, List, Callable
+from typing import Any, List, Callable, TypeVar
 import logging
 
 import msgpack
 import dill
+
+from pydantic import BaseModel, ValidationError
 
 from galp.task_types import (Task, StepType, NamedTaskDef, TaskName, TaskDef,
                              CoreTaskDef, NamedCoreTaskDef, GNamedTaskDef,
@@ -101,6 +103,34 @@ def dump_task_def(named_def: NamedTaskDef) -> tuple[TaskName, bytes]:
     Converse of load_task_def
     """
     return named_def.name, msgpack.dumps(named_def.task_def.model_dump())
+
+def dump_model(model: BaseModel) -> bytes:
+    """
+    Serialize pydantic model with msgpack
+    """
+    return msgpack.dumps(model.model_dump())
+
+T = TypeVar('T', bound=BaseModel)
+
+def load_model(model_type: type[T], payload: bytes) -> tuple[T | None, str | None]:
+    """
+    Load a msgpack-serialized pydantic model
+    """
+    try:
+        doc = msgpack.loads(payload)
+    # Per msgpack docs:
+    # "unpack may raise exception other than subclass of UnpackException.
+    # If you want to catch all error, catch Exception instead.:
+    except Exception: # pylint: disable=broad-except
+        err = 'Invalid msgpack message'
+        logging.exception(err)
+        return None, err
+    try:
+        return model_type.model_validate(doc), None
+    except ValidationError:
+        err = 'Invalid model data'
+        logging.exception(err)
+        return None, err
 
 
 # Private serializer helpers

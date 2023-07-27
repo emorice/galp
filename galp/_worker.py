@@ -34,7 +34,7 @@ from galp.commands import Script
 from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
-from galp.task_types import NamedTaskDef, NamedCoreTaskDef, TaskName
+from galp.task_types import NamedCoreTaskDef, TaskName
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -266,7 +266,7 @@ class JobResult:
     Result of executing a step
     """
     route: Any
-    named_def: NamedTaskDef
+    named_def: NamedCoreTaskDef
     success: bool
     result: list[TaskName]
 
@@ -312,7 +312,7 @@ class Worker:
             if job.success:
                 reply = self.protocol.done(job.route, job.named_def,  job.result)
             else:
-                reply = self.protocol.failed(job.route, job.named_def.name)
+                reply = self.protocol.failed(job.route, job.named_def)
             await self.transport.send_message(reply)
 
     def schedule_task(self, client_route, named_def: NamedCoreTaskDef):

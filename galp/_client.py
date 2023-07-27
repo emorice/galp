@@ -27,7 +27,7 @@ from galp.command_queue import CommandQueue
 from galp.commands import Script
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, NamedTaskDef,
-        CoreTaskDef, QueryTaskDef, is_core)
+        QueryTaskDef, is_core)
 
 class TaskStatus(IntEnum):
     """
@@ -441,15 +441,15 @@ class BrokerProtocol(ReplyProtocol):
         self.run_count[name] += 1
         self._status[name] = TaskStatus.RUNNING
 
-    def on_failed(self, route, name):
+    def on_failed(self, route, named_def):
         """
         Mark a task and all its dependents as failed.
         """
-        msg = f'Failed to execute task {self._tasks[name]}, check worker logs'
+        msg = f'Failed to execute task {named_def}, check worker logs'
         logging.error('TASK FAILED: %s', msg)
 
         # Mark fetch command as failed if pending
-        self.script.commands['SUBMIT', name].failed(msg)
+        self.script.commands['SUBMIT', named_def.name].failed(msg)
         assert not self.script.new_commands
 
         # This is not a fatal error to the client, by default processing of

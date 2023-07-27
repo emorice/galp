@@ -18,6 +18,13 @@ class TaskName(bytes):
     """
     Simpler wrapper around bytes with a shortened, more readable repr
     """
+    SIZE = 32
+    def __new__(cls, content):
+        bts = super().__new__(cls, content)
+        if len(bts) != cls.SIZE:
+            raise TypeError(f'TaskName must be {cls.SIZE} bytes long')
+        return bts
+
     def __repr__(self):
         return self.__str__()
 
