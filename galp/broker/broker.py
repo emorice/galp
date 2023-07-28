@@ -2,7 +2,6 @@
 Broker classes
 """
 
-import asyncio
 import logging
 
 from typing import Any
@@ -26,37 +25,14 @@ class Broker:
             self.proto,
             endpoint, zmq.ROUTER, bind=True)
 
-    async def listen_forward_loop(self, transport):
-        """Client-side message processing loop of the broker"""
-
-        proto_name = transport.protocol.proto_name
-        logging.info("Broker listening for %s on %s", proto_name,
-            transport.endpoint
-            )
-
-        while True:
-            try:
-                replies = await transport.recv_message()
-            except IllegalRequestError as err:
-                logging.error('Bad %s request: %s', proto_name, err.reason)
-                await transport.send_message(
-                    transport.proto.illegal(err.route)
-                    )
-            await transport.send_messages(replies)
-
-    async def listen(self):
-        """Listen client-side, forward to workers"""
-        return await self.listen_forward_loop(self.transport)
-
     async def run(self):
         """
-        Runs both loops.
+        Runs message loop.
 
-        Must be externally cancelled
+        Must be externally cancelled, typically by a signal handler, as the
+        broker never finishes by itself.
         """
-        return await asyncio.gather(
-            self.listen(),
-            )
+        return await self.transport.listen_reply_loop()
 
 @dataclass
 class Allocation:
@@ -100,13 +76,14 @@ class CommonProtocol(ReplyProtocol):
         """
         logging.debug("No broker action for %s", verb.decode('ascii'))
 
-
     def on_ready(self, route, ready_info: Ready):
         incoming, forward = route
         assert not forward
 
         match ready_info.role:
             case Role.POOL:
+                # When the pool manager joins, record its route so that we can
+                # send spawn requests later
                 if self.pool is None:
                     self.pool = incoming
                 else:
@@ -121,6 +98,7 @@ class CommonProtocol(ReplyProtocol):
                 pending_alloc = self.alloc_from_task.pop(ready_info.mission, None)
                 if pending_alloc is None:
                     logging.error('Worker came with unknown mission %s', ready_info.mission)
+                    self.idle_workers.append(incoming)
                     return None
 
                 # Before sending, mark it as affected to this worker so we can
@@ -129,18 +107,15 @@ class CommonProtocol(ReplyProtocol):
 
                 # in: client, for: the worker
                 return (pending_alloc.client_route, incoming), pending_alloc.msg_body
-            #self.idle_workers.append(incoming)
 
     def mark_worker_available(self, worker_route):
         """
         Add a worker to the idle list after clearing the current task
         information and freeing resources
         """
-        # route need to be converted from list to tuple to be used as key
-        key = tuple(worker_route)
-
         # Get task
-        alloc = self.alloc_from_wroute.pop(key, None)
+        # route needs to be converted from list to tuple to be used as key
+        alloc = self.alloc_from_wroute.pop(tuple(worker_route), None)
         if alloc:
             # Free resources
             self.resources += alloc.resources
@@ -153,7 +128,7 @@ class CommonProtocol(ReplyProtocol):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
-    def on_failed(self, route, name):
+    def on_failed(self, route, named_def):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
@@ -161,7 +136,7 @@ class CommonProtocol(ReplyProtocol):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
-    def on_found(self, route, task_dict):
+    def on_found(self, route, named_def):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
@@ -187,10 +162,10 @@ class CommonProtocol(ReplyProtocol):
         # Normally the other route part is the worker route, but here the
         # worker died so we set it to empty to make sure the client cannot
         # accidentally try to re-use it.
-        new_route = [], alloc.client_route
+        new_route : tuple[list[bytes], list[bytes]] = [], alloc.client_route
 
         if command_name == b'GET':
-            return self.not_found(new_route, payload)
+            return self.not_found(new_route, TaskName(payload))
         if command_name == b'SUBMIT':
             return self.failed_raw(new_route, payload)
         logging.error(
@@ -213,7 +188,7 @@ class CommonProtocol(ReplyProtocol):
 
         verb = msg_body[0].decode('ascii')
         # If a forward route is already present, the message is addressed at one
-        # specific worker, forward as-is.
+        # specific worker or client, forward as-is.
         if forward_route:
             logging.debug('Forwarding %s', verb)
             return route, msg_body
@@ -227,64 +202,48 @@ class CommonProtocol(ReplyProtocol):
         # Finally, assign a worker if we still have something to process at this
         # point
 
-        # TODO: we need to decouple resources and available workers:
-        #  * We should track resources and proceed if we have some available.
-        #  These are abstract resource limits, not concrete workers
-        #  * Once we decided to allocate resources, we should procure a worker
-        #  with access to them.
-        #
-        # else:
-        #  drop, or return busy
-        #
-        # on worker join (key)
-        #  get stored msg (key)
-        #  forward(msg, worker)
-
-        # |Pseudo code
-        # |res = extract_from(msg)
         # Todo: include in incoming msg
         resources = Resources(cpus=1)
 
-        # |if available(res):
+        # Drop if we don't have a way to spawn workers
         if not self.pool:
             logging.info('Dropping %s (pool not joined)', verb)
             return None
-        if resources <= self.resources:
-        #  |atomically allocate(res)
-            self.resources -= resources
-            alloc = Allocation(
-                    resources=resources,
-                    client_route=incoming_route,
-                    msg_body=msg_body
-                    )
-            # Try re-using workers
-            if self.idle_workers:
-                worker_route = self.idle_workers.pop()
-                logging.debug('Worker available, forwarding %s', verb)
 
-                # Save task info
-                self.alloc_from_wroute[tuple(worker_route)] = alloc
-                # We save the up to two components of the message body for forensics
-                # if the worker dies, along with the client route
-                #self.task_from_route[tuple(worker_route)] = (msg_body[:2], incoming_route)
+        # Drop if we don't have any resources left
+        if resources > self.resources:
+            logging.info('Dropping %s (no resources)', verb)
+            return None
 
-                # Incoming: still the incoming client, forward: the worker
-                new_route = incoming_route, worker_route
+        # Allocate. At this point the message can be considered
+        # as accepted and queued
+        # Todo: therefore, we should already reply to the client now that we're
+        # taking the task
+        self.resources -= resources
+        alloc = Allocation(
+                resources=resources,
+                client_route=incoming_route,
+                msg_body=msg_body
+                )
 
-                # We build the message and return it to transport
-                return new_route, msg_body
+        # If we have idle workers, directly forward to one
+        if self.idle_workers:
+            worker_route = self.idle_workers.pop()
+            logging.debug('Worker available, forwarding %s', verb)
 
-            # Else, spawn a new one
-            # For now we send the original request, but it should include the
-            # resource claim too
-            #  |store msg, get key
-            key = task_key(msg_body)
-            self.alloc_from_task[key] = alloc
-            #  |spawn_worker(res, msg?)
-            # Incoming: us, forward: pool
-            new_route = [], self.pool
+            # Save task info
+            self.alloc_from_wroute[tuple(worker_route)] = alloc
+
+            # Incoming: still the incoming client, forward: the worker
+            new_route = incoming_route, worker_route
+
+            # We build the message and return it to transport
             return new_route, msg_body
 
-        # Finally, with no route and no worker available, we drop the message
-        logging.info('Dropping %s (no resources)', verb)
-        return None
+        # Else, spawn a new one, and save the request for when it joins
+        # For now spawning just mean forwarding the whole request to the
+        # pool
+        key = task_key(msg_body)
+        self.alloc_from_task[key] = alloc
+        new_route = [], self.pool
+        return new_route, msg_body

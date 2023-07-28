@@ -63,7 +63,7 @@ class ZmqAsyncTransport:
 
         Waits for a message, call the protocol handler, then sends the replies.
         Can also block on sending replies if the underlying transport does.
-        Stops when the handler returns True.
+        Stops when a handler raises ProtocolEndException
 
         Suitable for peers with one connection that do not need to transfer
         information beteen connections.
