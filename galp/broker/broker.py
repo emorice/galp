@@ -13,7 +13,7 @@ from galp.protocol import IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import TaskName, NamedTaskDef, Resources
-from galp.messages import task_key, Ready, Role
+from galp.messages import task_key, Ready, Role, Route, Put
 
 class Broker:
     """
@@ -51,7 +51,7 @@ class CommonProtocol(ReplyProtocol):
         super().__init__(name, router)
 
         # List of idle workers
-        self.idle_workers: list[bytes] = []
+        self.idle_workers: list[Route] = []
 
         # Internal routing id indexed by self-identifiers
         self.route_from_peer : dict[str, Any] = {}
@@ -60,7 +60,7 @@ class CommonProtocol(ReplyProtocol):
         self.resources = resources
 
         # Route to a worker spawner
-        self.pool = None
+        self.pool: Route | None = None
 
         # verb + name -> (in_route, msg)
         self.alloc_from_task: dict[bytes, Allocation] = {}
@@ -76,39 +76,38 @@ class CommonProtocol(ReplyProtocol):
         """
         logging.debug("No broker action for %s", verb.decode('ascii'))
 
-    def on_ready(self, route, ready_info: Ready):
-        incoming, forward = route
-        assert not forward
+    def on_ready(self, ready: Ready):
+        assert not ready.forward
 
-        match ready_info.role:
+        match ready.role:
             case Role.POOL:
                 # When the pool manager joins, record its route so that we can
                 # send spawn requests later
                 if self.pool is None:
-                    self.pool = incoming
+                    self.pool = ready.incoming
                 else:
-                    assert self.pool == incoming
+                    assert self.pool == ready.incoming
                 return None
             case Role.WORKER:
                 # First, update the peer map, we need it to handle kill
                 # notifications
-                self.route_from_peer[ready_info.local_id] = incoming
+                self.route_from_peer[ready.local_id] = ready.incoming
 
                 # Then check for the expected pending mission and send it
-                pending_alloc = self.alloc_from_task.pop(ready_info.mission, None)
+                pending_alloc = self.alloc_from_task.pop(ready.mission, None)
                 if pending_alloc is None:
-                    logging.error('Worker came with unknown mission %s', ready_info.mission)
-                    self.idle_workers.append(incoming)
+                    logging.error('Worker came with unknown mission %s', ready.mission)
+                    self.idle_workers.append(ready.incoming)
                     return None
 
                 # Before sending, mark it as affected to this worker so we can
                 # handle errors and free resources later
-                self.alloc_from_wroute[tuple(incoming)] = pending_alloc
+                self.alloc_from_wroute[tuple(ready.incoming)] = pending_alloc
 
                 # in: client, for: the worker
-                return (pending_alloc.client_route, incoming), pending_alloc.msg_body
+                return (pending_alloc.client_route, ready.incoming), pending_alloc.msg_body
 
-    def mark_worker_available(self, worker_route):
+    def mark_worker_available(self, worker_route: Route) -> None:
         """
         Add a worker to the idle list after clearing the current task
         information and freeing resources
@@ -140,9 +139,8 @@ class CommonProtocol(ReplyProtocol):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
-    def on_put(self, route, name, serialized):
-        worker_route, _ = route
-        self.mark_worker_available(worker_route)
+    def on_put(self, msg: Put):
+        self.mark_worker_available(msg.incoming)
 
     def on_exited(self, route, peer: bytes):
         logging.error("Worker %s exited", peer)

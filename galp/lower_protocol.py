@@ -7,6 +7,12 @@ import logging
 
 from typing import NoReturn, Any
 
+Route = list[bytes]
+"""
+This actually ZMQ specific and should be changed to a generic if we ever need
+more protocols
+"""
+
 class MessageList(list):
     """
     Litterally just a list of message objects.
@@ -197,7 +203,7 @@ class LowerProtocol(BaseSplitProtocol):
         # Really just an empty message
         return route, []
 
-    def default_route(self):
+    def default_route(self) -> tuple[Route, Route]:
         """
         Route to pass to send methods to simply send a message a connected
         unnamed peer

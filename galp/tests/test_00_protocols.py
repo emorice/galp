@@ -9,6 +9,7 @@ from galp.tests.with_timeout import with_timeout
 
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.protocol import Protocol
+from galp.messages import Put
 
 @with_timeout()
 async def test_counters():
@@ -50,8 +51,8 @@ async def test_counters():
         # We do not process this one, simulating b being slow
 
         await peer_b.send_message(
-            peer_b.protocol.put(route, name,
-                (b'some_data', []))
+            peer_b.protocol.put(Put.plain_reply(route, name=name,
+                data=b'some_data', children=[]))
             )
         await peer_a.recv_message()
 

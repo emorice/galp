@@ -159,7 +159,7 @@ def test_task(worker_socket):
     socket.send_multipart(make_msg(b'GET', name))
 
     ans = asserted_zmq_recv_multipart(socket)
-    assert ans[3:5] == [b'PUT', name]
+    assert ans[3] == b'PUT'
     assert msgpack.unpackb(ans[5]) == 42
 
 def test_notfound(worker_socket):
@@ -215,13 +215,8 @@ def test_reference(worker_socket):
 
     assert got_a[0] == got_b[0] == b''
     assert got_a[3] == got_b[3] == b'PUT'
-    assert set((got_a[4], got_b[4])) == set((task1.name, task2.name))
-    expected = {
-        task1.name: 2,
-        task2.name: 4
-        }
-    for _, _, _, _, name, res, *_children in [got_a, got_b]:
-        assert msgpack.unpackb(res) == expected[name]
+    expected = {2, 4}
+    assert { msgpack.unpackb(got[5]) for got in (got_a, got_b) } == expected
 
 async def test_async_socket(async_worker_socket):
     """

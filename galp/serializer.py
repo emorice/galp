@@ -104,20 +104,34 @@ def dump_task_def(named_def: NamedTaskDef) -> tuple[TaskName, bytes]:
     """
     return named_def.name, msgpack.dumps(named_def.task_def.model_dump())
 
-def dump_model(model: BaseModel) -> bytes:
+def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
     """
     Serialize pydantic model with msgpack
+
+    Args:
+        model: the pydantic model to dump
+        exclude: set of fields to exclude from the serialization
     """
-    return msgpack.dumps(model.model_dump())
+    return msgpack.dumps(model.model_dump(exclude=exclude))
 
 T = TypeVar('T', bound=BaseModel)
 
-def load_model(model_type: type[T], payload: bytes) -> tuple[T | None, str | None]:
+def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
+        ) -> tuple[T | None, str | None]:
     """
     Load a msgpack-serialized pydantic model
+
+    Args:
+        model_type: The pydantic model class of the object to create
+        payload: The msgpack-encoded buffer with the object data
+        extra_fieds: attributes to add to the decoded payload before validation,
+            intended to add out-of-band fields to the structure.
     """
     try:
         doc = msgpack.loads(payload)
+        if not isinstance(doc, dict):
+            raise TypeError
+        doc.update(extra_fields)
     # Per msgpack docs:
     # "unpack may raise exception other than subclass of UnpackException.
     # If you want to catch all error, catch Exception instead.:

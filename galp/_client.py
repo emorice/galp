@@ -28,6 +28,7 @@ from galp.commands import Script
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, NamedTaskDef,
         QueryTaskDef, is_core)
+from galp.messages import Put
 
 class TaskStatus(IntEnum):
     """
@@ -380,7 +381,9 @@ class BrokerProtocol(ReplyProtocol):
     # ==================
     def on_get(self, route, name):
         try:
-            reply = self.put(route, name, self.store.get_serial(name))
+            data, children = self.store.get_serial(name)
+            reply = self.put(Put.plain_reply(route,
+                name=name, data=data, children=children))
             logging.debug('Client GET on %s', name.hex())
         except KeyError:
             reply = self.not_found(route, name)
@@ -388,27 +391,24 @@ class BrokerProtocol(ReplyProtocol):
 
         return reply
 
-    def on_put(self, route, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
+    def on_put(self, msg: Put):
         """
         Receive data, and schedule sub-gets if necessary and check for
         termination
         """
-
-        data, children = serialized
-
         # Schedule sub-gets if necessary
         # To be moved to the script engine eventually
         # Also we should get rid of the handle
-        for child_name in children:
+        for child_name in msg.children:
             # We do not send explicit DONEs for subtasks, so we mark them as
             # done when we receive the parent data.
             self._status[child_name] = TaskStatus.COMPLETED
 
         # Put the parent part
-        self.store.put_serial(name, (data, children))
+        self.store.put_serial(msg.name, (msg.data, msg.children))
 
         # Mark as done and sets result
-        self.script.commands['GET', name].done(children)
+        self.script.commands['GET', msg.name].done(msg.children)
         # Schedule for sub-GETs to be sent in the future
         self.schedule_new()
 

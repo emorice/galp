@@ -8,6 +8,7 @@ import zmq
 from galp.protocol import Protocol
 from galp.serializer import Serializer
 from galp.task_types import TaskName
+from galp.messages import Put
 
 class SynClient(Protocol):
     """
@@ -58,5 +59,5 @@ class SynClient(Protocol):
 
         return self.serializer.loads(data, [])
 
-    def on_put(self, route, name, serialized):
-        return serialized
+    def on_put(self, msg: Put):
+        return msg.data, msg.children

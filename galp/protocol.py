@@ -4,13 +4,13 @@ GALP protocol implementation
 
 import logging
 
-from typing import NoReturn
+from typing import NoReturn, TypeVar, Any
 
 from galp.task_types import TaskName, NamedTaskDef, NamedCoreTaskDef, is_core
-from galp.lower_protocol import LowerProtocol
+from galp.lower_protocol import LowerProtocol, Route
 from galp.eventnamespace import EventNamespace, NoHandlerError
 from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
-from galp.messages import Ready
+from galp.messages import Message, Ready, Put
 
 # Errors and exceptions
 # =====================
@@ -30,6 +30,7 @@ class IllegalRequestError(Exception):
 
 # High-level protocol
 # ===================
+
 class Protocol(LowerProtocol):
     """
     Helper class gathering methods solely concerned with parsing and building
@@ -77,12 +78,12 @@ class Protocol(LowerProtocol):
         """A `NOTFOUND` message was received"""
         return self.on_unhandled(b'NOTFOUND')
 
-    def on_put(self, route, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
+    def on_put(self, msg: Put):
         """A `PUT` message was received for resource `name`
         """
         return self.on_unhandled(b'PUT')
 
-    def on_ready(self, route, ready_info: Ready):
+    def on_ready(self, ready: Ready):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
@@ -183,32 +184,27 @@ class Protocol(LowerProtocol):
         """
         return route, [b'NOTFOUND', name]
 
-    def put(self, route, name, serialized: tuple[bytes, list[TaskName]]):
+    def put(self, msg: Put):
         """
         Builds a PUT message
-
-        Args:
-            name: the name of the task
-            serialized: a tuple of a bytes object, the payload, and a list of
-                bytes objects, the names of the sub-objects needed.
-
         """
-        data, children = serialized
-        logging.debug('-> putting %d bytes', len(data))
-        msg_body = [b'PUT', name, data, *children]
-        return route, msg_body
+        return self._dump_message(msg)
 
-    def ready(self, route, ready_info: Ready):
+    def ready(self, msg: Ready):
         """
         Sends a READY message.
-
-        Args:
-            peer: the self-assigned peer name. It can be anything provided that
-               it's unique to the sender, and is usually chosen in a transparent
-               way.
         """
-        return route, [b'READY', dump_model(ready_info)]
+        return self._dump_message(msg)
 
+    def _dump_message(self, msg: Message):
+        route = (msg.incoming, msg.forward)
+        frames = [
+                msg.verb.upper().encode('ascii'),
+                dump_model(msg, exclude={'incoming', 'forward', 'data'})
+                ]
+        if hasattr(msg, 'data'):
+            frames.append(msg.data)
+        return route, frames
 
     def submit(self, route, named_def: NamedCoreTaskDef):
         """Sends SUBMIT for given task object.
@@ -335,24 +331,40 @@ class Protocol(LowerProtocol):
 
     @event.on('PUT')
     def _on_put(self, route, msg):
-        # PUT name data [children]
-        self._validate(3 <= len(msg), route, 'PUT with wrong number of parts')
-
-        name = TaskName(msg[1])
-        data = msg[2]
-        children = [ TaskName(child_name) for child_name in msg[3:] ]
-
-        return self.on_put(route, name, (data, children))
+        return self.on_put(self._load_message(Put, route, msg))
 
     @event.on('READY')
     def _on_ready(self, route, msg: list[bytes]):
-        self._validate(len(msg) == 2, route, 'READY without exactly one arg')
+        return self.on_ready(self._load_message(Ready, route, msg))
 
-        ready_info, err = load_model(Ready, msg[1])
-        if ready_info is None:
+    T = TypeVar('T', bound=Message)
+
+    def _load_message(self, message_type: type[T],
+            route: Route, msg: list[bytes]) -> T:
+
+        routes = {'incoming': route[0], 'forward': route[1]}
+
+        # This passes or not a `data=` parameter to model validation, which will
+        # only pass if the presence or absence of the last frame matches the
+        # presence or absence of a `data: bytes` field on the class.
+        # Gotchas:
+        #  * Because of pydantic defaults, this means that an unexpected third
+        #  frame will be simply discarded.
+        #  * Conversely, a missing third frame will produce an arguably cryptic
+        #  missing field `data` error
+
+        match msg:
+            case [_verb, payload]:
+                msg_obj, err = load_model(message_type, payload, **routes)
+            case [_verb, payload, data]:
+                msg_obj, err = load_model(message_type, payload, data=data, **routes)
+            case _:
+                self._validate(False, route, 'Wrong number of frames')
+
+        if msg_obj is None:
             self._validate(False, route, err)
 
-        return self.on_ready(route, ready_info)
+        return msg_obj
 
     @event.on('SUBMIT')
     def _on_submit(self, route, msg: list[bytes]):

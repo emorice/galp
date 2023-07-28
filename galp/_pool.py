@@ -101,10 +101,11 @@ class Pool:
         """
         Sends a message back to broker to signal we joined
         """
+        route = self.broker_protocol.default_route()
         await self.broker_transport.send_message(
             self.broker_protocol.ready(
-                self.broker_protocol.default_route(),
-                Ready(role=Role.POOL, local_id=str(os.getpid()), mission=b'')
+                Ready(role=Role.POOL, local_id=str(os.getpid()), mission=b'',
+                    incoming=route[0], forward=route[1])
                 )
             )
 

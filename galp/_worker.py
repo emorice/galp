@@ -35,7 +35,7 @@ from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
 from galp.task_types import NamedCoreTaskDef, TaskName
-from galp.messages import Ready, Role
+from galp.messages import Ready, Role, Put
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -133,8 +133,9 @@ class WorkerProtocol(ReplyProtocol):
     def on_get(self, route, name):
         logging.debug('Received GET for %s', name)
         try:
-            serialized = self.store.get_serial(name)
-            reply = self.put(route, name, serialized)
+            data, children = self.store.get_serial(name)
+            reply = self.put(Put.plain_reply(route, name=name, data=data,
+                children=children))
             logging.info('GET: Cache HIT: %s', name)
             return reply
         except KeyError:
@@ -176,14 +177,13 @@ class WorkerProtocol(ReplyProtocol):
 
         return replies + more_replies
 
-    def on_put(self, route, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
+    def on_put(self, msg: Put):
         """
         Put object in store, and mark the command as done
         """
-        self.store.put_serial(name, serialized)
-        _data, children = serialized
-        self.script.commands['GET', name].done(children)
-        return self.new_commands_to_messages(route)
+        self.store.put_serial(msg.name, (msg.data, msg.children))
+        self.script.commands['GET', msg.name].done(msg.children)
+        return self.new_commands_to_messages((msg.incoming, msg.forward))
 
     def on_not_found(self, route, name):
         self.script.commands['GET', name].failed('NOTFOUND')
@@ -344,12 +344,13 @@ class Worker:
         """
         Main message processing loop of the worker.
         """
+        route = self.protocol.default_route()
         ready = self.protocol.ready(
-            self.protocol.default_route(),
             Ready(
                 role=Role.WORKER,
                 local_id=str(os.getpid()),
-                mission=self.mission
+                mission=self.mission,
+                incoming=route[0], forward=route[1],
                 )
             )
         await self.transport.send_message(ready)
