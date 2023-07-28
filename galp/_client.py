@@ -28,7 +28,7 @@ from galp.commands import Script
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, NamedTaskDef,
         QueryTaskDef, is_core)
-from galp.messages import Put
+from galp.messages import Put, Done
 
 class TaskStatus(IntEnum):
     """
@@ -357,7 +357,8 @@ class BrokerProtocol(ReplyProtocol):
             return self.submit(self.route, named_def)
         # Literals and SubTasks are always satisfied, and never have
         # recursive children
-        return self.on_done(None, named_def, [])
+        return self.on_done(Done(incoming=[], forward=[], named_def=named_def,
+            children=[]))
 
     def get(self, route, name: TaskName):
         """
@@ -412,11 +413,12 @@ class BrokerProtocol(ReplyProtocol):
         # Schedule for sub-GETs to be sent in the future
         self.schedule_new()
 
-    def on_done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
+    def on_done(self, msg: Done):
         """Given that done_task just finished, mark it as done, letting the
         command system schedule any dependent ready to be submitted, schedule
         GETs for final tasks, etc.
         """
+        named_def = msg.named_def
         name = named_def.name
         self._status[name] = TaskStatus.COMPLETED
 
@@ -427,13 +429,13 @@ class BrokerProtocol(ReplyProtocol):
         # trigger downstream commands
         command = self.script.commands.get(('SUBMIT', name))
         if command:
-            command.done(children)
+            command.done(msg.children)
             self.schedule_new()
 
         command = self.script.commands.get(('STAT', name))
         if command:
             # Triplet (is_done, dict, children?)
-            command.done((True, named_def, children))
+            command.done((True, named_def, msg.children))
             self.schedule_new()
 
     def on_doing(self, route, name):

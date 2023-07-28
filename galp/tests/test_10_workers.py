@@ -154,7 +154,7 @@ def test_task(worker_socket):
     assert is_body(ans, [b'DOING', name])
 
     ans = asserted_zmq_recv_multipart(socket)
-    assert body_startswith(ans, [b'DONE', name])
+    assert body_startswith(ans, [b'DONE'])
 
     socket.send_multipart(make_msg(b'GET', name))
 
@@ -194,7 +194,7 @@ def test_reference(worker_socket):
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)
     assert is_body(doing, [b'DOING', task1.name])
-    assert body_startswith(done, [b'DONE', task1.name])
+    assert body_startswith(done, [b'DONE'])
 
     worker_socket.send_multipart(make_msg(b'SUBMIT',
         msgpack.packb(task2.named_def.model_dump())
@@ -203,7 +203,7 @@ def test_reference(worker_socket):
     doing = asserted_zmq_recv_multipart(worker_socket)
     done = asserted_zmq_recv_multipart(worker_socket)
     assert is_body(doing, [b'DOING', task2.name])
-    assert body_startswith(done, [b'DONE', task2.name])
+    assert body_startswith(done, [b'DONE'])
 
     # Let's try async get for a twist !
     worker_socket.send_multipart(make_msg(b'GET', task2.name))

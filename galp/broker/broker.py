@@ -13,7 +13,7 @@ from galp.protocol import IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import TaskName, NamedTaskDef, Resources
-from galp.messages import task_key, Ready, Role, Route, Put
+from galp.messages import task_key, Ready, Role, Route, Put, Done
 
 class Broker:
     """
@@ -123,9 +123,8 @@ class CommonProtocol(ReplyProtocol):
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
-    def on_done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
-        worker_route, _ = route
-        self.mark_worker_available(worker_route)
+    def on_done(self, msg: Done):
+        self.mark_worker_available(msg.incoming)
 
     def on_failed(self, route, named_def):
         worker_route, _ = route

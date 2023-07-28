@@ -10,7 +10,7 @@ from galp.task_types import TaskName, NamedTaskDef, NamedCoreTaskDef, is_core
 from galp.lower_protocol import LowerProtocol, Route
 from galp.eventnamespace import EventNamespace, NoHandlerError
 from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
-from galp.messages import Message, Ready, Put
+from galp.messages import Message, Ready, Put, Done
 
 # Errors and exceptions
 # =====================
@@ -50,7 +50,7 @@ class Protocol(LowerProtocol):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
 
-    def on_done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
+    def on_done(self, msg: Done):
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
@@ -124,15 +124,11 @@ class Protocol(LowerProtocol):
         """
         return route, [b'DOING', name]
 
-    def done(self, route, named_def: NamedTaskDef, children: list[TaskName]):
+    def done(self, msg: Done):
         """
         Builds a DONE message
-
-        Args:
-            name: the name of the task
         """
-        name, payload = dump_task_def(named_def)
-        return route, [b'DONE', name, payload, *children]
+        return self._dump_message(msg)
 
     def exited(self, route, peer: bytes):
         """Signal the given peer has exited"""
@@ -302,12 +298,7 @@ class Protocol(LowerProtocol):
 
     @event.on('DONE')
     def _on_done(self, route, msg):
-        self._validate(len(msg) >= 3, route, 'DONE without name or definition')
-
-        named_def = load_task_def(name=msg[1], def_buffer=msg[2])
-        children = [ TaskName(child_name) for child_name in msg[3:] ]
-
-        return self.on_done(route, named_def, children)
+        return self.on_done(self._load_message(Done, route, msg))
 
     @event.on('FAILED')
     def _on_failed(self, route, msg: list[bytes]):

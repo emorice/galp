@@ -34,8 +34,8 @@ from galp.commands import Script
 from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
-from galp.task_types import NamedCoreTaskDef, TaskName
-from galp.messages import Ready, Role, Put
+from galp.task_types import NamedCoreTaskDef, NamedTaskDef, TaskName
+from galp.messages import Ready, Role, Put, Done
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -162,7 +162,11 @@ class WorkerProtocol(ReplyProtocol):
         # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name)
-            return self.done(route, named_def, [])
+            return self.done(Done.plain_reply(route,
+                # Fixme: this should not be necessary but our hierachy has
+                # issues
+                named_def=NamedTaskDef.model_validate(named_def.model_dump()),
+                children=[]))
 
         # If not in cache, resolve metadata and run the task
         replies = MessageList([self.doing(route, name)])
@@ -216,7 +220,8 @@ class WorkerProtocol(ReplyProtocol):
         # Case 1: both def and children, DONE
         if named_def is not None and children is not None:
             logging.info('STAT: DONE %s', name)
-            return self.done(route, named_def, children)
+            return self.done(Done.plain_reply(route, named_def=named_def,
+                children=children))
 
         # Case 2: only def, FOUND
         if named_def is not None:
@@ -313,7 +318,11 @@ class Worker:
             task = await self.galp_jobs.get()
             job = await task
             if job.success:
-                reply = self.protocol.done(job.route, job.named_def,  job.result)
+                reply = self.protocol.done(Done.plain_reply(job.route,
+                    # Fixme: this should not be necessary but our hierachy has
+                    # issues
+                    named_def=NamedTaskDef.model_validate(job.named_def.model_dump()),
+                    children=job.result))
             else:
                 reply = self.protocol.failed(job.route, job.named_def)
             await self.transport.send_message(reply)
