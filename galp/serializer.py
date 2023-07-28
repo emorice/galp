@@ -10,7 +10,7 @@ import dill
 
 from pydantic import BaseModel, ValidationError, TypeAdapter
 
-from galp.task_types import Task, StepType, TaskDef, TaskName, CoreTaskDef
+from galp.task_types import Task, StepType, TaskDef, TaskName
 
 class DeserializeError(ValueError):
     """
@@ -88,14 +88,6 @@ def load_task_def(name: bytes, def_buffer: bytes,
     # We want it to work with TaskDef which is a union, so we need an Adapter
     # here
     return TypeAdapter(task_def_t).validate_python(doc)
-
-def load_core_task_def(name: bytes, def_buffer: bytes) -> CoreTaskDef:
-    """
-    Variant of load_task_def statically contrained to a CoreTaskDef
-    """
-    tdef = load_task_def(name, def_buffer, CoreTaskDef)
-    assert isinstance(tdef, CoreTaskDef) # hint
-    return tdef
 
 def dump_task_def(task_def: TaskDef) -> tuple[TaskName, bytes]:
     """
