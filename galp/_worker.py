@@ -163,10 +163,7 @@ class WorkerProtocol(ReplyProtocol):
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name)
             return self.done(Done.plain_reply(route,
-                # Fixme: this should not be necessary but our hierachy has
-                # issues
-                named_def=NamedTaskDef.model_validate(named_def.model_dump()),
-                children=[]))
+                named_def=named_def, children=[]))
 
         # If not in cache, resolve metadata and run the task
         replies = MessageList([self.doing(route, name)])
@@ -319,10 +316,7 @@ class Worker:
             job = await task
             if job.success:
                 reply = self.protocol.done(Done.plain_reply(job.route,
-                    # Fixme: this should not be necessary but our hierachy has
-                    # issues
-                    named_def=NamedTaskDef.model_validate(job.named_def.model_dump()),
-                    children=job.result))
+                    named_def=job.named_def, children=job.result))
             else:
                 reply = self.protocol.failed(job.route, job.named_def)
             await self.transport.send_message(reply)

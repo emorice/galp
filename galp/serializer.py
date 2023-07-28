@@ -8,11 +8,10 @@ import logging
 import msgpack
 import dill
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, TypeAdapter
 
 from galp.task_types import (Task, StepType, NamedTaskDef, TaskName, TaskDef,
-                             CoreTaskDef, NamedCoreTaskDef, GNamedTaskDef,
-                             is_core)
+                             CoreTaskDef, NamedCoreTaskDef, is_core)
 
 class DeserializeError(ValueError):
     """
@@ -83,12 +82,11 @@ def load_task_def(name: bytes, def_buffer: bytes,
         def_buffer: msgpack encoded task def
         task_def_t: additional type constraint on type of task def
     """
-    return GNamedTaskDef[task_def_t].model_validate({
-        'name': name,
-        'task_def': msgpack.unpackb(
-                    def_buffer
-                    )
-            })
+    doc = msgpack.unpackb(def_buffer)
+    doc.update(name=name)
+    # We want it to work with TaskDef which is a union, so we need an Adapter
+    # here
+    return TypeAdapter(task_def_t).validate_python(doc)
 
 def load_core_task_def(name: bytes, def_buffer: bytes) -> NamedCoreTaskDef:
     """

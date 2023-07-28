@@ -6,12 +6,13 @@ import inspect
 import warnings
 import functools
 
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 import msgpack
 
 from galp.task_types import (TaskName, StepType, TaskNode, TaskInput, Task,
-        LiteralTaskDef, CoreTaskDef, NamedTaskDef, ChildTaskDef, QueryTaskDef, TaskOp)
+        LiteralTaskDef, CoreTaskDef, NamedTaskDef, ChildTaskDef, QueryTaskDef,
+        TaskOp, BaseTaskDef)
 from galp.serializer import Serializer
 
 _serializer = Serializer() # Actually stateless, safe
@@ -68,6 +69,17 @@ def ensure_task_input(obj: Any) -> tuple[TaskInput, Task]:
             node
             )
 
+T = TypeVar('T', bound=BaseTaskDef)
+
+def make_task_def(cls: type[T], attrs, extra=None) -> T:
+    """
+    Generate a name from attribute and extra and create a named task def of the
+    wanted type
+    """
+    name = obj_to_name(msgpack.dumps((attrs, extra),
+        default=lambda m: m.model_dump()))
+    return cls(name=name, **attrs)
+
 def make_literal_task(obj: Any) -> TaskNode:
     """
     Build a Literal TaskNode out of an arbitrary python object
@@ -77,24 +89,15 @@ def make_literal_task(obj: Any) -> TaskNode:
     # actual step outputs)
     obj_bytes, dependencies = _serializer.dumps(obj)
 
-    tdef = LiteralTaskDef(children=[dep.name for dep in dependencies])
+    tdef = {'children': [dep.name for dep in dependencies]}
     # Literals are an exception to naming: they are named by value, so the
     # name is *not* derived purely from the definition object
-    rep = [
-        tdef.model_dump(), obj_bytes
-        ]
-    name = obj_to_name(rep)
-
-    ndef = NamedTaskDef(name=name, task_def=tdef)
 
     return TaskNode(
-            named_def=ndef,
+            named_def=make_task_def(LiteralTaskDef, tdef, obj_bytes),
             dependencies=dependencies,
             data=obj,
             )
-
-    #def __str__(self):
-    #    return f'{self.name} [literal] {self.literal}'
 
 def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
                    vtag: str | None = None, items: int | None = None) -> TaskNode:
@@ -129,7 +132,7 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
         kwarg_inputs[key] = tin
         nodes.append(node)
 
-    tdef = CoreTaskDef(
+    tdef = dict(
         args=arg_inputs,
         kwargs=kwarg_inputs,
         step=step.key,
@@ -137,8 +140,7 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
         scatter=items
         )
 
-    name = obj_to_name(tdef.model_dump())
-    ndef = NamedTaskDef(name=name, task_def=tdef)
+    ndef = make_task_def(CoreTaskDef, tdef)
 
     return TaskNode(named_def=ndef, dependencies=nodes)
 
@@ -148,11 +150,7 @@ def make_child_task_def(parent: TaskName, index: int) -> NamedTaskDef:
 
     This does not check whether the operation is legal
     """
-    tdef = ChildTaskDef(parent=parent, index=index)
-    return NamedTaskDef(
-            task_def=tdef,
-            name=obj_to_name(tdef.model_dump())
-            )
+    return make_task_def(ChildTaskDef, dict(parent=parent, index=index))
 
 def make_child_task(parent: TaskNode, index: int) -> TaskNode:
     """
@@ -560,11 +558,10 @@ def query(subject: Any, query: Any) -> TaskNode:
     Build a Query task node
     """
     subj_node = ensure_task_node(subject)
-    tdef = QueryTaskDef(query=query, subject=subj_node.name)
+    tdef = dict(query=query, subject=subj_node.name)
     return TaskNode(
-            named_def=NamedTaskDef(
-                name=obj_to_name(tdef.model_dump()),
-                task_def=tdef
+            named_def=make_task_def(
+                QueryTaskDef, tdef
                 ),
             dependencies=[subj_node]
             )

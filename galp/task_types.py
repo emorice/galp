@@ -3,15 +3,13 @@ Abstract task types defintions
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Literal, Union, TypeVar, Generic, TypeAlias, TypeGuard
+from typing import Any, Literal, Union, TypeAlias, TypeGuard, Annotated
 from enum import Enum
 from dataclasses import dataclass
 from functools import total_ordering
 
 from pydantic_core import CoreSchema, core_schema
-from pydantic import GetCoreSchemaHandler, BaseModel, Field
-from pydantic.functional_serializers import PlainSerializer
-from typing_extensions import Annotated
+from pydantic import GetCoreSchemaHandler, BaseModel, Field, PlainSerializer, TypeAdapter
 
 import galp
 from . import graph
@@ -70,9 +68,9 @@ class BaseTaskDef(BaseModel):
     Base class for task def objects
 
     Attributes:
-        task_type: constant string identifying the task def subclass
         scatter: number of child tasks statically allowed
     """
+    name: TaskName
     scatter: int | None = None
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
@@ -93,6 +91,13 @@ class BaseTaskDef(BaseModel):
         dynamic child tasks.
         """
         raise NotImplementedError
+
+    @property
+    def task_def(self):
+        """
+        Compat from previous implementation as composition
+        """
+        return self
 
 class CoreTaskDef(BaseTaskDef):
     """
@@ -157,20 +162,13 @@ class QueryTaskDef(BaseTaskDef):
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         raise NotImplementedError
 
-TaskDef = Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef]
+TaskDef = Annotated[
+        Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef],
+        Field(discriminator='task_type')
+        ]
 
-TD_co = TypeVar('TD_co', covariant=True, bound=TaskDef)
-
-class GNamedTaskDef(BaseModel, Generic[TD_co]):
-    """
-    A task to which a reproducible unique name has been given by a naming
-    procedure
-    """
-    name: TaskName
-    task_def: Annotated[TD_co, Field(discriminator='task_type')]
-
-NamedTaskDef: TypeAlias = GNamedTaskDef[TaskDef]
-NamedCoreTaskDef: TypeAlias = GNamedTaskDef[CoreTaskDef]
+NamedTaskDef: TypeAlias = TaskDef
+NamedCoreTaskDef: TypeAlias = CoreTaskDef
 
 def is_core(named_def: NamedTaskDef) -> TypeGuard[NamedCoreTaskDef]:
     """
