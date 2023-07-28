@@ -92,13 +92,6 @@ class BaseTaskDef(BaseModel):
         """
         raise NotImplementedError
 
-    @property
-    def task_def(self):
-        """
-        Compat from previous implementation as composition
-        """
-        return self
-
 class CoreTaskDef(BaseTaskDef):
     """
     Information defining a core Task, i.e. bound to the remote execution of a
@@ -170,11 +163,11 @@ TaskDef = Annotated[
 NamedTaskDef: TypeAlias = TaskDef
 NamedCoreTaskDef: TypeAlias = CoreTaskDef
 
-def is_core(named_def: NamedTaskDef) -> TypeGuard[NamedCoreTaskDef]:
+def is_core(task_def: NamedTaskDef) -> TypeGuard[NamedCoreTaskDef]:
     """
     Check if a named task reference is a core task
     """
-    return isinstance(named_def.task_def, CoreTaskDef)
+    return isinstance(task_def, CoreTaskDef)
 
 class Task(ABC):
     """
@@ -212,12 +205,12 @@ class TaskNode(Task):
     Dependencies here means $sub-dep, including children.
 
     Attributes:
-        named_def: the name and definition of the task
+        task_def: the name and definition of the task
         dependencies: list of either task nodes or task references required to
             reconstruct this tasks' result
         data: constant value of the task, for Literal tasks
     """
-    named_def: NamedTaskDef
+    task_def: NamedTaskDef
     dependencies: list[Task]
     data: Any = None
 
@@ -226,21 +219,14 @@ class TaskNode(Task):
         """
         Shortcut
         """
-        return self.named_def.name
-
-    @property
-    def task_def(self) -> TaskDef:
-        """
-        Shortcut
-        """
-        return self.named_def.task_def
+        return self.task_def.name
 
     @property
     def scatter(self) -> int | None:
         """
         Shortcut for nested scatter field
         """
-        return self.named_def.task_def.scatter
+        return self.task_def.scatter
 
     def __iter__(self):
         """

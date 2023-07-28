@@ -13,11 +13,11 @@ def run_task(script: Script, task: TaskNode, dry: bool = False) -> Command:
     """
     Creates command appropriate to type of task (query or non-query)
     """
-    tdef = task.task_def
-    if isinstance(tdef, QueryTaskDef):
+    task_def = task.task_def
+    if isinstance(task_def, QueryTaskDef):
         if dry:
             raise NotImplementedError('Cannot dry-run queries yet')
-        return Query(script, tdef.subject, tdef.query)
+        return Query(script, task_def.subject, task_def.query)
 
     if dry:
         return script.do_once('DRYRUN', task.name)
@@ -246,8 +246,7 @@ class Args(Operator):
         Build list of sub-queries for arguments of subject task from the
         definition obtained from STAT
         """
-        _task_done, named_def, _children = stat_cmd.result
-        tdef = named_def.task_def
+        _task_done, task_def, _children = stat_cmd.result
 
         # FIXME: this should delegate handling of the sub-query
         is_compound, arg_subqueries = parse_query(self.sub_query)
@@ -258,7 +257,7 @@ class Args(Operator):
         if not hasattr(arg_subqueries, 'items'):
             arg_subqueries = { index: True for index in arg_subqueries }
 
-        if not isinstance(tdef, CoreTaskDef):
+        if not isinstance(task_def, CoreTaskDef):
             raise TypeError('Object is not a job-type Task, cannot use a "args"'
                 ' query here.')
 
@@ -266,9 +265,9 @@ class Args(Operator):
         for index, sub_query in arg_subqueries.items():
             try:
                 num_index = int(index)
-                target = tdef.args[num_index].name
+                target = task_def.args[num_index].name
             except ValueError: # keyword argument
-                target = tdef.kwargs[index].name
+                target = task_def.kwargs[index].name
             sub_commands.append(
                 Query(self.script, target, sub_query)
                 )

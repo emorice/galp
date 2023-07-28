@@ -145,7 +145,7 @@ def test_task(worker_socket):
     name = task.name
 
     socket.send_multipart(make_msg(b'SUBMIT',
-        msgpack.packb(task.named_def.model_dump())
+        msgpack.packb(task.task_def.model_dump())
         ))
 
     assert_ready(socket)
@@ -185,7 +185,7 @@ def test_reference(worker_socket):
     task2 = galp.steps.galp_double(task1)
 
     worker_socket.send_multipart(make_msg(b'SUBMIT',
-        msgpack.packb(task1.named_def.model_dump())
+        msgpack.packb(task1.task_def.model_dump())
         ))
 
     assert_ready(worker_socket)
@@ -197,7 +197,7 @@ def test_reference(worker_socket):
     assert body_startswith(done, [b'DONE'])
 
     worker_socket.send_multipart(make_msg(b'SUBMIT',
-        msgpack.packb(task2.named_def.model_dump())
+        msgpack.packb(task2.task_def.model_dump())
         ))
 
     doing = asserted_zmq_recv_multipart(worker_socket)

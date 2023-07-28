@@ -126,7 +126,7 @@ class CommonProtocol(ReplyProtocol):
     def on_done(self, msg: Done):
         self.mark_worker_available(msg.incoming)
 
-    def on_failed(self, route, named_def):
+    def on_failed(self, route, task_def):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
@@ -134,7 +134,7 @@ class CommonProtocol(ReplyProtocol):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 
-    def on_found(self, route, named_def):
+    def on_found(self, route, task_def):
         worker_route, _ = route
         self.mark_worker_available(worker_route)
 

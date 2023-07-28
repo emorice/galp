@@ -62,7 +62,7 @@ class Protocol(LowerProtocol):
         """An `EXITED` message was received"""
         return self.on_unhandled(b'EXITED')
 
-    def on_failed(self, route, named_def: NamedCoreTaskDef):
+    def on_failed(self, route, task_def: NamedCoreTaskDef):
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
 
@@ -87,11 +87,11 @@ class Protocol(LowerProtocol):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
-    def on_submit(self, route, named_def: NamedCoreTaskDef):
+    def on_submit(self, route, task_def: NamedCoreTaskDef):
         """A `SUBMIT` message was received"""
         return self.on_unhandled(b'SUBMIT')
 
-    def on_found(self, route, named_def: NamedTaskDef):
+    def on_found(self, route, task_def: NamedTaskDef):
         """A `FOUND` message was received"""
         return self.on_unhandled(b'FOUND')
 
@@ -135,14 +135,14 @@ class Protocol(LowerProtocol):
         msg = [b'EXITED', peer]
         return route, msg
 
-    def failed(self, route, named_def: NamedCoreTaskDef):
+    def failed(self, route, task_def: NamedCoreTaskDef):
         """
         Builds a FAILED message
 
         Args:
-            named_def: the definition of the task
+            task_def: the definition of the task
         """
-        return self.failed_raw(route, dump_model(named_def))
+        return self.failed_raw(route, dump_model(task_def))
 
     def failed_raw(self, route, payload: bytes):
         """
@@ -202,7 +202,7 @@ class Protocol(LowerProtocol):
             frames.append(msg.data)
         return route, frames
 
-    def submit(self, route, named_def: NamedCoreTaskDef):
+    def submit(self, route, task_def: NamedCoreTaskDef):
         """Sends SUBMIT for given task object.
 
         Literal and derived tasks should not be passed at all and will trigger
@@ -211,10 +211,10 @@ class Protocol(LowerProtocol):
 
         Handle them in a wrapper or override.
         """
-        if not is_core(named_def):
+        if not is_core(task_def):
             raise ValueError('Only core tasks can be passed to Protocol layer')
 
-        return route, [b'SUBMIT', dump_model(named_def)]
+        return route, [b'SUBMIT', dump_model(task_def)]
 
     def stat(self, route, name: TaskName):
         """
@@ -225,11 +225,11 @@ class Protocol(LowerProtocol):
         """
         return route, [b'STAT', name]
 
-    def found(self, route, named_def: NamedTaskDef):
+    def found(self, route, task_def: NamedTaskDef):
         """
         Builds a FOUND message
         """
-        name, payload = dump_task_def(named_def)
+        name, payload = dump_task_def(task_def)
 
         return route, [b'FOUND', name, payload]
 
@@ -305,11 +305,11 @@ class Protocol(LowerProtocol):
         self._validate(len(msg) >= 2, route, 'FAILED without an arg')
         self._validate(len(msg) <= 2, route, 'FAILED with too many args')
 
-        named_def, err = load_model(NamedCoreTaskDef, msg[1])
-        if named_def is None:
+        task_def, err = load_model(NamedCoreTaskDef, msg[1])
+        if task_def is None:
             self._validate(False, route, err)
 
-        return self.on_failed(route, named_def)
+        return self.on_failed(route, task_def)
 
     @event.on('NOTFOUND')
     def _on_not_found(self, route, msg):
@@ -361,17 +361,17 @@ class Protocol(LowerProtocol):
     def _on_submit(self, route, msg: list[bytes]):
         self._validate(len(msg) == 2, route, 'SUBMIT with wrong number of parts')
 
-        named_def, err = load_model(NamedCoreTaskDef, msg[1])
-        if named_def is None:
+        task_def, err = load_model(NamedCoreTaskDef, msg[1])
+        if task_def is None:
             self._validate(False, route, err)
 
-        return self.on_submit(route, named_def)
+        return self.on_submit(route, task_def)
 
     @event.on('FOUND')
     def _on_found(self, route, msg):
         self._validate(len(msg) == 3, route, 'FOUND with wrong number of parts')
-        named_def = load_task_def(name=msg[1], def_buffer=msg[2])
-        return self.on_found(route, named_def)
+        task_def = load_task_def(name=msg[1], def_buffer=msg[2])
+        return self.on_found(route, task_def)
 
     @event.on('STAT')
     def _on_stat(self, route, msg):

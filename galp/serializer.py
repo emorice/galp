@@ -96,11 +96,11 @@ def load_core_task_def(name: bytes, def_buffer: bytes) -> NamedCoreTaskDef:
     assert is_core(ndef) # hint
     return ndef
 
-def dump_task_def(named_def: NamedTaskDef) -> tuple[TaskName, bytes]:
+def dump_task_def(task_def: NamedTaskDef) -> tuple[TaskName, bytes]:
     """
     Converse of load_task_def
     """
-    return named_def.name, msgpack.dumps(named_def.task_def.model_dump())
+    return task_def.name, msgpack.dumps(task_def.model_dump())
 
 def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
     """

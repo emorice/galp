@@ -175,7 +175,7 @@ class Client:
                 # On failure, more details on the error can be provided inline
                 except (KeyError, DeserializeError) as exc:
                     new_exc = TaskFailedError('Failed to collect task '
-                            f'[{task.named_def}]: {cmd_result}')
+                            f'[{task.task_def}]: {cmd_result}')
                     new_exc.__cause__ = exc
                     failed = new_exc
                     results.append(new_exc)
@@ -315,7 +315,7 @@ class BrokerProtocol(ReplyProtocol):
                 self.store.put_native(name, task_node.data)
 
             # Save the task_definition
-            self._tasks[name] = task_node.named_def
+            self._tasks[name] = task_node.task_def
 
     def write_next(self, command_key):
         """
@@ -349,15 +349,15 @@ class BrokerProtocol(ReplyProtocol):
         """Loads task dicts, handles literals and subtasks, and manage stats"""
 
         # Task dict was added by a stat call
-        named_def = self._tasks.get(task_name)
-        if named_def is None:
+        task_def = self._tasks.get(task_name)
+        if task_def is None:
             raise ValueError(f"Task {task_name.hex()} is unknown")
-        if is_core(named_def):
+        if is_core(task_def):
             self.submitted_count[task_name] += 1
-            return self.submit(self.route, named_def)
+            return self.submit(self.route, task_def)
         # Literals and SubTasks are always satisfied, and never have
         # recursive children
-        return self.on_done(Done(incoming=[], forward=[], named_def=named_def,
+        return self.on_done(Done(incoming=[], forward=[], task_def=task_def,
             children=[]))
 
     def get(self, route, name: TaskName):
@@ -418,13 +418,13 @@ class BrokerProtocol(ReplyProtocol):
         command system schedule any dependent ready to be submitted, schedule
         GETs for final tasks, etc.
         """
-        named_def = msg.named_def
-        name = named_def.name
+        task_def = msg.task_def
+        name = task_def.name
         self._status[name] = TaskStatus.COMPLETED
 
         # If it was a remotely defined task, store its definition too
         if name not in self._tasks:
-            self._tasks[name] = named_def
+            self._tasks[name] = task_def
 
         # trigger downstream commands
         command = self.script.commands.get(('SUBMIT', name))
@@ -435,7 +435,7 @@ class BrokerProtocol(ReplyProtocol):
         command = self.script.commands.get(('STAT', name))
         if command:
             # Triplet (is_done, dict, children?)
-            command.done((True, named_def, msg.children))
+            command.done((True, task_def, msg.children))
             self.schedule_new()
 
     def on_doing(self, route, name):
@@ -443,15 +443,15 @@ class BrokerProtocol(ReplyProtocol):
         self.run_count[name] += 1
         self._status[name] = TaskStatus.RUNNING
 
-    def on_failed(self, route, named_def):
+    def on_failed(self, route, task_def):
         """
         Mark a task and all its dependents as failed.
         """
-        msg = f'Failed to execute task {named_def}, check worker logs'
+        msg = f'Failed to execute task {task_def}, check worker logs'
         logging.error('TASK FAILED: %s', msg)
 
         # Mark fetch command as failed if pending
-        self.script.commands['SUBMIT', named_def.name].failed(msg)
+        self.script.commands['SUBMIT', task_def.name].failed(msg)
         assert not self.script.new_commands
 
         # This is not a fatal error to the client, by default processing of
@@ -483,14 +483,14 @@ class BrokerProtocol(ReplyProtocol):
                 command.failed('NOTFOUND')
                 assert not self.script.new_commands
 
-    def on_found(self, route, named_def: NamedTaskDef):
+    def on_found(self, route, task_def: NamedTaskDef):
         """
         Mark STAT as completed
         """
-        name = named_def.name
-        self._tasks[name] = named_def
+        name = task_def.name
+        self._tasks[name] = task_def
         # Triplet (is_done, dict, children?)
-        self.script.commands['STAT', name].done((False, named_def, None))
+        self.script.commands['STAT', name].done((False, task_def, None))
         self.schedule_new()
 
     def on_illegal(self, route, reason):

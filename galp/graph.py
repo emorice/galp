@@ -94,7 +94,7 @@ def make_literal_task(obj: Any) -> TaskNode:
     # name is *not* derived purely from the definition object
 
     return TaskNode(
-            named_def=make_task_def(LiteralTaskDef, tdef, obj_bytes),
+            task_def=make_task_def(LiteralTaskDef, tdef, obj_bytes),
             dependencies=dependencies,
             data=obj,
             )
@@ -142,7 +142,7 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
 
     ndef = make_task_def(CoreTaskDef, tdef)
 
-    return TaskNode(named_def=ndef, dependencies=nodes)
+    return TaskNode(task_def=ndef, dependencies=nodes)
 
 def make_child_task_def(parent: TaskName, index: int) -> NamedTaskDef:
     """
@@ -162,7 +162,7 @@ def make_child_task(parent: TaskNode, index: int) -> TaskNode:
     assert index <= parent.task_def.scatter
 
     return TaskNode(
-            named_def=make_child_task_def(parent.name, index),
+            task_def=make_child_task_def(parent.name, index),
             dependencies=[parent]
             )
 
@@ -560,7 +560,7 @@ def query(subject: Any, query: Any) -> TaskNode:
     subj_node = ensure_task_node(subject)
     tdef = dict(query=query, subject=subj_node.name)
     return TaskNode(
-            named_def=make_task_def(
+            task_def=make_task_def(
                 QueryTaskDef, tdef
                 ),
             dependencies=[subj_node]

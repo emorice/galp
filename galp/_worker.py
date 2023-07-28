@@ -144,7 +144,7 @@ class WorkerProtocol(ReplyProtocol):
             logging.exception('GET: Cache ERROR: %s', name)
         return self.not_found(route, name)
 
-    def on_submit(self, route, named_def: NamedCoreTaskDef):
+    def on_submit(self, route, task_def: NamedCoreTaskDef):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -153,9 +153,8 @@ class WorkerProtocol(ReplyProtocol):
 
         This the only asynchronous handler, all others are semantically blocking.
         """
-        tdef = named_def.task_def
-        logging.info('SUBMIT: %s', tdef.step)
-        name = named_def.name
+        logging.info('SUBMIT: %s', task_def.step)
+        name = task_def.name
 
         # Store hook. For now we just check the local cache, later we'll have a
         # central locking mechanism
@@ -163,14 +162,14 @@ class WorkerProtocol(ReplyProtocol):
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name)
             return self.done(Done.plain_reply(route,
-                named_def=named_def, children=[]))
+                task_def=task_def, children=[]))
 
         # If not in cache, resolve metadata and run the task
         replies = MessageList([self.doing(route, name)])
 
         # Schedule the task first. It won't actually start until its inputs are
         # marked as available, and will return the list of GETs that are needed
-        self.worker.schedule_task(route, named_def)
+        self.worker.schedule_task(route, task_def)
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
@@ -202,9 +201,9 @@ class WorkerProtocol(ReplyProtocol):
         STAT handler allowed to raise store read errors
         """
         # Try first to extract both definition and children
-        named_def = None
+        task_def = None
         try:
-            named_def = self.store.get_task_def(name)
+            task_def = self.store.get_task_def(name)
         except KeyError:
             pass
 
@@ -215,15 +214,15 @@ class WorkerProtocol(ReplyProtocol):
             pass
 
         # Case 1: both def and children, DONE
-        if named_def is not None and children is not None:
+        if task_def is not None and children is not None:
             logging.info('STAT: DONE %s', name)
-            return self.done(Done.plain_reply(route, named_def=named_def,
+            return self.done(Done.plain_reply(route, task_def=task_def,
                 children=children))
 
         # Case 2: only def, FOUND
-        if named_def is not None:
+        if task_def is not None:
             logging.info('STAT: FOUND %s', name)
-            return self.found(route, named_def)
+            return self.found(route, task_def)
 
         # Case 3: only children
         # This means a legacy store that was missing tasks definition
@@ -270,7 +269,7 @@ class JobResult:
     Result of executing a step
     """
     route: Any
-    named_def: NamedCoreTaskDef
+    task_def: NamedCoreTaskDef
     success: bool
     result: list[TaskName]
 
@@ -316,29 +315,28 @@ class Worker:
             job = await task
             if job.success:
                 reply = self.protocol.done(Done.plain_reply(job.route,
-                    named_def=job.named_def, children=job.result))
+                    task_def=job.task_def, children=job.result))
             else:
-                reply = self.protocol.failed(job.route, job.named_def)
+                reply = self.protocol.failed(job.route, job.task_def)
             await self.transport.send_message(reply)
 
-    def schedule_task(self, client_route, named_def: NamedCoreTaskDef):
+    def schedule_task(self, client_route, task_def: NamedCoreTaskDef):
         """
         Callback to schedule a task for execution.
         """
         def _start_task(status, inputs):
             task = asyncio.create_task(
-                self.run_submission(status, client_route, named_def,
+                self.run_submission(status, client_route, task_def,
                     inputs)
                 )
             self.galp_jobs.put_nowait(task)
 
-        tdef = named_def.task_def
         script = self.protocol.script
         collect = script.collect([
                 Query(script, tin.name, tin.op)
                 for tin in [
-                    *tdef.args,
-                    *tdef.kwargs.values()
+                    *task_def.args,
+                    *task_def.kwargs.values()
                     ]
                 ])
         script.callback(collect, _start_task)
@@ -363,16 +361,15 @@ class Worker:
     # Task execution logic
     # ====================
 
-    async def run_submission(self, status, route, named_def: NamedCoreTaskDef,
+    async def run_submission(self, status, route, task_def: NamedCoreTaskDef,
             inputs) -> JobResult:
         """
         Actually run the task
         """
-        name = named_def.name
-        tdef = named_def.task_def
-        step_name = tdef.step
-        arg_tins = tdef.args
-        kwarg_tins = tdef.kwargs
+        name = task_def.name
+        step_name = task_def.step
+        arg_tins = task_def.args
+        kwarg_tins = task_def.kwargs
 
         try:
             if status:
@@ -422,15 +419,15 @@ class Worker:
                 raise NonFatalTaskError from exc
 
             # Store the result back, along with the task definition
-            self.protocol.store.put_task_def(named_def)
-            children = self.protocol.store.put_native(name, result, tdef.scatter)
+            self.protocol.store.put_task_def(task_def)
+            children = self.protocol.store.put_native(name, result, task_def.scatter)
 
-            return JobResult(route, named_def, True, children)
+            return JobResult(route, task_def, True, children)
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return JobResult(route, named_def, False, [])
+            return JobResult(route, task_def, False, [])
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.

@@ -180,15 +180,15 @@ class CacheStack():
         self.serialcache[name + b'.data'] = data
         self.serialcache[name + b'.children'] = msgpack.packb(children)
 
-    def put_task_def(self, named_def: NamedTaskDef) -> None:
+    def put_task_def(self, task_def: NamedTaskDef) -> None:
         """
         Non-recursively store the dictionnary describing the task
         """
-        key = named_def.name + b'.task'
+        key = task_def.name + b'.task'
         if key in self.serialcache:
             return
 
-        self.serialcache[key] = msgpack.packb(named_def.task_def.model_dump())
+        self.serialcache[key] = msgpack.packb(task_def.model_dump())
 
     def put_task(self, task: Task) -> None:
         """
@@ -203,12 +203,12 @@ class CacheStack():
             # so there is nothing to do
             return
 
-        self.put_task_def(task.named_def)
+        self.put_task_def(task.task_def)
 
         for child in task.dependencies:
             self.put_task(child)
 
-        if isinstance(task.named_def.task_def, LiteralTaskDef):
+        if isinstance(task.task_def, LiteralTaskDef):
             self.put_native(task.name, task.data)
 
     def get_task_def(self, name: TaskName) -> NamedTaskDef:

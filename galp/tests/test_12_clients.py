@@ -80,7 +80,7 @@ async def test_fill_queue(blocked_client):
     with pytest.raises(asyncio.TimeoutError):
         async with timeout(1):
             await client.transport.send_message(
-                client.protocol.submit(route, task.named_def)
+                client.protocol.submit(route, task.task_def)
                 )
 
 async def test_unique_submission(peer_client):

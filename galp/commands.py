@@ -463,8 +463,7 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         """
         Sort out queries, remote jobs and literals
         """
-        _task_done, named_def, children = stat.result
-        task_def = named_def.task_def
+        _task_done, task_def, children = stat.result
 
         # Short circuit for tasks already processed and literals
         if isinstance(task_def, LiteralTaskDef):

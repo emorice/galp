@@ -30,7 +30,7 @@ def test_query_def(tmpdir):
 
     ans = galp.run(galp.query(task, '$def'), store=tmpdir)
 
-    assert ans.task_def.step == gts.query.do_nothing.key
+    assert ans.step == gts.query.do_nothing.key
 
 def test_query_children(tmpdir):
     """
@@ -44,7 +44,7 @@ def test_query_children(tmpdir):
         steps=['galp.tests.steps'])
 
     assert '$children' in ans
-    assert all(c.task_def.step  == gts.query.do_nothing.key
+    assert all(c.step  == gts.query.do_nothing.key
             for _k, c in ans['$children'].items())
 
 def test_query_all_children(tmpdir):
@@ -60,7 +60,7 @@ def test_query_all_children(tmpdir):
 
     assert '$children' in ans
     assert sum(
-            c.task_def.step  == gts.query.do_nothing.key
+            c.step  == gts.query.do_nothing.key
             for _k, c in ans['$children'].items()
             ) == 2
 
