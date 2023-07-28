@@ -34,7 +34,7 @@ from galp.commands import Script
 from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
-from galp.task_types import NamedCoreTaskDef, NamedTaskDef, TaskName
+from galp.task_types import CoreTaskDef, TaskDef, TaskName
 from galp.messages import Ready, Role, Put, Done
 
 class NonFatalTaskError(RuntimeError):
@@ -144,7 +144,7 @@ class WorkerProtocol(ReplyProtocol):
             logging.exception('GET: Cache ERROR: %s', name)
         return self.not_found(route, name)
 
-    def on_submit(self, route, task_def: NamedCoreTaskDef):
+    def on_submit(self, route, task_def: CoreTaskDef):
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -269,7 +269,7 @@ class JobResult:
     Result of executing a step
     """
     route: Any
-    task_def: NamedCoreTaskDef
+    task_def: CoreTaskDef
     success: bool
     result: list[TaskName]
 
@@ -320,7 +320,7 @@ class Worker:
                 reply = self.protocol.failed(job.route, job.task_def)
             await self.transport.send_message(reply)
 
-    def schedule_task(self, client_route, task_def: NamedCoreTaskDef):
+    def schedule_task(self, client_route, task_def: CoreTaskDef):
         """
         Callback to schedule a task for execution.
         """
@@ -361,7 +361,7 @@ class Worker:
     # Task execution logic
     # ====================
 
-    async def run_submission(self, status, route, task_def: NamedCoreTaskDef,
+    async def run_submission(self, status, route, task_def: CoreTaskDef,
             inputs) -> JobResult:
         """
         Actually run the task

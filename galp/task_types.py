@@ -3,13 +3,13 @@ Abstract task types defintions
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Literal, Union, TypeAlias, TypeGuard, Annotated
+from typing import Any, Literal, Union, TypeGuard, Annotated
 from enum import Enum
 from dataclasses import dataclass
 from functools import total_ordering
 
 from pydantic_core import CoreSchema, core_schema
-from pydantic import GetCoreSchemaHandler, BaseModel, Field, PlainSerializer, TypeAdapter
+from pydantic import GetCoreSchemaHandler, BaseModel, Field, PlainSerializer
 
 import galp
 from . import graph
@@ -160,15 +160,6 @@ TaskDef = Annotated[
         Field(discriminator='task_type')
         ]
 
-NamedTaskDef: TypeAlias = TaskDef
-NamedCoreTaskDef: TypeAlias = CoreTaskDef
-
-def is_core(task_def: NamedTaskDef) -> TypeGuard[NamedCoreTaskDef]:
-    """
-    Check if a named task reference is a core task
-    """
-    return isinstance(task_def, CoreTaskDef)
-
 class Task(ABC):
     """
     Root of task type hierarchy
@@ -210,7 +201,7 @@ class TaskNode(Task):
             reconstruct this tasks' result
         data: constant value of the task, for Literal tasks
     """
-    task_def: NamedTaskDef
+    task_def: TaskDef
     dependencies: list[Task]
     data: Any = None
 

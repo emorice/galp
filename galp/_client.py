@@ -26,8 +26,8 @@ from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.commands import Script
 from galp.query import run_task
-from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, NamedTaskDef,
-        QueryTaskDef, is_core)
+from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, TaskDef,
+        QueryTaskDef, CoreTaskDef)
 from galp.messages import Put, Done
 
 class TaskStatus(IntEnum):
@@ -266,7 +266,7 @@ class BrokerProtocol(ReplyProtocol):
         self._status : defaultdict[TaskName, TaskStatus] = defaultdict(lambda: TaskStatus.UNKNOWN)
 
         # Task definitions, either given to add() or collected through STAT/FOUND
-        self._tasks : dict[TaskName, NamedTaskDef] = {}
+        self._tasks : dict[TaskName, TaskDef] = {}
 
         # Public attributes: counters for the number of SUBMITs sent and DOING
         # received for each task
@@ -352,7 +352,7 @@ class BrokerProtocol(ReplyProtocol):
         task_def = self._tasks.get(task_name)
         if task_def is None:
             raise ValueError(f"Task {task_name.hex()} is unknown")
-        if is_core(task_def):
+        if isinstance(task_def, CoreTaskDef):
             self.submitted_count[task_name] += 1
             return self.submit(self.route, task_def)
         # Literals and SubTasks are always satisfied, and never have
@@ -483,7 +483,7 @@ class BrokerProtocol(ReplyProtocol):
                 command.failed('NOTFOUND')
                 assert not self.script.new_commands
 
-    def on_found(self, route, task_def: NamedTaskDef):
+    def on_found(self, route, task_def: TaskDef):
         """
         Mark STAT as completed
         """

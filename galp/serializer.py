@@ -10,8 +10,7 @@ import dill
 
 from pydantic import BaseModel, ValidationError, TypeAdapter
 
-from galp.task_types import (Task, StepType, NamedTaskDef, TaskName, TaskDef,
-                             CoreTaskDef, NamedCoreTaskDef, is_core)
+from galp.task_types import Task, StepType, TaskDef, TaskName, CoreTaskDef
 
 class DeserializeError(ValueError):
     """
@@ -68,8 +67,10 @@ def serialize_child(index):
         index.to_bytes(4, 'little')
         )
 
+U = TypeVar('U', bound=TaskDef)
+
 def load_task_def(name: bytes, def_buffer: bytes,
-                  task_def_t = TaskDef) -> NamedTaskDef:
+                  task_def_t : type[U] = TaskDef) -> U:
     """
     Util to deserialize a named task def with the name and def split
 
@@ -88,15 +89,15 @@ def load_task_def(name: bytes, def_buffer: bytes,
     # here
     return TypeAdapter(task_def_t).validate_python(doc)
 
-def load_core_task_def(name: bytes, def_buffer: bytes) -> NamedCoreTaskDef:
+def load_core_task_def(name: bytes, def_buffer: bytes) -> CoreTaskDef:
     """
     Variant of load_task_def statically contrained to a CoreTaskDef
     """
-    ndef = load_task_def(name, def_buffer, CoreTaskDef)
-    assert is_core(ndef) # hint
-    return ndef
+    tdef = load_task_def(name, def_buffer, CoreTaskDef)
+    assert isinstance(tdef, CoreTaskDef) # hint
+    return tdef
 
-def dump_task_def(task_def: NamedTaskDef) -> tuple[TaskName, bytes]:
+def dump_task_def(task_def: TaskDef) -> tuple[TaskName, bytes]:
     """
     Converse of load_task_def
     """

@@ -7,7 +7,7 @@ from typing import Any
 import diskcache
 import msgpack
 
-from galp.task_types import (TaskName, TaskReference, Task, NamedTaskDef,
+from galp.task_types import (TaskName, TaskReference, Task, TaskDef,
         TaskNode, LiteralTaskDef)
 from galp.graph import make_child_task_def
 from galp.serializer import Serializer, serialize_child, load_task_def
@@ -180,7 +180,7 @@ class CacheStack():
         self.serialcache[name + b'.data'] = data
         self.serialcache[name + b'.children'] = msgpack.packb(children)
 
-    def put_task_def(self, task_def: NamedTaskDef) -> None:
+    def put_task_def(self, task_def: TaskDef) -> None:
         """
         Non-recursively store the dictionnary describing the task
         """
@@ -211,7 +211,7 @@ class CacheStack():
         if isinstance(task.task_def, LiteralTaskDef):
             self.put_native(task.name, task.data)
 
-    def get_task_def(self, name: TaskName) -> NamedTaskDef:
+    def get_task_def(self, name: TaskName) -> TaskDef:
         """
         Loads a task definition, non-recursively
         """

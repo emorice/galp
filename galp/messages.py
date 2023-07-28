@@ -9,7 +9,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, PlainSerializer
 
 from .lower_protocol import Route
-from .task_types import TaskName, NamedTaskDef
+from .task_types import TaskName, TaskDef
 
 def task_key(msg: list[bytes]) -> bytes:
     """
@@ -65,7 +65,7 @@ class Done(BaseMessage):
     """
     verb: Literal['done'] = Field('done', repr=False)
 
-    task_def: NamedTaskDef
+    task_def: TaskDef
     children: list[TaskName]
 
 class Put(BaseMessage):

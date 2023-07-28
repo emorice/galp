@@ -12,7 +12,7 @@ import zmq
 from galp.protocol import IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.task_types import TaskName, NamedTaskDef, Resources
+from galp.task_types import TaskName, TaskDef, Resources
 from galp.messages import task_key, Ready, Role, Route, Put, Done
 
 class Broker:

@@ -6,7 +6,7 @@ import logging
 
 from typing import NoReturn, TypeVar, Any
 
-from galp.task_types import TaskName, NamedTaskDef, NamedCoreTaskDef, is_core
+from galp.task_types import TaskName, TaskDef, CoreTaskDef
 from galp.lower_protocol import LowerProtocol, Route
 from galp.eventnamespace import EventNamespace, NoHandlerError
 from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
@@ -62,7 +62,7 @@ class Protocol(LowerProtocol):
         """An `EXITED` message was received"""
         return self.on_unhandled(b'EXITED')
 
-    def on_failed(self, route, task_def: NamedCoreTaskDef):
+    def on_failed(self, route, task_def: CoreTaskDef):
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
 
@@ -87,11 +87,11 @@ class Protocol(LowerProtocol):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
-    def on_submit(self, route, task_def: NamedCoreTaskDef):
+    def on_submit(self, route, task_def: CoreTaskDef):
         """A `SUBMIT` message was received"""
         return self.on_unhandled(b'SUBMIT')
 
-    def on_found(self, route, task_def: NamedTaskDef):
+    def on_found(self, route, task_def: TaskDef):
         """A `FOUND` message was received"""
         return self.on_unhandled(b'FOUND')
 
@@ -135,7 +135,7 @@ class Protocol(LowerProtocol):
         msg = [b'EXITED', peer]
         return route, msg
 
-    def failed(self, route, task_def: NamedCoreTaskDef):
+    def failed(self, route, task_def: CoreTaskDef):
         """
         Builds a FAILED message
 
@@ -202,7 +202,7 @@ class Protocol(LowerProtocol):
             frames.append(msg.data)
         return route, frames
 
-    def submit(self, route, task_def: NamedCoreTaskDef):
+    def submit(self, route, task_def: CoreTaskDef):
         """Sends SUBMIT for given task object.
 
         Literal and derived tasks should not be passed at all and will trigger
@@ -211,7 +211,7 @@ class Protocol(LowerProtocol):
 
         Handle them in a wrapper or override.
         """
-        if not is_core(task_def):
+        if not isinstance(task_def, CoreTaskDef):
             raise ValueError('Only core tasks can be passed to Protocol layer')
 
         return route, [b'SUBMIT', dump_model(task_def)]
@@ -225,7 +225,7 @@ class Protocol(LowerProtocol):
         """
         return route, [b'STAT', name]
 
-    def found(self, route, task_def: NamedTaskDef):
+    def found(self, route, task_def: TaskDef):
         """
         Builds a FOUND message
         """
@@ -305,7 +305,7 @@ class Protocol(LowerProtocol):
         self._validate(len(msg) >= 2, route, 'FAILED without an arg')
         self._validate(len(msg) <= 2, route, 'FAILED with too many args')
 
-        task_def, err = load_model(NamedCoreTaskDef, msg[1])
+        task_def, err = load_model(CoreTaskDef, msg[1])
         if task_def is None:
             self._validate(False, route, err)
 
@@ -361,7 +361,7 @@ class Protocol(LowerProtocol):
     def _on_submit(self, route, msg: list[bytes]):
         self._validate(len(msg) == 2, route, 'SUBMIT with wrong number of parts')
 
-        task_def, err = load_model(NamedCoreTaskDef, msg[1])
+        task_def, err = load_model(CoreTaskDef, msg[1])
         if task_def is None:
             self._validate(False, route, err)
 

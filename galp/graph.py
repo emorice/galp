@@ -11,7 +11,7 @@ from typing import Any, Callable, TypeVar
 import msgpack
 
 from galp.task_types import (TaskName, StepType, TaskNode, TaskInput, Task,
-        LiteralTaskDef, CoreTaskDef, NamedTaskDef, ChildTaskDef, QueryTaskDef,
+        LiteralTaskDef, CoreTaskDef, TaskDef, ChildTaskDef, QueryTaskDef,
         TaskOp, BaseTaskDef)
 from galp.serializer import Serializer
 
@@ -144,9 +144,9 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
 
     return TaskNode(task_def=ndef, dependencies=nodes)
 
-def make_child_task_def(parent: TaskName, index: int) -> NamedTaskDef:
+def make_child_task_def(parent: TaskName, index: int) -> TaskDef:
     """
-    Derive a Child NamedTaskDef from a given parent name
+    Derive a Child TaskDef from a given parent name
 
     This does not check whether the operation is legal
     """

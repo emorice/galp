@@ -12,7 +12,7 @@ from typing import TypeVar, Generic
 import logging
 
 from .task_types import (
-        TaskName, LiteralTaskDef, QueryTaskDef, NamedTaskDef, TaskOp
+        TaskName, LiteralTaskDef, QueryTaskDef, TaskDef, TaskOp
         )
 
 class Status(Enum):
@@ -381,7 +381,7 @@ class Submit(InertCommand[list[TaskName]]):
     """
 
 @once
-class Stat(InertCommand[tuple[bool, NamedTaskDef, list[TaskName] | None]]):
+class Stat(InertCommand[tuple[bool, TaskDef, list[TaskName] | None]]):
     """
     Get a task's metadata
     """
