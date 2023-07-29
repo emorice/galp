@@ -70,12 +70,12 @@ class CommonProtocol(ReplyProtocol):
     def on_invalid(self, route, reason):
         raise IllegalRequestError(route, reason)
 
-    def on_unhandled(self, verb):
+    def on_unhandled(self, msg: gm.Message):
         """
         For the broker, many messages will just be forwarded and no handler is
         needed.
         """
-        logging.debug("No broker action for %s", verb.decode('ascii'))
+        logging.debug("No broker action for %s", msg.verb)
 
     def on_ready(self, msg: gm.Ready):
         assert not msg.forward
@@ -157,7 +157,7 @@ class CommonProtocol(ReplyProtocol):
         # validation error handling
         # Note that we set the forward to empty, which equals re-interpreting
         # the message as addressed to us
-        orig_msg, err = load_model(gm.Message, alloc.msg_body[1],
+        orig_msg, err = load_model(gm.AnyMessage, alloc.msg_body[1],
                                    incoming=alloc.client_route, forward=[])
         assert not err
 

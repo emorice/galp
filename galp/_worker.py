@@ -238,7 +238,7 @@ class WorkerProtocol(ReplyProtocol):
         logging.info('STAT: NOT FOUND %s', msg.name)
         return gm.NotFound.reply(msg, name=msg.name)
 
-    def new_commands_to_replies(self, orig_msg: gm.BaseMessage):
+    def new_commands_to_replies(self, orig_msg: gm.Message):
         """
         Generate galp messages from a command reply list
         """

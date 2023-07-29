@@ -25,9 +25,9 @@ class Role(str, Enum):
     POOL = 'pool'
     WORKER = 'worker'
 
-M = TypeVar('M', bound='BaseMessage')
+M = TypeVar('M', bound='Message')
 
-class BaseMessage(BaseModel):
+class Message(BaseModel):
     """
     Base class for messages
     """
@@ -36,7 +36,7 @@ class BaseMessage(BaseModel):
     verb: str
 
     @classmethod
-    def reply(cls: type[M], other: 'BaseMessage', **kwargs) -> M:
+    def reply(cls: type[M], other: 'Message', **kwargs) -> M:
         """
         Contruct a message from the given args, extracting and swapping the
         incoming and forward routes from `other`
@@ -54,7 +54,7 @@ class BaseMessage(BaseModel):
         incoming, forward = route
         return cls(incoming=forward, forward=incoming, **kwargs)
 
-class Doing(BaseMessage):
+class Doing(Message):
     """
     A message signaling that a task has been allocated or started
 
@@ -65,7 +65,7 @@ class Doing(BaseMessage):
 
     name: TaskName
 
-class Done(BaseMessage):
+class Done(Message):
     """
     A message signaling that a task has been succesful run
 
@@ -79,13 +79,13 @@ class Done(BaseMessage):
     task_def: TaskDef
     children: list[TaskName]
 
-class Exit(BaseMessage):
+class Exit(Message):
     """
     A message asking a peer to leave the system
     """
     verb: Literal['exit'] = Field('exit', repr=False)
 
-class Exited(BaseMessage):
+class Exited(Message):
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
     other peer that detected the kill event
@@ -97,7 +97,7 @@ class Exited(BaseMessage):
 
     peer: str
 
-class Failed(BaseMessage):
+class Failed(Message):
     """
     Signals that the execution of task has failed
 
@@ -108,7 +108,7 @@ class Failed(BaseMessage):
 
     task_def: CoreTaskDef
 
-class Found(BaseMessage):
+class Found(Message):
     """
     A message notifying that a task was registered, but not yet executed
 
@@ -119,7 +119,7 @@ class Found(BaseMessage):
 
     task_def: TaskDef
 
-class Get(BaseMessage):
+class Get(Message):
     """
     A message asking for an already computed resource
 
@@ -130,7 +130,7 @@ class Get(BaseMessage):
 
     name: TaskName
 
-class Illegal(BaseMessage):
+class Illegal(Message):
     """
     A message notifying that a previously sent message was malformed
 
@@ -141,18 +141,18 @@ class Illegal(BaseMessage):
 
     reason:str
 
-class NotFound(BaseMessage):
+class NotFound(Message):
     """
     A message indicating that no trace of a task was found
 
     Attributes:
         name: the task name
     """
-    verb: Literal['notfound'] = Field('notfound', repr=False)
+    verb: Literal['not_found'] = Field('not_found', repr=False)
 
     name: TaskName
 
-class Put(BaseMessage):
+class Put(Message):
     """
     A message sending a serialized task result
 
@@ -169,7 +169,7 @@ class Put(BaseMessage):
     data: bytes
     children: list[TaskName]
 
-class Ready(BaseMessage):
+class Ready(Message):
     """
     A message advertising a peer joining the system
 
@@ -183,7 +183,7 @@ class Ready(BaseMessage):
     local_id: str
     mission: bytes
 
-class Stat(BaseMessage):
+class Stat(Message):
     """
     A message asking if a task is defined or executed
 
@@ -194,7 +194,7 @@ class Stat(BaseMessage):
 
     name: TaskName
 
-class Submit(BaseMessage):
+class Submit(Message):
     """
     A message asking for a task to be executed
 
@@ -205,7 +205,7 @@ class Submit(BaseMessage):
 
     task_def: CoreTaskDef
 
-Message = (
+AnyMessage = (
         Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
         | Put | Ready | Stat | Submit
         )

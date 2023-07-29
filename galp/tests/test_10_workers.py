@@ -57,7 +57,7 @@ def load_message(msg: list[bytes]) -> gm.Message:
     Deserialize message body
     """
     assert len(msg) == 5 # null, counter, counter, verb, payload
-    return TypeAdapter(gm.Message).validate_python({
+    return TypeAdapter(gm.AnyMessage).validate_python({
         'forward': [], 'incoming': [],
         **msgpack.loads(msg[-1])
         })

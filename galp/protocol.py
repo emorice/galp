@@ -40,72 +40,16 @@ class Protocol(LowerProtocol):
     message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
-    # FIXME: this is a temp disable, I'm not set on what's the correct way
-    # pylint: disable=unused-argument
-    # Callback methods
-    # ================
-    # The methods below are just placeholders that double as documentation.
-    def on_doing(self, msg: gm.Doing):
-        """A `DOING` request was received for resource `name`"""
-        return self.on_unhandled(b'DOING')
-
-    def on_done(self, msg: gm.Done):
-        """A `DONE` request was received for resource `name`"""
-        return self.on_unhandled(b'DONE')
-
-    def on_exit(self, msg: gm.Exit):
-        """An `EXIT` message was received"""
-        return self.on_unhandled(b'EXIT')
-
-    def on_exited(self, msg: gm.Exited):
-        """An `EXITED` message was received"""
-        return self.on_unhandled(b'EXITED')
-
-    def on_failed(self, msg: gm.Failed):
-        """A `FAILED` message was received"""
-        return self.on_unhandled(b'FAILED')
-
-    def on_get(self, msg: gm.Get):
-        """A `GET` request was received for resource `name`"""
-        return self.on_unhandled(b'GET')
-
-    def on_illegal(self, msg: gm.Illegal):
-        """An `ILLEGAL` message was received"""
-        return self.on_unhandled(b'ILLEGAL')
-
-    def on_not_found(self, msg: gm.NotFound):
-        """A `NOTFOUND` message was received"""
-        return self.on_unhandled(b'NOTFOUND')
-
-    def on_put(self, msg: gm.Put):
-        """A `PUT` message was received for resource `name`
-        """
-        return self.on_unhandled(b'PUT')
-
-    def on_ready(self, msg: gm.Ready):
-        """A `READY` message was received"""
-        return self.on_unhandled(b'READY')
-
-    def on_submit(self, msg: gm.Submit):
-        """A `SUBMIT` message was received"""
-        return self.on_unhandled(b'SUBMIT')
-
-    def on_found(self, msg: gm.Found):
-        """A `FOUND` message was received"""
-        return self.on_unhandled(b'FOUND')
-
-    def on_stat(self, msg: gm.Stat):
-        """A `STAT` message was received"""
-        return self.on_unhandled(b'STAT')
-
-    def on_unhandled(self, verb: bytes):
-        """
-        A message without an overriden callback was received.
-        """
-        logging.error("Unhandled GALP verb %s", verb.decode('ascii'))
 
     # Default handlers
     # ================
+
+    def on_unhandled(self, msg: gm.Message):
+        """
+        A message without an overriden callback was received.
+        """
+        logging.error("Unhandled GALP verb %s", msg.verb)
+
     def on_invalid(self, route, reason: str) -> NoReturn:
         """
         An invalid message was received.
@@ -130,36 +74,26 @@ class Protocol(LowerProtocol):
         Serialize gm.Message objects, allowing them to be returned directly from
         handlers
         """
-        if isinstance(msg, gm.BaseMessage):
+        if isinstance(msg, gm.Message):
             plain = self._dump_message(msg)
         else:
             plain = msg
         return super().write_message(plain)
 
-    # Main logic methods
+    #  Recv methods
     # ==================
+
     def on_verb(self, route, msg_body: list[bytes]):
         """Parse given message, calling callbacks as needed.
 
         Returns:
             Whatever the final handler for this message returned.
         """
-        str_verb = str(msg_body[0], 'ascii')
-        try:
-            return self.handler(str_verb)(route, msg_body)
-        except NoHandlerError:
-            self._validate(False, route, f'No such verb "{str_verb}"')
-        return None
-
-
-    # Internal message handling methods
-    event = EventNamespace()
-
-    def handler(self, event_name: str):
-        """Shortcut to call handler methods"""
-        def _handler(*args, **kwargs):
-            return self.event.handler(event_name)(self, *args, **kwargs)
-        return _handler
+        gmsg : gm.Message = self._load_message(gm.AnyMessage, route, msg_body)
+        method_name = f'on_{gmsg.verb}'
+        if not hasattr(self, method_name):
+            return self.on_unhandled(gmsg)
+        return getattr(self, method_name)(gmsg)
 
     T = TypeVar('T', bound=gm.Message)
     def _load_message(self, message_type: type[T],
@@ -188,55 +122,3 @@ class Protocol(LowerProtocol):
             self._validate(False, route, err)
 
         return msg_obj
-
-    @event.on('EXIT')
-    def _on_exit(self, route, msg):
-        return self.on_exit(self._load_message(gm.Exit, route, msg))
-
-    @event.on('EXITED')
-    def _on_exited(self, route, msg):
-        return self.on_exited(self._load_message(gm.Exited, route, msg))
-
-    @event.on('ILLEGAL')
-    def _on_illegal(self, route, msg):
-        return self.on_illegal(self._load_message(gm.Illegal, route, msg))
-
-    @event.on('GET')
-    def _on_get(self, route, msg):
-        return self.on_get(self._load_message(gm.Get, route, msg))
-
-    @event.on('DOING')
-    def _on_doing(self, route, msg):
-        return self.on_doing(self._load_message(gm.Doing, route, msg))
-
-    @event.on('DONE')
-    def _on_done(self, route, msg):
-        return self.on_done(self._load_message(gm.Done, route, msg))
-
-    @event.on('FAILED')
-    def _on_failed(self, route, msg: list[bytes]):
-        return self.on_failed(self._load_message(gm.Failed, route, msg))
-
-    @event.on('NOTFOUND')
-    def _on_not_found(self, route, msg):
-        return self.on_not_found(self._load_message(gm.NotFound, route, msg))
-
-    @event.on('PUT')
-    def _on_put(self, route, msg):
-        return self.on_put(self._load_message(gm.Put, route, msg))
-
-    @event.on('READY')
-    def _on_ready(self, route, msg: list[bytes]):
-        return self.on_ready(self._load_message(gm.Ready, route, msg))
-
-    @event.on('SUBMIT')
-    def _on_submit(self, route, msg: list[bytes]):
-        return self.on_submit(self._load_message(gm.Submit, route, msg))
-
-    @event.on('FOUND')
-    def _on_found(self, route, msg):
-        return self.on_found(self._load_message(gm.Found, route, msg))
-
-    @event.on('STAT')
-    def _on_stat(self, route, msg):
-        return self.on_stat(self._load_message(gm.Stat, route, msg))
