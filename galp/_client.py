@@ -16,6 +16,8 @@ from typing import Callable
 import zmq
 import zmq.asyncio
 
+import galp.messages as gm
+
 from galp import async_utils
 from galp.graph import ensure_task_node
 from galp.cache import CacheStack
@@ -28,7 +30,6 @@ from galp.commands import Script
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, TaskDef,
         QueryTaskDef, CoreTaskDef)
-from galp.messages import Put, Done, Doing, Failed
 
 class TaskStatus(IntEnum):
     """
@@ -336,7 +337,7 @@ class BrokerProtocol(ReplyProtocol):
 
         if verb == 'STAT':
             if self.script.commands[command_key].is_pending():
-                return self.stat(self.route, name)
+                return gm.Stat.plain_reply(self.route, name=name)
             return None
 
         raise NotImplementedError(verb)
@@ -354,10 +355,10 @@ class BrokerProtocol(ReplyProtocol):
             raise ValueError(f"Task {task_name.hex()} is unknown")
         if isinstance(task_def, CoreTaskDef):
             self.submitted_count[task_name] += 1
-            return self.submit(self.route, task_def)
+            return gm.Submit.plain_reply(self.route, task_def=task_def)
         # Literals and SubTasks are always satisfied, and never have
         # recursive children
-        return self.on_done(Done(incoming=[], forward=[], task_def=task_def,
+        return self.on_done(gm.Done(incoming=[], forward=[], task_def=task_def,
             children=[]))
 
     def get(self, route, name: TaskName):
@@ -369,7 +370,7 @@ class BrokerProtocol(ReplyProtocol):
             children = self.store.get_children(name)
         except KeyError:
             # Not found, send a normal GET
-            return super().get(route, name)
+            return gm.Get.plain_reply(route, name=name)
 
         # Found, mark command as done and pass on children
         self.script.commands['GET', name].done(children)
@@ -380,19 +381,21 @@ class BrokerProtocol(ReplyProtocol):
 
     # Protocol callbacks
     # ==================
-    def on_get(self, route, name):
+    def on_get(self, msg: gm.Get):
+        name = msg.name
+        reply: gm.Put | gm.NotFound
         try:
             data, children = self.store.get_serial(name)
-            reply = Put.plain_reply(route,
+            reply = gm.Put.reply(msg,
                 name=name, data=data, children=children)
             logging.debug('Client GET on %s', name.hex())
         except KeyError:
-            reply = self.not_found(route, name)
+            reply = gm.NotFound.reply(msg, name=name)
             logging.warning('Client missed GET on %s', name)
 
         return reply
 
-    def on_put(self, msg: Put):
+    def on_put(self, msg: gm.Put):
         """
         Receive data, and schedule sub-gets if necessary and check for
         termination
@@ -413,7 +416,7 @@ class BrokerProtocol(ReplyProtocol):
         # Schedule for sub-GETs to be sent in the future
         self.schedule_new()
 
-    def on_done(self, msg: Done):
+    def on_done(self, msg: gm.Done):
         """Given that done_task just finished, mark it as done, letting the
         command system schedule any dependent ready to be submitted, schedule
         GETs for final tasks, etc.
@@ -438,7 +441,7 @@ class BrokerProtocol(ReplyProtocol):
             command.done((True, task_def, msg.children))
             self.schedule_new()
 
-    def on_doing(self, msg: Doing):
+    def on_doing(self, msg: gm.Doing):
         """
         Just updates statistics.
 
@@ -448,26 +451,28 @@ class BrokerProtocol(ReplyProtocol):
         self.run_count[msg.name] += 1
         self._status[msg.name] = TaskStatus.RUNNING
 
-    def on_failed(self, msg: Failed):
+    def on_failed(self, msg: gm.Failed):
         """
         Mark a task and all its dependents as failed.
         """
         task_def = msg.task_def
-        msg = f'Failed to execute task {task_def}, check worker logs'
-        logging.error('TASK FAILED: %s', msg)
+        err_msg = f'Failed to execute task {task_def}, check worker logs'
+        logging.error('TASK FAILED: %s', err_msg)
 
         # Mark fetch command as failed if pending
-        self.script.commands['SUBMIT', task_def.name].failed(msg)
+        self.script.commands['SUBMIT', task_def.name].failed(err_msg)
         assert not self.script.new_commands
 
         # This is not a fatal error to the client, by default processing of
         # messages for other ongoing tasks is still permitted.
 
-    def on_not_found(self, route, name):
+    def on_not_found(self, msg: gm.NotFound):
         """
         Mark a fetch as failed, or a stat as unfruitful. Here no propagation
         logic is neeeded, it's already handled by the command dependencies.
         """
+
+        name = msg.name
 
         # Mark GET command as failed if issued
         command = self.script.commands.get(('GET', name))
@@ -489,19 +494,20 @@ class BrokerProtocol(ReplyProtocol):
                 command.failed('NOTFOUND')
                 assert not self.script.new_commands
 
-    def on_found(self, route, task_def: TaskDef):
+    def on_found(self, msg: gm.Found):
         """
         Mark STAT as completed
         """
+        task_def = msg.task_def
         name = task_def.name
         self._tasks[name] = task_def
         # Triplet (is_done, dict, children?)
         self.script.commands['STAT', name].done((False, task_def, None))
         self.schedule_new()
 
-    def on_illegal(self, route, reason):
+    def on_illegal(self, msg: gm.Illegal):
         """Should never happen"""
-        raise RuntimeError(f'ILLEGAL recevived: {reason}')
+        raise RuntimeError(f'ILLEGAL recevived: {msg.reason}')
 
     def schedule_new(self):
         """

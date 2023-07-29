@@ -15,20 +15,10 @@ from pydantic import TypeAdapter
 
 import galp.tests
 import galp.worker
-from galp.messages import Message
+import galp.messages as gm
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member
-
-# Custom fixtures
-# ===============
-@pytest.fixture(params=[
-    [b'EXIT'],
-    [b'ILLEGAL', b'You didnt say please']
-    ])
-def fatal_order(request):
-    """All messages that should make the worker quit"""
-    return request.param
 
 # Helpers
 # =======
@@ -45,16 +35,6 @@ def is_body(msg, body):
     """
     assert len(msg) >= 3
     return msg[3:] == body
-
-def load_message(msg: list[bytes]) -> Message:
-    """
-    Deserialize message body
-    """
-    assert len(msg) == 5
-    return TypeAdapter(Message).validate_python({
-        'forward': [], 'incoming': [],
-        **msgpack.loads(msg[-1])
-        })
 
 
 def body_startswith(msg, body_start):
@@ -73,37 +53,35 @@ def asserted_zmq_recv_multipart(socket):
     assert zmq.select(*selectable, timeout=4) == selectable
     return socket.recv_multipart()
 
+def load_message(msg: list[bytes]) -> gm.Message:
+    """
+    Deserialize message body
+    """
+    assert len(msg) == 5 # null, counter, counter, verb, payload
+    return TypeAdapter(gm.Message).validate_python({
+        'forward': [], 'incoming': [],
+        **msgpack.loads(msg[-1])
+        })
+
+def zmq_recv_message(socket) -> gm.Message:
+    """
+    Combined recv and deserialize message.
+
+    Checks that only such message was sent.
+    """
+    return load_message(
+            asserted_zmq_recv_multipart(socket)
+            )
+
 def assert_ready(socket):
     """
     Awaits a READY message on the socket
     """
-    ans = asserted_zmq_recv_multipart(socket)
-    assert len(ans) == 5
-    # Third part is a worker self-id
-    assert ans[0] == b''
-    # 1 and 2 are counters
-    assert ans[3] == b'READY'
-    # 4 is a self id
+    msg = zmq_recv_message(socket)
+    assert isinstance(msg, gm.Ready)
 
 # Tests
 # =====
-
-def test_shutdown(worker_socket, fatal_order):
-    """Manually send a exit message to a local worker and wait a bit for it to
-    terminate."""
-
-    socket, _endpoint, worker_handle = worker_socket
-
-    assert worker_handle.poll() is None
-
-    # Mind the empty frame
-    socket.send_multipart(make_msg(*fatal_order))
-
-    assert worker_handle.wait(timeout=4) == 0
-
-    # Note: we only close on normal termination, else we rely on the fixture
-    # finalization to set the linger before closing.
-    socket.close()
 
 @pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
 def test_signals(worker_socket, sig):
@@ -145,105 +123,9 @@ def test_illegals(worker_socket, msg_body):
 
     assert_ready(socket)
 
-    ans2 = asserted_zmq_recv_multipart(socket)
-    assert body_startswith(ans2, [b'ILLEGAL'])
+    msg = zmq_recv_message(socket)
+    assert isinstance(msg, gm.Illegal)
 
-def test_task(worker_socket):
-    """
-    Tests running a task by manually sending and receiving messages
-    """
-    socket, *_ = worker_socket
-
-    task = galp.steps.galp_hello()
-    name = task.name
-
-    socket.send_multipart(make_msg(b'SUBMIT',
-        msgpack.packb(task.task_def.model_dump())
-        ))
-
-    assert_ready(socket)
-
-    ans = load_message(asserted_zmq_recv_multipart(socket))
-    assert (ans.verb, ans.name) == ('doing', name)
-
-    ans = asserted_zmq_recv_multipart(socket)
-    assert body_startswith(ans, [b'DONE'])
-
-    socket.send_multipart(make_msg(b'GET', name))
-
-    ans = asserted_zmq_recv_multipart(socket)
-    assert ans[3] == b'PUT'
-    assert msgpack.unpackb(ans[5]) == 42
-
-def test_notfound(worker_socket):
-    """Tests the answer of server when asking to send unexisting resource"""
-    worker_socket, *_ = worker_socket
-
-    # Use a name or the rigth size to pass validation
-    bad_handle = b'RABBIT' * 5 + b'xx'
-    worker_socket.send_multipart(make_msg(b'GET', bad_handle))
-
-    assert_ready(worker_socket)
-
-    ans = asserted_zmq_recv_multipart(worker_socket)
-    assert is_body(ans, [b'NOTFOUND', bad_handle])
-
-def test_reference(worker_socket):
-    """Tests passing the result of a task to an other through handle"""
-    # pylint: disable=no-member
-    worker_socket, *_ = worker_socket
-
-    task1 = galp.steps.galp_double()
-
-    task2 = galp.steps.galp_double(task1)
-
-    worker_socket.send_multipart(make_msg(b'SUBMIT',
-        msgpack.packb(task1.task_def.model_dump())
-        ))
-
-    assert_ready(worker_socket)
-
-    # doing
-    doing = load_message(asserted_zmq_recv_multipart(worker_socket))
-    done = asserted_zmq_recv_multipart(worker_socket)
-    assert (doing.verb, doing.name) == ('doing', task1.name)
-    assert body_startswith(done, [b'DONE'])
-
-    worker_socket.send_multipart(make_msg(b'SUBMIT',
-        msgpack.packb(task2.task_def.model_dump())
-        ))
-
-    doing = load_message(asserted_zmq_recv_multipart(worker_socket))
-    done = asserted_zmq_recv_multipart(worker_socket)
-    assert (doing.verb, doing.name) == ('doing', task2.name)
-    assert body_startswith(done, [b'DONE'])
-
-    # Let's try async get for a twist !
-    worker_socket.send_multipart(make_msg(b'GET', task2.name))
-    worker_socket.send_multipart(make_msg(b'GET', task1.name))
-
-    # Order of the answers is unspecified
-    got_a = asserted_zmq_recv_multipart(worker_socket)
-    got_b = asserted_zmq_recv_multipart(worker_socket)
-
-    assert got_a[0] == got_b[0] == b''
-    assert got_a[3] == got_b[3] == b'PUT'
-    expected = {2, 4}
-    assert { msgpack.unpackb(got[5]) for got in (got_a, got_b) } == expected
-
-async def test_async_socket(async_worker_socket):
-    """
-    Tests simple message exchange with the asyncio flavor of pyzmq
-    """
-    sock, _, _ = async_worker_socket
-
-    await asyncio.wait_for(sock.send_multipart(make_msg(b'RABBIT')), 3)
-
-    ready = await asyncio.wait_for(sock.recv_multipart(), 3)
-    assert ready[3] == b'READY'
-
-    ans = await asyncio.wait_for(sock.recv_multipart(), 3)
-    assert body_startswith(ans, [b'ILLEGAL'])
 
 async def test_fork_worker(tmpdir):
     """

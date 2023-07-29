@@ -13,10 +13,10 @@ import psutil
 import zmq
 
 import galp.worker
+import galp.messages as gm
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.reply_protocol import ReplyProtocol
 from galp.async_utils import background
-from galp.messages import task_key, Ready, Role, Exited
 
 class Pool:
     """
@@ -92,7 +92,7 @@ class Pool:
         Sends a message back to broker to signal a worker died
         """
         await self.broker_transport.send_message(
-            Exited.plain_reply(
+            gm.Exited.plain_reply(
                 self.broker_protocol.default_route(),
                 peer=str(pid)
                 )
@@ -104,7 +104,7 @@ class Pool:
         """
         route = self.broker_protocol.default_route()
         await self.broker_transport.send_message(
-            Ready(role=Role.POOL, local_id=str(os.getpid()), mission=b'',
+            gm.Ready(role=gm.Role.POOL, local_id=str(os.getpid()), mission=b'',
                 incoming=route[0], forward=route[1])
             )
 
@@ -164,7 +164,7 @@ class BrokerProtocol(ReplyProtocol):
         """
         verb = msg_body[0].decode('ascii')
         if verb in ('STAT', 'SUBMIT', 'GET'):
-            key = task_key(msg_body)
+            key = gm.task_key(msg_body)
             self.pool.start_worker(key)
         else:
             logging.error('Unexpected verb %s', verb)

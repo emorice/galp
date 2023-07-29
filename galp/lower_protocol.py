@@ -43,7 +43,6 @@ class MessageList(list):
         new_list.extend(other)
         return new_list
 
-
 class BaseProtocol:
     """
     Abstract class defining the interface expected by the transport

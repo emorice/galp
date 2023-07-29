@@ -13,7 +13,7 @@ import galp
 import galp.tests.steps as gts
 from galp.protocol import Protocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.messages import Doing
+from galp.messages import Doing, Submit, NotFound
 
 # pylint: disable=redefined-outer-name
 
@@ -81,7 +81,7 @@ async def test_fill_queue(blocked_client):
     with pytest.raises(asyncio.TimeoutError):
         async with timeout(1):
             await client.transport.send_message(
-                client.protocol.submit(route, task.task_def)
+                Submit.plain_reply(route, task_def=task.task_def)
                 )
 
 async def test_unique_submission(peer_client):
@@ -110,9 +110,9 @@ async def test_unique_submission(peer_client):
             for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
                 await peer.send_message(
-                    peer.protocol.not_found(
+                    NotFound.plain_reply(
                         peer.protocol.default_route(),
-                        name
+                        name=name
                         )
                     )
 

@@ -79,6 +79,12 @@ class Done(BaseMessage):
     task_def: TaskDef
     children: list[TaskName]
 
+class Exit(BaseMessage):
+    """
+    A message asking a peer to leave the system
+    """
+    verb: Literal['exit'] = Field('exit', repr=False)
+
 class Exited(BaseMessage):
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
@@ -102,6 +108,50 @@ class Failed(BaseMessage):
 
     task_def: CoreTaskDef
 
+class Found(BaseMessage):
+    """
+    A message notifying that a task was registered, but not yet executed
+
+    Attributes:
+        task_def: the task definition
+    """
+    verb: Literal['found'] = Field('found', repr=False)
+
+    task_def: TaskDef
+
+class Get(BaseMessage):
+    """
+    A message asking for an already computed resource
+
+    Attributes:
+        name: the task name
+    """
+    verb: Literal['get'] = Field('get', repr=False)
+
+    name: TaskName
+
+class Illegal(BaseMessage):
+    """
+    A message notifying that a previously sent message was malformed
+
+    Attributes:
+        reason: an error message
+    """
+    verb: Literal['illegal'] = Field('illegal', repr=False)
+
+    reason:str
+
+class NotFound(BaseMessage):
+    """
+    A message indicating that no trace of a task was found
+
+    Attributes:
+        name: the task name
+    """
+    verb: Literal['notfound'] = Field('notfound', repr=False)
+
+    name: TaskName
+
 class Put(BaseMessage):
     """
     A message sending a serialized task result
@@ -118,6 +168,7 @@ class Put(BaseMessage):
     name: TaskName
     data: bytes
     children: list[TaskName]
+
 class Ready(BaseMessage):
     """
     A message advertising a peer joining the system
@@ -132,4 +183,29 @@ class Ready(BaseMessage):
     local_id: str
     mission: bytes
 
-Message = Ready | Put | Done | Doing
+class Stat(BaseMessage):
+    """
+    A message asking if a task is defined or executed
+
+    Attributes:
+        name: the task name
+    """
+    verb: Literal['stat'] = Field('stat', repr=False)
+
+    name: TaskName
+
+class Submit(BaseMessage):
+    """
+    A message asking for a task to be executed
+
+    Attributes:
+        task_def: the task to execute
+    """
+    verb: Literal['submit'] = Field('submit', repr=False)
+
+    task_def: CoreTaskDef
+
+Message = (
+        Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
+        | Put | Ready | Stat | Submit
+        )

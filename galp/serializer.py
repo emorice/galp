@@ -112,6 +112,8 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
     """
     Load a msgpack-serialized pydantic model
 
+    Also works on union of models (though the call won't type check).
+
     Args:
         model_type: The pydantic model class of the object to create
         payload: The msgpack-encoded buffer with the object data
@@ -131,7 +133,7 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
         logging.exception(err)
         return None, err
     try:
-        return model_type.model_validate(doc), None
+        return TypeAdapter(model_type).validate_python(doc), None
     except ValidationError:
         err = 'Invalid model data'
         logging.exception(err)

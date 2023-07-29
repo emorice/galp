@@ -8,7 +8,7 @@ import zmq
 from galp.protocol import Protocol
 from galp.serializer import Serializer
 from galp.task_types import TaskName
-from galp.messages import Put
+from galp.messages import Put, Get
 
 class SynClient(Protocol):
     """
@@ -34,7 +34,7 @@ class SynClient(Protocol):
         """
         self.socket.send_multipart(
             self.write_message(
-                self.get(self.route, name)
+                Get.plain_reply(self.route, name=name)
                 )
             )
 

@@ -4,14 +4,12 @@ GALP protocol implementation
 
 import logging
 
-from typing import NoReturn, TypeVar, Any
+from typing import NoReturn, TypeVar
 
-from galp.task_types import TaskName, TaskDef, CoreTaskDef
+import galp.messages as gm
 from galp.lower_protocol import LowerProtocol, Route, PlainMessage
 from galp.eventnamespace import EventNamespace, NoHandlerError
-from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
-from galp.messages import (BaseMessage, Message, Ready, Put, Done, Doing,
-                           Exited, Failed)
+from galp.serializer import dump_model, load_model
 
 # Errors and exceptions
 # =====================
@@ -47,56 +45,56 @@ class Protocol(LowerProtocol):
     # Callback methods
     # ================
     # The methods below are just placeholders that double as documentation.
-    def on_doing(self, msg: Doing):
+    def on_doing(self, msg: gm.Doing):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
 
-    def on_done(self, msg: Done):
+    def on_done(self, msg: gm.Done):
         """A `DONE` request was received for resource `name`"""
         return self.on_unhandled(b'DONE')
 
-    def on_exit(self, route):
+    def on_exit(self, msg: gm.Exit):
         """An `EXIT` message was received"""
         return self.on_unhandled(b'EXIT')
 
-    def on_exited(self, msg: Exited):
+    def on_exited(self, msg: gm.Exited):
         """An `EXITED` message was received"""
         return self.on_unhandled(b'EXITED')
 
-    def on_failed(self, msg: Failed):
+    def on_failed(self, msg: gm.Failed):
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
 
-    def on_get(self, route, name: TaskName):
+    def on_get(self, msg: gm.Get):
         """A `GET` request was received for resource `name`"""
         return self.on_unhandled(b'GET')
 
-    def on_illegal(self, route, reason: bytes):
+    def on_illegal(self, msg: gm.Illegal):
         """An `ILLEGAL` message was received"""
         return self.on_unhandled(b'ILLEGAL')
 
-    def on_not_found(self, route, name: TaskName):
+    def on_not_found(self, msg: gm.NotFound):
         """A `NOTFOUND` message was received"""
         return self.on_unhandled(b'NOTFOUND')
 
-    def on_put(self, msg: Put):
+    def on_put(self, msg: gm.Put):
         """A `PUT` message was received for resource `name`
         """
         return self.on_unhandled(b'PUT')
 
-    def on_ready(self, ready: Ready):
+    def on_ready(self, msg: gm.Ready):
         """A `READY` message was received"""
         return self.on_unhandled(b'READY')
 
-    def on_submit(self, route, task_def: CoreTaskDef):
+    def on_submit(self, msg: gm.Submit):
         """A `SUBMIT` message was received"""
         return self.on_unhandled(b'SUBMIT')
 
-    def on_found(self, route, task_def: TaskDef):
+    def on_found(self, msg: gm.Found):
         """A `FOUND` message was received"""
         return self.on_unhandled(b'FOUND')
 
-    def on_stat(self, route, name: TaskName):
+    def on_stat(self, msg: gm.Stat):
         """A `STAT` message was received"""
         return self.on_unhandled(b'STAT')
 
@@ -117,38 +115,7 @@ class Protocol(LowerProtocol):
     # Send methods
     # ============
 
-    def get(self, route, name: TaskName):
-        """
-        Builds a GET message
-
-        Args:
-            name: the name of the task
-        """
-        msg = [b'GET', name]
-        return route, msg
-
-    def illegal(self, route, reason: str):
-        """
-        Builds an ILLEGAL message.
-
-        This message is meant to be done when the peer has sent a message that
-        should not have been send or contains a fundamental error. This is
-        useful to trace back errors to the original sender but should not be
-        needed in normal operation.
-        """
-        return route, [b'ILLEGAL', reason.encode('ascii')]
-
-    def not_found(self, route, name: TaskName):
-        """
-        Builds a NOTFOUND message
-
-        Args:
-            name: the name of the task
-        """
-        return route, [b'NOTFOUND', name]
-
-
-    def _dump_message(self, msg: Message):
+    def _dump_message(self, msg: gm.Message):
         route = (msg.incoming, msg.forward)
         frames = [
                 msg.verb.upper().encode('ascii'),
@@ -158,36 +125,16 @@ class Protocol(LowerProtocol):
             frames.append(msg.data)
         return route, frames
 
-    def submit(self, route, task_def: CoreTaskDef):
-        """Sends SUBMIT for given task object.
-
-        Literal and derived tasks should not be passed at all and will trigger
-        an error, since they do not represent the result of a step and cannot be
-        executed.
-
-        Handle them in a wrapper or override.
+    def write_message(self, msg: PlainMessage | gm.Message):
         """
-        if not isinstance(task_def, CoreTaskDef):
-            raise ValueError('Only core tasks can be passed to Protocol layer')
-
-        return route, [b'SUBMIT', dump_model(task_def)]
-
-    def stat(self, route, name: TaskName):
+        Serialize gm.Message objects, allowing them to be returned directly from
+        handlers
         """
-        Builds a STAT message
-
-        Args:
-            name: the name of the task
-        """
-        return route, [b'STAT', name]
-
-    def found(self, route, task_def: TaskDef):
-        """
-        Builds a FOUND message
-        """
-        name, payload = dump_task_def(task_def)
-
-        return route, [b'FOUND', name, payload]
+        if isinstance(msg, gm.BaseMessage):
+            plain = self._dump_message(msg)
+        else:
+            plain = msg
+        return super().write_message(plain)
 
     # Main logic methods
     # ==================
@@ -214,64 +161,7 @@ class Protocol(LowerProtocol):
             return self.event.handler(event_name)(self, *args, **kwargs)
         return _handler
 
-    @event.on('EXIT')
-    def _on_exit(self, route, msg):
-        self._validate(len(msg) == 1, route, 'EXIT with args')
-        return self.on_exit(route)
-
-    @event.on('EXITED')
-    def _on_exited(self, route, msg):
-        return self.on_exited(self._load_message(Exited, route, msg))
-
-    @event.on('ILLEGAL')
-    def _on_illegal(self, route, msg):
-        self._validate(len(msg) >= 2, route, 'ILLEGAL without a reason')
-        self._validate(len(msg) <= 2, route, 'ILLEGAL with too many reasons')
-
-        reason = msg[1]
-
-        return self.on_illegal(route, reason)
-
-    @event.on('GET')
-    def _on_get(self, route, msg):
-        self._validate(len(msg) >= 2, route, 'GET without a name')
-        self._validate(len(msg) <= 2, route, 'GET with too many names')
-
-        name = TaskName(msg[1])
-
-        return self.on_get(route, name)
-
-    @event.on('DOING')
-    def _on_doing(self, route, msg):
-        return self.on_doing(self._load_message(Doing, route, msg))
-
-    @event.on('DONE')
-    def _on_done(self, route, msg):
-        return self.on_done(self._load_message(Done, route, msg))
-
-    @event.on('FAILED')
-    def _on_failed(self, route, msg: list[bytes]):
-        return self.on_failed(self._load_message(Failed, route, msg))
-
-    @event.on('NOTFOUND')
-    def _on_not_found(self, route, msg):
-        self._validate(len(msg) >= 2, route, 'NOTFOUND without a name')
-        self._validate(len(msg) <= 2, route, 'NOTFOUND with too many names')
-
-        name = TaskName(msg[1])
-
-        return self.on_not_found(route, name)
-
-    @event.on('PUT')
-    def _on_put(self, route, msg):
-        return self.on_put(self._load_message(Put, route, msg))
-
-    @event.on('READY')
-    def _on_ready(self, route, msg: list[bytes]):
-        return self.on_ready(self._load_message(Ready, route, msg))
-
-    T = TypeVar('T', bound=Message)
-
+    T = TypeVar('T', bound=gm.Message)
     def _load_message(self, message_type: type[T],
             route: Route, msg: list[bytes]) -> T:
 
@@ -299,38 +189,54 @@ class Protocol(LowerProtocol):
 
         return msg_obj
 
+    @event.on('EXIT')
+    def _on_exit(self, route, msg):
+        return self.on_exit(self._load_message(gm.Exit, route, msg))
+
+    @event.on('EXITED')
+    def _on_exited(self, route, msg):
+        return self.on_exited(self._load_message(gm.Exited, route, msg))
+
+    @event.on('ILLEGAL')
+    def _on_illegal(self, route, msg):
+        return self.on_illegal(self._load_message(gm.Illegal, route, msg))
+
+    @event.on('GET')
+    def _on_get(self, route, msg):
+        return self.on_get(self._load_message(gm.Get, route, msg))
+
+    @event.on('DOING')
+    def _on_doing(self, route, msg):
+        return self.on_doing(self._load_message(gm.Doing, route, msg))
+
+    @event.on('DONE')
+    def _on_done(self, route, msg):
+        return self.on_done(self._load_message(gm.Done, route, msg))
+
+    @event.on('FAILED')
+    def _on_failed(self, route, msg: list[bytes]):
+        return self.on_failed(self._load_message(gm.Failed, route, msg))
+
+    @event.on('NOTFOUND')
+    def _on_not_found(self, route, msg):
+        return self.on_not_found(self._load_message(gm.NotFound, route, msg))
+
+    @event.on('PUT')
+    def _on_put(self, route, msg):
+        return self.on_put(self._load_message(gm.Put, route, msg))
+
+    @event.on('READY')
+    def _on_ready(self, route, msg: list[bytes]):
+        return self.on_ready(self._load_message(gm.Ready, route, msg))
+
     @event.on('SUBMIT')
     def _on_submit(self, route, msg: list[bytes]):
-        self._validate(len(msg) == 2, route, 'SUBMIT with wrong number of parts')
-
-        task_def, err = load_model(CoreTaskDef, msg[1])
-        if task_def is None:
-            self._validate(False, route, err)
-
-        return self.on_submit(route, task_def)
+        return self.on_submit(self._load_message(gm.Submit, route, msg))
 
     @event.on('FOUND')
     def _on_found(self, route, msg):
-        self._validate(len(msg) == 3, route, 'FOUND with wrong number of parts')
-        task_def = load_task_def(name=msg[1], def_buffer=msg[2])
-        return self.on_found(route, task_def)
+        return self.on_found(self._load_message(gm.Found, route, msg))
 
     @event.on('STAT')
     def _on_stat(self, route, msg):
-        self._validate(len(msg) >= 2, route, 'STAT without a name')
-        self._validate(len(msg) <= 2, route, 'STAT with too many names')
-
-        name = TaskName(msg[1])
-
-        return self.on_stat(route, name)
-
-    def write_message(self, msg: PlainMessage | Message):
-        """
-        Serialize Message objects, allowing them to be returned directly from
-        handlers
-        """
-        if isinstance(msg, BaseMessage):
-            plain = self._dump_message(msg)
-        else:
-            plain = msg
-        return super().write_message(plain)
+        return self.on_stat(self._load_message(gm.Stat, route, msg))

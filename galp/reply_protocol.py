@@ -2,6 +2,7 @@
 Galp protocol for leaf peers
 """
 
+import galp.messages as gm
 from galp.protocol import Protocol, IllegalRequestError
 
 class ReplyProtocol(Protocol):
@@ -20,4 +21,4 @@ class ReplyProtocol(Protocol):
         try:
             return super().on_verb(route, msg_body)
         except IllegalRequestError as exc:
-            return self.illegal(exc.route, exc.reason)
+            return gm.Illegal.plain_reply(exc.route, reason=exc.reason)
