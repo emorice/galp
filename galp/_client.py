@@ -28,7 +28,7 @@ from galp.commands import Script
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, TaskDef,
         QueryTaskDef, CoreTaskDef)
-from galp.messages import Put, Done, Doing
+from galp.messages import Put, Done, Doing, Failed
 
 class TaskStatus(IntEnum):
     """
@@ -448,10 +448,11 @@ class BrokerProtocol(ReplyProtocol):
         self.run_count[msg.name] += 1
         self._status[msg.name] = TaskStatus.RUNNING
 
-    def on_failed(self, route, task_def):
+    def on_failed(self, msg: Failed):
         """
         Mark a task and all its dependents as failed.
         """
+        task_def = msg.task_def
         msg = f'Failed to execute task {task_def}, check worker logs'
         logging.error('TASK FAILED: %s', msg)
 

@@ -51,8 +51,8 @@ async def test_counters():
         # We do not process this one, simulating b being slow
 
         await peer_b.send_message(
-            peer_b.protocol.put(Put.plain_reply(route, name=name,
-                data=b'some_data', children=[]))
+            Put.plain_reply(route, name=name,
+                data=b'some_data', children=[])
             )
         await peer_a.recv_message()
 

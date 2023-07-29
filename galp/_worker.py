@@ -35,7 +35,7 @@ from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
 from galp.task_types import CoreTaskDef, TaskDef, TaskName
-from galp.messages import Ready, Role, Put, Done, Doing
+from galp.messages import Ready, Role, Put, Done, Doing, Failed
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -314,10 +314,10 @@ class Worker:
             task = await self.galp_jobs.get()
             job = await task
             if job.success:
-                reply = Done.plain_reply(job.route,
+                reply : Failed | Done = Done.plain_reply(job.route,
                     task_def=job.task_def, children=job.result)
             else:
-                reply = self.protocol.failed(job.route, job.task_def)
+                reply = Failed.plain_reply(job.route, task_def=job.task_def)
             await self.transport.send_message(reply)
 
     def schedule_task(self, client_route, task_def: CoreTaskDef):

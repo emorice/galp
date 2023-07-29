@@ -16,7 +16,7 @@ import galp.worker
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.reply_protocol import ReplyProtocol
 from galp.async_utils import background
-from galp.messages import task_key, Ready, Role
+from galp.messages import task_key, Ready, Role, Exited
 
 class Pool:
     """
@@ -92,8 +92,9 @@ class Pool:
         Sends a message back to broker to signal a worker died
         """
         await self.broker_transport.send_message(
-            self.broker_protocol.exited(
-                self.broker_protocol.default_route(), str(pid).encode('ascii')
+            Exited.plain_reply(
+                self.broker_protocol.default_route(),
+                peer=str(pid)
                 )
             )
 

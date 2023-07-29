@@ -10,7 +10,8 @@ from galp.task_types import TaskName, TaskDef, CoreTaskDef
 from galp.lower_protocol import LowerProtocol, Route, PlainMessage
 from galp.eventnamespace import EventNamespace, NoHandlerError
 from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
-from galp.messages import BaseMessage, Message, Ready, Put, Done, Doing
+from galp.messages import (BaseMessage, Message, Ready, Put, Done, Doing,
+                           Exited, Failed)
 
 # Errors and exceptions
 # =====================
@@ -58,11 +59,11 @@ class Protocol(LowerProtocol):
         """An `EXIT` message was received"""
         return self.on_unhandled(b'EXIT')
 
-    def on_exited(self, route, peer):
+    def on_exited(self, msg: Exited):
         """An `EXITED` message was received"""
         return self.on_unhandled(b'EXITED')
 
-    def on_failed(self, route, task_def: CoreTaskDef):
+    def on_failed(self, msg: Failed):
         """A `FAILED` message was received"""
         return self.on_unhandled(b'FAILED')
 
@@ -115,26 +116,6 @@ class Protocol(LowerProtocol):
 
     # Send methods
     # ============
-
-    def exited(self, route, peer: bytes):
-        """Signal the given peer has exited"""
-        msg = [b'EXITED', peer]
-        return route, msg
-
-    def failed(self, route, task_def: CoreTaskDef):
-        """
-        Builds a FAILED message
-
-        Args:
-            task_def: the definition of the task
-        """
-        return self.failed_raw(route, dump_model(task_def))
-
-    def failed_raw(self, route, payload: bytes):
-        """
-        Builds a failed message directly from a packed payload
-        """
-        return route, [b'FAILED', payload]
 
     def get(self, route, name: TaskName):
         """
@@ -240,9 +221,7 @@ class Protocol(LowerProtocol):
 
     @event.on('EXITED')
     def _on_exited(self, route, msg):
-        self._validate(len(msg) == 2, route, 'EXITED without exactly one peer id')
-        peer = msg[1]
-        return self.on_exited(route, peer)
+        return self.on_exited(self._load_message(Exited, route, msg))
 
     @event.on('ILLEGAL')
     def _on_illegal(self, route, msg):
@@ -272,14 +251,7 @@ class Protocol(LowerProtocol):
 
     @event.on('FAILED')
     def _on_failed(self, route, msg: list[bytes]):
-        self._validate(len(msg) >= 2, route, 'FAILED without an arg')
-        self._validate(len(msg) <= 2, route, 'FAILED with too many args')
-
-        task_def, err = load_model(CoreTaskDef, msg[1])
-        if task_def is None:
-            self._validate(False, route, err)
-
-        return self.on_failed(route, task_def)
+        return self.on_failed(self._load_message(Failed, route, msg))
 
     @event.on('NOTFOUND')
     def _on_not_found(self, route, msg):

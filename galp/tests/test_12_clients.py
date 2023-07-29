@@ -123,10 +123,10 @@ async def test_unique_submission(peer_client):
             await peer.recv_message()
             logging.info('Mock processing')
             await peer.send_message(
-                peer.protocol.doing(Doing.plain_reply(
+                Doing.plain_reply(
                     peer.protocol.default_route(),
                     name=task.name # pylint: disable=no-member
-                    ))
+                    )
                 )
             # We should not receive any further message, at least until we add status
             # update to the protocol

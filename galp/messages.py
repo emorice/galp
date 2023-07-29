@@ -9,7 +9,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, PlainSerializer
 
 from .lower_protocol import Route
-from .task_types import TaskName, TaskDef
+from .task_types import TaskName, TaskDef, CoreTaskDef
 
 def task_key(msg: list[bytes]) -> bytes:
     """
@@ -78,6 +78,29 @@ class Done(BaseMessage):
 
     task_def: TaskDef
     children: list[TaskName]
+
+class Exited(BaseMessage):
+    """
+    Signals that a peer (unexpectedly) exited. This is typically sent by an
+    other peer that detected the kill event
+
+    Attributes:
+        peer: the local id (pid) of the exited peer
+    """
+    verb: Literal['exited'] = Field('exited', repr=False)
+
+    peer: str
+
+class Failed(BaseMessage):
+    """
+    Signals that the execution of task has failed
+
+    Attributes:
+        task_def: the definition of the failed task
+    """
+    verb: Literal['failed'] = Field('failed', repr=False)
+
+    task_def: CoreTaskDef
 
 class Put(BaseMessage):
     """

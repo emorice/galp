@@ -12,8 +12,10 @@ import zmq
 from galp.protocol import IllegalRequestError
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.task_types import TaskName, TaskDef, Resources
-from galp.messages import task_key, Ready, Role, Route, Put, Done
+from galp.task_types import TaskName, Resources, CoreTaskDef
+from galp.messages import (task_key, Ready, Role, Route, Put, Done, Exited,
+                           Failed)
+from galp.serializer import load_model
 
 class Broker:
     """
@@ -126,9 +128,8 @@ class CommonProtocol(ReplyProtocol):
     def on_done(self, msg: Done):
         self.mark_worker_available(msg.incoming)
 
-    def on_failed(self, route, task_def):
-        worker_route, _ = route
-        self.mark_worker_available(worker_route)
+    def on_failed(self, msg: Failed):
+        self.mark_worker_available(msg.incoming)
 
     def on_not_found(self, route, name):
         worker_route, _ = route
@@ -141,10 +142,11 @@ class CommonProtocol(ReplyProtocol):
     def on_put(self, msg: Put):
         self.mark_worker_available(msg.incoming)
 
-    def on_exited(self, route, peer: bytes):
+    def on_exited(self, msg: Exited):
+        peer = msg.peer
         logging.error("Worker %s exited", peer)
 
-        route = self.route_from_peer.get(peer.decode('ascii'))
+        route = self.route_from_peer.get(peer)
         if route is None:
             logging.error("Worker %s is unknown, ignoring exit", peer)
             return None
@@ -164,7 +166,9 @@ class CommonProtocol(ReplyProtocol):
         if command_name == b'GET':
             return self.not_found(new_route, TaskName(payload))
         if command_name == b'SUBMIT':
-            return self.failed_raw(new_route, payload)
+            task_def, err = load_model(CoreTaskDef, payload)
+            assert not err
+            return Failed.plain_reply(new_route, task_def=task_def)
         logging.error(
             'Worker %s died while handling %s, no error propagation',
             peer, alloc
