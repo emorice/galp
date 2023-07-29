@@ -134,8 +134,8 @@ class WorkerProtocol(ReplyProtocol):
         logging.debug('Received GET for %s', name)
         try:
             data, children = self.store.get_serial(name)
-            reply = self.put(Put.plain_reply(route, name=name, data=data,
-                children=children))
+            reply = Put.plain_reply(route, name=name, data=data,
+                children=children)
             logging.info('GET: Cache HIT: %s', name)
             return reply
         except KeyError:
@@ -161,11 +161,11 @@ class WorkerProtocol(ReplyProtocol):
         # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name)
-            return self.done(Done.plain_reply(route,
-                task_def=task_def, children=[]))
+            return Done.plain_reply(route,
+                task_def=task_def, children=[])
 
         # If not in cache, resolve metadata and run the task
-        replies = MessageList([self.doing(Doing.plain_reply(route, name=name))])
+        replies = MessageList([Doing.plain_reply(route, name=name)])
 
         # Schedule the task first. It won't actually start until its inputs are
         # marked as available, and will return the list of GETs that are needed
@@ -216,8 +216,8 @@ class WorkerProtocol(ReplyProtocol):
         # Case 1: both def and children, DONE
         if task_def is not None and children is not None:
             logging.info('STAT: DONE %s', name)
-            return self.done(Done.plain_reply(route, task_def=task_def,
-                children=children))
+            return Done.plain_reply(route, task_def=task_def,
+                children=children)
 
         # Case 2: only def, FOUND
         if task_def is not None:
@@ -314,8 +314,8 @@ class Worker:
             task = await self.galp_jobs.get()
             job = await task
             if job.success:
-                reply = self.protocol.done(Done.plain_reply(job.route,
-                    task_def=job.task_def, children=job.result))
+                reply = Done.plain_reply(job.route,
+                    task_def=job.task_def, children=job.result)
             else:
                 reply = self.protocol.failed(job.route, job.task_def)
             await self.transport.send_message(reply)
@@ -346,13 +346,11 @@ class Worker:
         Main message processing loop of the worker.
         """
         route = self.protocol.default_route()
-        ready = self.protocol.ready(
-            Ready(
-                role=Role.WORKER,
-                local_id=str(os.getpid()),
-                mission=self.mission,
-                incoming=route[0], forward=route[1],
-                )
+        ready = Ready(
+            role=Role.WORKER,
+            local_id=str(os.getpid()),
+            mission=self.mission,
+            incoming=route[0], forward=route[1],
             )
         await self.transport.send_message(ready)
 

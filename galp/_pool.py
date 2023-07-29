@@ -103,10 +103,8 @@ class Pool:
         """
         route = self.broker_protocol.default_route()
         await self.broker_transport.send_message(
-            self.broker_protocol.ready(
-                Ready(role=Role.POOL, local_id=str(os.getpid()), mission=b'',
-                    incoming=route[0], forward=route[1])
-                )
+            Ready(role=Role.POOL, local_id=str(os.getpid()), mission=b'',
+                incoming=route[0], forward=route[1])
             )
 
     async def check_deaths(self):

@@ -383,8 +383,8 @@ class BrokerProtocol(ReplyProtocol):
     def on_get(self, route, name):
         try:
             data, children = self.store.get_serial(name)
-            reply = self.put(Put.plain_reply(route,
-                name=name, data=data, children=children))
+            reply = Put.plain_reply(route,
+                name=name, data=data, children=children)
             logging.debug('Client GET on %s', name.hex())
         except KeyError:
             reply = self.not_found(route, name)

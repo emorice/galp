@@ -13,6 +13,8 @@ This actually ZMQ specific and should be changed to a generic if we ever need
 more protocols
 """
 
+PlainMessage = tuple[tuple[Route, Route], list[bytes]]
+
 class MessageList(list):
     """
     Litterally just a list of message objects.
@@ -41,11 +43,12 @@ class MessageList(list):
         new_list.extend(other)
         return new_list
 
+
 class BaseProtocol:
     """
     Abstract class defining the interface expected by the transport
     """
-    def write_message(self, msg: tuple[Any, list[bytes]]):
+    def write_message(self, msg: PlainMessage):
         """
         Takes an application-specific message description, and returns the
         sequence of bytes to send. Return None to suppress the message instead.
@@ -163,7 +166,7 @@ class LowerProtocol(BaseSplitProtocol):
 
         return MessageList()
 
-    def write_message(self, msg: tuple[tuple[Route, Route], list[bytes]]):
+    def write_message(self, msg: PlainMessage):
         """
         Concats route and message.
         """

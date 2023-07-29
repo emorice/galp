@@ -7,10 +7,10 @@ import logging
 from typing import NoReturn, TypeVar, Any
 
 from galp.task_types import TaskName, TaskDef, CoreTaskDef
-from galp.lower_protocol import LowerProtocol, Route
+from galp.lower_protocol import LowerProtocol, Route, PlainMessage
 from galp.eventnamespace import EventNamespace, NoHandlerError
 from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
-from galp.messages import Message, Ready, Put, Done, Doing
+from galp.messages import BaseMessage, Message, Ready, Put, Done, Doing
 
 # Errors and exceptions
 # =====================
@@ -115,17 +115,6 @@ class Protocol(LowerProtocol):
 
     # Send methods
     # ============
-    def doing(self, msg: Doing):
-        """
-        Builds a DOING message
-        """
-        return self._dump_message(msg)
-
-    def done(self, msg: Done):
-        """
-        Builds a DONE message
-        """
-        return self._dump_message(msg)
 
     def exited(self, route, peer: bytes):
         """Signal the given peer has exited"""
@@ -177,17 +166,6 @@ class Protocol(LowerProtocol):
         """
         return route, [b'NOTFOUND', name]
 
-    def put(self, msg: Put):
-        """
-        Builds a PUT message
-        """
-        return self._dump_message(msg)
-
-    def ready(self, msg: Ready):
-        """
-        Sends a READY message.
-        """
-        return self._dump_message(msg)
 
     def _dump_message(self, msg: Message):
         route = (msg.incoming, msg.forward)
@@ -373,3 +351,14 @@ class Protocol(LowerProtocol):
         name = TaskName(msg[1])
 
         return self.on_stat(route, name)
+
+    def write_message(self, msg: PlainMessage | Message):
+        """
+        Serialize Message objects, allowing them to be returned directly from
+        handlers
+        """
+        if isinstance(msg, BaseMessage):
+            plain = self._dump_message(msg)
+        else:
+            plain = msg
+        return super().write_message(plain)
