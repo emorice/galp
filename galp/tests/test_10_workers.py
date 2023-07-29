@@ -3,7 +3,6 @@ Tests direct communication with a worker, with no broker or client involved.
 """
 
 import os
-import asyncio
 import signal
 import psutil
 import zmq

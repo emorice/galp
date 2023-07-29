@@ -5,7 +5,7 @@ import asyncio
 import argparse
 
 import galp.cli
-from galp.broker.broker import Broker
+from galp.broker import Broker
 
 async def main(args):
     """Entry point for the broker program
