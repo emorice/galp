@@ -28,7 +28,7 @@ from galp.commands import Script
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, TaskDef,
         QueryTaskDef, CoreTaskDef)
-from galp.messages import Put, Done
+from galp.messages import Put, Done, Doing
 
 class TaskStatus(IntEnum):
     """
@@ -438,10 +438,15 @@ class BrokerProtocol(ReplyProtocol):
             command.done((True, task_def, msg.children))
             self.schedule_new()
 
-    def on_doing(self, route, name):
-        """Just updates statistics"""
-        self.run_count[name] += 1
-        self._status[name] = TaskStatus.RUNNING
+    def on_doing(self, msg: Doing):
+        """
+        Just updates statistics.
+
+        This has the side effect of preventing further submit retries to be
+        sent.
+        """
+        self.run_count[msg.name] += 1
+        self._status[msg.name] = TaskStatus.RUNNING
 
     def on_failed(self, route, task_def):
         """

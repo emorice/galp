@@ -11,9 +11,11 @@ import msgpack
 
 import pytest
 from async_timeout import timeout
+from pydantic import TypeAdapter
 
 import galp.tests
 import galp.worker
+from galp.messages import Message
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member
@@ -43,6 +45,17 @@ def is_body(msg, body):
     """
     assert len(msg) >= 3
     return msg[3:] == body
+
+def load_message(msg: list[bytes]) -> Message:
+    """
+    Deserialize message body
+    """
+    assert len(msg) == 5
+    return TypeAdapter(Message).validate_python({
+        'forward': [], 'incoming': [],
+        **msgpack.loads(msg[-1])
+        })
+
 
 def body_startswith(msg, body_start):
     """
@@ -150,8 +163,8 @@ def test_task(worker_socket):
 
     assert_ready(socket)
 
-    ans = asserted_zmq_recv_multipart(socket)
-    assert is_body(ans, [b'DOING', name])
+    ans = load_message(asserted_zmq_recv_multipart(socket))
+    assert (ans.verb, ans.name) == ('doing', name)
 
     ans = asserted_zmq_recv_multipart(socket)
     assert body_startswith(ans, [b'DONE'])
@@ -191,18 +204,18 @@ def test_reference(worker_socket):
     assert_ready(worker_socket)
 
     # doing
-    doing = asserted_zmq_recv_multipart(worker_socket)
+    doing = load_message(asserted_zmq_recv_multipart(worker_socket))
     done = asserted_zmq_recv_multipart(worker_socket)
-    assert is_body(doing, [b'DOING', task1.name])
+    assert (doing.verb, doing.name) == ('doing', task1.name)
     assert body_startswith(done, [b'DONE'])
 
     worker_socket.send_multipart(make_msg(b'SUBMIT',
         msgpack.packb(task2.task_def.model_dump())
         ))
 
-    doing = asserted_zmq_recv_multipart(worker_socket)
+    doing = load_message(asserted_zmq_recv_multipart(worker_socket))
     done = asserted_zmq_recv_multipart(worker_socket)
-    assert is_body(doing, [b'DOING', task2.name])
+    assert (doing.verb, doing.name) == ('doing', task2.name)
     assert body_startswith(done, [b'DONE'])
 
     # Let's try async get for a twist !

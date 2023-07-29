@@ -35,7 +35,7 @@ from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
 from galp.task_types import CoreTaskDef, TaskDef, TaskName
-from galp.messages import Ready, Role, Put, Done
+from galp.messages import Ready, Role, Put, Done, Doing
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -165,7 +165,7 @@ class WorkerProtocol(ReplyProtocol):
                 task_def=task_def, children=[]))
 
         # If not in cache, resolve metadata and run the task
-        replies = MessageList([self.doing(route, name)])
+        replies = MessageList([self.doing(Doing.plain_reply(route, name=name))])
 
         # Schedule the task first. It won't actually start until its inputs are
         # marked as available, and will return the list of GETs that are needed

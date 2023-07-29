@@ -54,6 +54,17 @@ class BaseMessage(BaseModel):
         incoming, forward = route
         return cls(incoming=forward, forward=incoming, **kwargs)
 
+class Doing(BaseMessage):
+    """
+    A message signaling that a task has been allocated or started
+
+    Attributes:
+        name: the task name
+    """
+    verb: Literal['doing'] = Field('doing', repr=False)
+
+    name: TaskName
+
 class Done(BaseMessage):
     """
     A message signaling that a task has been succesful run
@@ -98,4 +109,4 @@ class Ready(BaseMessage):
     local_id: str
     mission: bytes
 
-Message = Ready | Put | Done
+Message = Ready | Put | Done | Doing

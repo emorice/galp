@@ -10,7 +10,7 @@ from galp.task_types import TaskName, TaskDef, CoreTaskDef
 from galp.lower_protocol import LowerProtocol, Route
 from galp.eventnamespace import EventNamespace, NoHandlerError
 from galp.serializer import load_task_def, dump_task_def, dump_model, load_model
-from galp.messages import Message, Ready, Put, Done
+from galp.messages import Message, Ready, Put, Done, Doing
 
 # Errors and exceptions
 # =====================
@@ -46,7 +46,7 @@ class Protocol(LowerProtocol):
     # Callback methods
     # ================
     # The methods below are just placeholders that double as documentation.
-    def on_doing(self, route, name):
+    def on_doing(self, msg: Doing):
         """A `DOING` request was received for resource `name`"""
         return self.on_unhandled(b'DOING')
 
@@ -115,14 +115,11 @@ class Protocol(LowerProtocol):
 
     # Send methods
     # ============
-    def doing(self, route, name: TaskName):
+    def doing(self, msg: Doing):
         """
         Builds a DOING message
-
-        Args:
-            name: the name of the task
         """
-        return route, [b'DOING', name]
+        return self._dump_message(msg)
 
     def done(self, msg: Done):
         """
@@ -289,12 +286,7 @@ class Protocol(LowerProtocol):
 
     @event.on('DOING')
     def _on_doing(self, route, msg):
-        self._validate(len(msg) >= 2, route, 'DOING without a name')
-        self._validate(len(msg) <= 2, route, 'DOING with too many names')
-
-        name = TaskName(msg[1])
-
-        return self.on_doing(route, name)
+        return self.on_doing(self._load_message(Doing, route, msg))
 
     @event.on('DONE')
     def _on_done(self, route, msg):

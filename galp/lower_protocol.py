@@ -163,7 +163,7 @@ class LowerProtocol(BaseSplitProtocol):
 
         return MessageList()
 
-    def write_message(self, msg: tuple[Any, list[bytes]]):
+    def write_message(self, msg: tuple[tuple[Route, Route], list[bytes]]):
         """
         Concats route and message.
         """
