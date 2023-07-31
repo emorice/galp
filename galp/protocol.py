@@ -8,7 +8,6 @@ from typing import NoReturn, TypeVar
 
 import galp.messages as gm
 from galp.lower_protocol import LowerProtocol, Route, PlainMessage
-from galp.eventnamespace import EventNamespace, NoHandlerError
 from galp.serializer import dump_model, load_model
 
 # Errors and exceptions
