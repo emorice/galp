@@ -70,7 +70,7 @@ class BaseSplitProtocol(BaseProtocol):
     """
     Abstract class defining how a protocol is split into an Upper and LowerPart
     """
-    def on_verb(self, route, msg_body):
+    def on_verb(self, route, msg_body) -> list:
         """
         High-level message handler.
 
@@ -79,8 +79,7 @@ class BaseSplitProtocol(BaseProtocol):
             msg_body: all the message parts starting with the galp verb
 
         Returns:
-            Either a single message, a MessageList, or any object that evaluates
-            to False to mean no messages.
+            A list of messages to send
         """
         raise NotImplementedError
 
@@ -159,11 +158,7 @@ class LowerProtocol(BaseSplitProtocol):
         # Note: we do not call on_verb for ping, even if it could be treated as
         # an empty verb.
         if msg_body:
-            return MessageList.from_any(
-                self.on_verb(route, msg_body)
-                )
-
-        return MessageList()
+            return self.on_verb(route, msg_body)
 
     def write_message(self, msg: PlainMessage):
         """
@@ -291,11 +286,12 @@ class LowerProtocol(BaseSplitProtocol):
 
         return msg_str, meta_log_str
 
-    def on_verb(self, route, msg_body):
+    def on_verb(self, route, msg_body) -> list:
         """
         Default action, simply log the message
         """
         logging.info("No upper-level handler for verb %s", msg_body[:1])
+        return []
 
     def on_invalid(self, route, reason: str) -> NoReturn:
         """

@@ -5,7 +5,7 @@ Synchronous API exposing a limited subsets of functionnalities
 import logging
 import zmq
 
-from galp.protocol import Protocol
+from galp.protocol import Protocol, Route, RoutedMessage
 from galp.serializer import Serializer
 from galp.task_types import TaskName
 from galp.messages import Put, Get
@@ -22,7 +22,6 @@ class SynClient(Protocol):
         self.socket = zmq.Context.instance().socket(zmq.DEALER)
         self.socket.connect(endpoint)
         self.serializer = Serializer()
-        self.route = self.default_route()
 
 
     def __del__(self):
@@ -34,7 +33,9 @@ class SynClient(Protocol):
         """
         self.socket.send_multipart(
             self.write_message(
-                Get.plain_reply(self.route, name=name)
+                RoutedMessage.default(
+                    Get(name=name)
+                    )
                 )
             )
 
@@ -47,12 +48,12 @@ class SynClient(Protocol):
         msg = self.socket.recv_multipart()
         ans = self.on_message(msg)[0]
 
-        if ans is False:
+        if not isinstance(ans, RoutedMessage) and isinstance(ans.body, Put):
             # Unhandled message, should not happen
             logging.warning('Unexpected message')
             return None
 
-        data, children = ans
+        data, children = ans.body.data, ans.body.children
 
         if children:
             raise NotImplementedError
@@ -60,4 +61,4 @@ class SynClient(Protocol):
         return self.serializer.loads(data, [])
 
     def on_put(self, msg: Put):
-        return msg.data, msg.children
+        return msg

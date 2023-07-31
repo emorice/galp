@@ -4,19 +4,11 @@ Models for Galp messages
 Not in actual use yet
 """
 
-from typing import Literal, Annotated, TypeVar
+from typing import Literal, Annotated, TypeVar, TypeAlias, Union
 from enum import Enum
 from pydantic import BaseModel, Field, PlainSerializer
 
-from .lower_protocol import Route
 from .task_types import TaskName, TaskDef, CoreTaskDef
-
-def task_key(msg: list[bytes]) -> bytes:
-    """
-    Generate an identifier for the message
-    """
-    # Most messages are unique per verb + first arg
-    return msg[0] + msg[1]
 
 class Role(str, Enum):
     """
@@ -31,28 +23,7 @@ class Message(BaseModel):
     """
     Base class for messages
     """
-    incoming: Route
-    forward: Route
     verb: str
-
-    @classmethod
-    def reply(cls: type[M], other: 'Message', **kwargs) -> M:
-        """
-        Contruct a message from the given args, extracting and swapping the
-        incoming and forward routes from `other`
-        """
-        return cls(incoming=other.forward, forward=other.incoming, **kwargs)
-
-    @classmethod
-    def plain_reply(cls: type[M], route: tuple[Route, Route], **kwargs) -> M:
-        """
-        Contruct a message from the given args, extracting and swapping the
-        incoming and forward routes from a legacy Route tuple.
-
-        TODO: Compat method, to be removed
-        """
-        incoming, forward = route
-        return cls(incoming=forward, forward=incoming, **kwargs)
 
 class Doing(Message):
     """
@@ -130,6 +101,13 @@ class Get(Message):
 
     name: TaskName
 
+    @property
+    def task_key(self) -> bytes:
+        """
+        Unique request identifier
+        """
+        return f'{self.verb}:{self.name.hex()}'.encode('ascii')
+
 class Illegal(Message):
     """
     A message notifying that a previously sent message was malformed
@@ -194,6 +172,13 @@ class Stat(Message):
 
     name: TaskName
 
+    @property
+    def task_key(self) -> bytes:
+        """
+        Unique request identifier
+        """
+        return f'{self.verb}:{self.name.hex()}'.encode('ascii')
+
 class Submit(Message):
     """
     A message asking for a task to be executed
@@ -205,7 +190,15 @@ class Submit(Message):
 
     task_def: CoreTaskDef
 
-AnyMessage = (
+    @property
+    def task_key(self) -> bytes:
+        """
+        Unique request identifier
+        """
+        return f'{self.verb}:{self.task_def.name.hex()}'.encode('ascii')
+
+AnyMessage = Annotated[
         Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
-        | Put | Ready | Stat | Submit
-        )
+        | Put | Ready | Stat | Submit,
+        Field(discriminator='verb')
+        ]

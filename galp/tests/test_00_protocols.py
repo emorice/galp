@@ -8,7 +8,7 @@ import zmq
 from galp.tests.with_timeout import with_timeout
 
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.protocol import Protocol
+from galp.protocol import Protocol, Route, RoutedMessage
 from galp.messages import Put, Get
 
 @with_timeout()
@@ -32,28 +32,28 @@ async def test_counters():
         endpoint, socket_type)
 
     name = b'1234' * 8
-    route = peer_a.protocol.default_route()
 
     i = 0
 
     # We need at least one message for B to tell A its capacity
 
-    await peer_b.send_message(peer_b.protocol.ping(route))
+    await peer_b.send_message(peer_b.protocol.ping(([], [])))
     await peer_a.recv_message()
 
     while (peer_a.protocol._next_send_idx < peer_a.protocol._next_block_idx
         and i <= queue_size + 100):
         # In each iterations, send two messages from a for one from b
-        await peer_a.send_message(Get.plain_reply(route, name=name))
+        await peer_a.send_message(RoutedMessage.default(Get(name=name)))
         await peer_b.recv_message()
 
-        await peer_a.send_message(Get.plain_reply(route, name=name))
+        await peer_a.send_message(RoutedMessage.default(Get(name=name)))
         # We do not process this one, simulating b being slow
 
         await peer_b.send_message(
-            Put.plain_reply(route, name=name,
-                data=b'some_data', children=[])
-            )
+                RoutedMessage.default(
+                    Put(name=name, data=b'some_data', children=[])
+                    )
+                )
         await peer_a.recv_message()
 
         i += 1

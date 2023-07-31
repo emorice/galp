@@ -28,7 +28,8 @@ import galp.messages as gm
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.lower_protocol import MessageList
-from galp.protocol import ProtocolEndException, IllegalRequestError
+from galp.protocol import (ProtocolEndException, IllegalRequestError,
+    RoutedMessage, Replies)
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.commands import Script
@@ -118,35 +119,72 @@ class WorkerProtocol(ReplyProtocol):
         self.store = store
         self.script = Script(store=self.store)
 
+    def route_message(self, orig: RoutedMessage | None, new: gm.Message):
+        """
+        Always reply back to original message.
+
+        While the client may send unadressed messages to the broker for them to
+        be allocated, the worker always replies to a request from an established
+        client and never sends default-addressed messages.
+
+        Note that the brokers fills in the worker address, so that messages that
+        were originally sent to the broker are undistinguishable from messages
+        directly addressed to the worker, from the worker's perspective.
+
+        This makes the broker essentially transparent as far as the worker is
+        concerned.
+        """
+        assert orig is not None
+        return orig.reply(new)
+
     def on_invalid(self, route, reason):
+        """
+        Log the error
+        """
         logging.error('Bad request: %s', reason)
         return super().on_invalid(route, reason)
 
     def on_illegal(self, msg: gm.Illegal):
+        """
+        Terminate
+        """
         logging.error('Received ILLEGAL, terminating: %s', msg.reason)
         raise ProtocolEndException('Incoming ILLEGAL')
 
     def on_exit(self, msg: gm.Exit):
+        """
+        Terminate
+        """
         logging.info('Received EXIT, terminating')
         raise ProtocolEndException('Incoming EXIT')
 
     def on_get(self, msg: gm.Get):
+        """
+        Looks up the persistent store
+        """
         name = msg.name
         logging.debug('Received GET for %s', name)
         reply: gm.Put | gm.NotFound
         try:
             data, children = self.store.get_serial(name)
-            reply = gm.Put.reply(msg, name=name, data=data,
-                children=children)
+            reply = gm.Put(name=name, data=data, children=children)
             logging.info('GET: Cache HIT: %s', name)
             return reply
         except KeyError:
             logging.info('GET: Cache MISS: %s', name)
         except StoreReadError:
             logging.exception('GET: Cache ERROR: %s', name)
-        return gm.NotFound.reply(msg, name=name)
+        return gm.NotFound(name=name)
 
-    def on_submit(self, msg: gm.Submit):
+    def on_routed_message(self, msg: RoutedMessage) -> Replies:
+        """
+        Expose full message to submit handler
+        """
+        if isinstance(msg.body, gm.Submit):
+            return self.on_routed_submit(msg, msg.body)
+        return super().on_routed_message(msg)
+
+    def on_routed_submit(self, request: RoutedMessage, msg: gm.Submit) -> Replies:
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -164,19 +202,18 @@ class WorkerProtocol(ReplyProtocol):
         # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
             logging.info('SUBMIT: Cache HIT: %s', name)
-            return gm.Done.reply(msg,
-                task_def=task_def, children=[])
+            return gm.Done(task_def=task_def, children=[])
 
         # If not in cache, resolve metadata and run the task
-        replies = MessageList([gm.Doing.reply(msg, name=name)])
+        replies = [gm.Doing(name=name)]
 
         # Schedule the task first. It won't actually start until its inputs are
         # marked as available, and will return the list of GETs that are needed
-        self.worker.schedule_task(msg)
+        self.worker.schedule_task(request, msg)
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        more_replies = self.new_commands_to_replies(msg)
+        more_replies = self.new_commands_to_replies()
 
         return replies + more_replies
 
@@ -186,7 +223,7 @@ class WorkerProtocol(ReplyProtocol):
         """
         self.store.put_serial(msg.name, (msg.data, msg.children))
         self.script.commands['GET', msg.name].done(msg.children)
-        return self.new_commands_to_replies(msg)
+        return self.new_commands_to_replies()
 
     def on_not_found(self, msg: gm.NotFound):
         self.script.commands['GET', msg.name].failed('NOTFOUND')
@@ -197,7 +234,7 @@ class WorkerProtocol(ReplyProtocol):
             return self._on_stat_io_unsafe(msg)
         except StoreReadError:
             logging.exception('STAT: ERROR %s', msg.name)
-        return gm.NotFound.reply(msg, name=msg.name)
+        return gm.NotFound(name=msg.name)
 
     def _on_stat_io_unsafe(self, msg: gm.Stat):
         """
@@ -219,13 +256,12 @@ class WorkerProtocol(ReplyProtocol):
         # Case 1: both def and children, DONE
         if task_def is not None and children is not None:
             logging.info('STAT: DONE %s', msg.name)
-            return gm.Done.reply(msg, task_def=task_def,
-                children=children)
+            return gm.Done(task_def=task_def, children=children)
 
         # Case 2: only def, FOUND
         if task_def is not None:
             logging.info('STAT: FOUND %s', msg.name)
-            return gm.Found.reply(msg, task_def=task_def)
+            return gm.Found(task_def=task_def)
 
         # Case 3: only children
         # This means a legacy store that was missing tasks definition
@@ -236,9 +272,9 @@ class WorkerProtocol(ReplyProtocol):
 
         # Case 4: nothing
         logging.info('STAT: NOT FOUND %s', msg.name)
-        return gm.NotFound.reply(msg, name=msg.name)
+        return gm.NotFound(name=msg.name)
 
-    def new_commands_to_replies(self, orig_msg: gm.Message):
+    def new_commands_to_replies(self):
         """
         Generate galp messages from a command reply list
         """
@@ -262,7 +298,7 @@ class WorkerProtocol(ReplyProtocol):
             except KeyError:
                 pass
             messages.append(
-                gm.Get.reply(orig_msg, name=name)
+                gm.Get(name=name)
                 )
         return messages
 
@@ -271,7 +307,8 @@ class JobResult:
     """
     Result of executing a step
     """
-    request: gm.Submit
+    request: RoutedMessage
+    submit: gm.Submit
     success: bool
     result: list[TaskName]
 
@@ -316,21 +353,23 @@ class Worker:
         while True:
             task = await self.galp_jobs.get()
             job = await task
+            task_def = job.submit.task_def
             if job.success:
-                reply = gm.Done.reply(job.request,
-                    task_def=job.request.task_def, children=job.result)
+                reply = gm.Done(task_def=task_def, children=job.result)
             else:
-                reply = gm.Failed.reply(job.request, task_def=job.request.task_def)
-            await self.transport.send_message(reply)
+                reply = gm.Failed(task_def=task_def)
+            await self.transport.send_message(
+                    self.protocol.route_message(job.request, reply)
+                    )
 
-    def schedule_task(self, msg: gm.Submit):
+    def schedule_task(self, request: RoutedMessage, msg: gm.Submit):
         """
         Callback to schedule a task for execution.
         """
         task_def = msg.task_def
         def _start_task(status, inputs):
             task = asyncio.create_task(
-                self.run_submission(status, msg, inputs)
+                self.run_submission(status, request, msg, inputs)
                 )
             self.galp_jobs.put_nowait(task)
 
@@ -353,16 +392,18 @@ class Worker:
             role=gm.Role.WORKER,
             local_id=str(os.getpid()),
             mission=self.mission,
-            incoming=route[0], forward=route[1],
             )
-        await self.transport.send_message(ready)
+        await self.transport.send_message(RoutedMessage(
+            incoming=route[0], forward=route[1],
+            body=ready
+            ))
 
         await self.transport.listen_reply_loop()
 
     # Task execution logic
     # ====================
 
-    async def run_submission(self, status, msg: gm.Submit, inputs) -> JobResult:
+    async def run_submission(self, status, request: RoutedMessage, msg: gm.Submit, inputs) -> JobResult:
         """
         Actually run the task
         """
@@ -398,7 +439,7 @@ class Worker:
             except UnicodeDecodeError as exc:
                 # Either you tried to use python's non-ascii keywords feature,
                 # or more likely you messed up the encoding on the caller side.
-                raise IllegalRequestError((msg.incoming, msg.forward),
+                raise IllegalRequestError((request.incoming, request.forward),
                     f'Cannot decode keyword {exc.object!r}'
                     f' for step {name} ({step_name})'
                     ) from exc
@@ -423,12 +464,12 @@ class Worker:
             self.protocol.store.put_task_def(task_def)
             children = self.protocol.store.put_native(name, result, task_def.scatter)
 
-            return JobResult(msg, True, children)
+            return JobResult(request, msg, True, children)
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return JobResult(msg, False, [])
+            return JobResult(request, msg, False, [])
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.

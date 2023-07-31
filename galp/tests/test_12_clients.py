@@ -11,7 +11,7 @@ from async_timeout import timeout
 
 import galp
 import galp.tests.steps as gts
-from galp.protocol import Protocol
+from galp.protocol import Protocol, RoutedMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.messages import Doing, Submit, NotFound
 
@@ -75,14 +75,15 @@ async def test_fill_queue(blocked_client):
     """
     _, client = blocked_client
     task = gts.hello()
-    route = client.protocol.default_route()
 
     # Check that client blocks
     with pytest.raises(asyncio.TimeoutError):
         async with timeout(1):
             await client.transport.send_message(
-                Submit.plain_reply(route, task_def=task.task_def)
-                )
+                    RoutedMessage.default(
+                        Submit(task_def=task.task_def)
+                        )
+                    )
 
 async def test_unique_submission(peer_client):
     """
@@ -110,11 +111,10 @@ async def test_unique_submission(peer_client):
             for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
                 await peer.send_message(
-                    NotFound.plain_reply(
-                        peer.protocol.default_route(),
-                        name=name
+                        RoutedMessage.default(
+                            NotFound(name=name)
+                            )
                         )
-                    )
 
             # Process one SUBMIT and drop it
             await peer.recv_message()
@@ -123,11 +123,10 @@ async def test_unique_submission(peer_client):
             await peer.recv_message()
             logging.info('Mock processing')
             await peer.send_message(
-                Doing.plain_reply(
-                    peer.protocol.default_route(),
-                    name=task.name # pylint: disable=no-member
+                    RoutedMessage.default(
+                        Doing(name=task.name) # pylint: disable=no-member
+                        )
                     )
-                )
             # We should not receive any further message, at least until we add status
             # update to the protocol
             with pytest.raises(asyncio.TimeoutError):

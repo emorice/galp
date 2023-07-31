@@ -10,11 +10,10 @@ from dataclasses import dataclass
 import zmq
 
 import galp.messages as gm
-from galp.protocol import IllegalRequestError, Route
+from galp.protocol import IllegalRequestError, Route, RoutedMessage
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.task_types import Resources, CoreTaskDef
-from galp.serializer import load_model
+from galp.task_types import Resources
 
 class Broker:
     """
@@ -41,8 +40,7 @@ class Allocation:
     A request that was accepted, but is not yet treated
     """
     resources: Resources
-    client_route: Any
-    msg_body: list[bytes]
+    msg: RoutedMessage
     task_id: bytes
 
 class CommonProtocol(ReplyProtocol):
@@ -73,45 +71,46 @@ class CommonProtocol(ReplyProtocol):
     def on_invalid(self, route, reason):
         raise IllegalRequestError(route, reason)
 
-    def on_unhandled(self, msg: gm.Message):
+    def on_routed_ready(self, rmsg: RoutedMessage, gmsg: gm.Ready):
         """
-        For the broker, many messages will just be forwarded and no handler is
-        needed.
+        Register worker and pool route for later use, and forward initial worker
+        mission
         """
-        logging.debug("No broker action for %s", msg.verb)
+        assert not rmsg.forward
 
-    def on_ready(self, msg: gm.Ready):
-        assert not msg.forward
-
-        match msg.role:
+        match gmsg.role:
             case gm.Role.POOL:
                 # When the pool manager joins, record its route so that we can
                 # send spawn requests later
                 if self.pool is None:
-                    self.pool = msg.incoming
+                    self.pool = rmsg.incoming
                 else:
-                    assert self.pool == msg.incoming
+                    assert self.pool == rmsg.incoming
                 return None
             case gm.Role.WORKER:
                 # First, update the peer map, we need it to handle kill
                 # notifications
-                self.route_from_peer[msg.local_id] = msg.incoming
+                self.route_from_peer[gmsg.local_id] = rmsg.incoming
 
                 # Then check for the expected pending mission and send it
-                pending_alloc = self.alloc_from_task.get(msg.mission, None)
+                pending_alloc = self.alloc_from_task.get(gmsg.mission, None)
                 if pending_alloc is None:
-                    logging.error('Worker came with unknown mission %s', msg.mission)
-                    self.idle_workers.append(msg.incoming)
+                    logging.error('Worker came with unknown mission %s', gmsg.mission)
+                    self.idle_workers.append(rmsg.incoming)
                     return None
 
                 # Before sending, mark it as affected to this worker so we can
                 # handle errors and free resources later
-                self.alloc_from_wroute[tuple(msg.incoming)] = pending_alloc
+                self.alloc_from_wroute[tuple(rmsg.incoming)] = pending_alloc
 
-                # in: client, for: the worker
-                return (pending_alloc.client_route, msg.incoming), pending_alloc.msg_body
+                # Fill in the worker route in original request
+                return RoutedMessage(
+                        incoming=pending_alloc.msg.incoming,
+                        forward=rmsg.incoming,
+                        body=pending_alloc.msg.body
+                        )
 
-    def mark_worker_available(self, worker_route: Route) -> None:
+    def free_resources(self, worker_route: Route, reuse=True) -> None:
         """
         Add a worker to the idle list after clearing the current task
         information and freeing resources
@@ -124,27 +123,17 @@ class CommonProtocol(ReplyProtocol):
             self.resources += alloc.resources
             if self.alloc_from_task.pop(alloc.task_id, None) is None:
                 logging.error('Double free of allocation %s', alloc)
-            # Free worker for reuse
-            self.idle_workers.append(worker_route)
+            # Free worker for reuse if marked as such
+            if reuse:
+                self.idle_workers.append(worker_route)
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
-    def on_done(self, msg: gm.Done):
-        self.mark_worker_available(msg.incoming)
-
-    def on_failed(self, msg: gm.Failed):
-        self.mark_worker_available(msg.incoming)
-
-    def on_not_found(self, msg: gm.NotFound):
-        self.mark_worker_available(msg.incoming)
-
-    def on_found(self, msg: gm.Found):
-        self.mark_worker_available(msg.incoming)
-
-    def on_put(self, msg: gm.Put):
-        self.mark_worker_available(msg.incoming)
 
     def on_exited(self, msg: gm.Exited):
+        """
+        Propagate failuer messages and free resources when worker is killed
+        """
         peer = msg.peer
         logging.error("Worker %s exited", peer)
 
@@ -158,52 +147,38 @@ class CommonProtocol(ReplyProtocol):
             logging.error("Worker %s was not assigned a task, ignoring exit", peer)
             return None
 
-        # A bit hacky, we manually parse the original message ; there's no
-        # validation error handling
-        # Note that we set the forward to empty, which equals re-interpreting
-        # the message as addressed to us
-        orig_msg, err = load_model(gm.AnyMessage, alloc.msg_body[1],
-                                   incoming=alloc.client_route, forward=[])
-        assert not err
+        # Free resources, since a dead worker uses none, but of course don't
+        # mark the worker as reusable
+        self.free_resources(route, reuse=False)
 
-        match orig_msg:
-            case gm.Get():
-                return gm.NotFound.reply(orig_msg, name=orig_msg.name)
+        # Note that we set the incoming to empty, which equals re-interpreting
+        # the message as addressed to us
+        orig_msg = alloc.msg
+
+        match orig_msg.body:
+            case gm.Get() | gm.Stat():
+                return RoutedMessage(
+                        incoming=[],
+                        forward=alloc.msg.incoming,
+                        body=gm.NotFound(name=orig_msg.body.name)
+                        )
             case gm.Submit():
-                return gm.Failed.reply(orig_msg, task_def=orig_msg.task_def)
+                return RoutedMessage(
+                        incoming=[],
+                        forward=alloc.msg.incoming,
+                        body=gm.Failed(task_def=orig_msg.body.task_def)
+                        )
         logging.error(
             'Worker %s died while handling %s, no error propagation',
             peer, alloc
             )
         return None
 
-    def on_verb(self, route, msg_body: list[bytes]):
-        incoming_route, forward_route = route
-
-        # First, call local handlers. We do that even for messages that we
-        # forward as is, as we have some state to update. This also ensures that
-        # the message is valid
-        replies = super().on_verb(route, msg_body)
-
-        # If any handler returned an answer, we stop forwarding here and send it
-        if replies:
-            return replies
-
-        verb = msg_body[0].decode('ascii')
-        # If a forward route is already present, the message is addressed at one
-        # specific worker or client, forward as-is.
-        if forward_route:
-            logging.debug('Forwarding %s', verb)
-            return route, msg_body
-
-        # Else, we may have to forward or queue the message. We decide based on
-        # the verb whether this should be ultimately sent to a worker
-        if verb not in ('STAT', 'GET', 'SUBMIT'):
-            # Nothing else to do
-            return None
-
-        # Finally, assign a worker if we still have something to process at this
-        # point
+    def on_request(self, msg: RoutedMessage, gmsg: gm.Stat | gm.Submit | gm.Get):
+        """
+        Assign a worker
+        """
+        verb = gmsg.verb
 
         # Todo: include in incoming msg
         resources = Resources(cpus=1)
@@ -212,7 +187,7 @@ class CommonProtocol(ReplyProtocol):
         # This ideally should not happen if the client receives proper feedback
         # on when to re-submit, but should happen from time to time under normal
         # operation
-        task_id = gm.task_key(msg_body)
+        task_id = gmsg.task_key
         if task_id in self.alloc_from_task:
             logging.info('Dropping %s (already allocated)', verb)
             return None
@@ -234,9 +209,8 @@ class CommonProtocol(ReplyProtocol):
         self.resources -= resources
         alloc = Allocation(
                 resources=resources,
-                client_route=incoming_route,
-                msg_body=msg_body,
-                task_id = gm.task_key(msg_body)
+                msg=msg,
+                task_id=task_id
                 )
         self.alloc_from_task[alloc.task_id] = alloc
 
@@ -248,14 +222,50 @@ class CommonProtocol(ReplyProtocol):
             # Save task info
             self.alloc_from_wroute[tuple(worker_route)] = alloc
 
-            # Incoming: still the incoming client, forward: the worker
-            new_route = incoming_route, worker_route
-
             # We build the message and return it to transport
-            return new_route, msg_body
+            return RoutedMessage(
+                    incoming=msg.incoming,
+                    forward=worker_route,
+                    body=gmsg
+                    )
 
-        # Else, spawn a new one, and send the request later when it joins
-        # For now spawning just mean forwarding the whole request to the
-        # pool
-        new_route = [], self.pool
-        return new_route, msg_body
+        # Else, forward the message to the pool, triggering worker spawning
+        # We'll send the request to the worker when it send us a READY
+        return RoutedMessage(
+                incoming=Route(),
+                forward=self.pool,
+                body=gmsg
+                )
+
+    def on_routed_message(self, msg: RoutedMessage):
+        # First, call local handlers. We do that even for messages that we
+        # forward as is, as we have some state to update. This also ensures that
+        # the message is valid
+        gmsg = msg.body
+
+        # Record joining peers and forward pre allocated requests
+        if isinstance(gmsg, gm.Ready):
+            return self.on_routed_ready(msg, gmsg)
+
+        # Similarly, record dead peers and forward failures
+        if isinstance(gmsg, gm.Exited):
+            return self.on_exited(gmsg)
+
+        # Free resources for all messages indicating end of task
+        if isinstance(gmsg,
+                gm.Done | gm.Failed | gm.NotFound | gm.Found | gm.Put):
+            self.free_resources(msg.incoming)
+
+        # If a forward route is already present, the message is addressed at one
+        # specific worker or client, forward as-is.
+        if msg.forward:
+            logging.debug('Forwarding %s', gmsg.verb)
+            return msg
+
+        # Else, we may have to forward or queue the message. We decide based on
+        # the verb whether this should be ultimately sent to a worker
+        if isinstance(gmsg, gm.Stat | gm.Submit | gm.Get):
+            return self.on_request(msg, gmsg)
+
+        # If we reach this point, we received a message we know nothing about
+        return self.on_unhandled(gmsg)

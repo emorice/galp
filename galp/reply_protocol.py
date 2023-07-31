@@ -3,7 +3,7 @@ Galp protocol for leaf peers
 """
 
 import galp.messages as gm
-from galp.protocol import Protocol, IllegalRequestError
+from galp.protocol import Protocol, IllegalRequestError, Route, RoutedMessage
 
 class ReplyProtocol(Protocol):
     """
@@ -13,12 +13,16 @@ class ReplyProtocol(Protocol):
     generate the illegal message as the answer. This way the handling of
     malformed message is correct when used with the default listen-reply loop.
     """
-    def on_verb(self, route, msg_body):
+    def on_verb(self, route: tuple[Route], msg_body: list[bytes]) -> list[RoutedMessage]:
         """
         Message handler that call's Protocol default handler
-        but returns the original message
+        and catches IllegalRequestError
         """
         try:
             return super().on_verb(route, msg_body)
         except IllegalRequestError as exc:
-            return gm.Illegal.plain_reply(exc.route, reason=exc.reason)
+            return [RoutedMessage(
+                    incoming=Route(),
+                    forward=route[0],
+                    body=gm.Illegal(reason=exc.reason)
+                    )]

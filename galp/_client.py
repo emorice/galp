@@ -22,7 +22,7 @@ from galp import async_utils
 from galp.graph import ensure_task_node
 from galp.cache import CacheStack
 from galp.serializer import Serializer, DeserializeError
-from galp.protocol import ProtocolEndException
+from galp.protocol import ProtocolEndException, RoutedMessage, Replies
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
@@ -318,26 +318,33 @@ class BrokerProtocol(ReplyProtocol):
             # Save the task_definition
             self._tasks[name] = task_node.task_def
 
-    def write_next(self, command_key):
+    def write_next(self, command_key) -> RoutedMessage | None:
         """
         Returns the next nessage to be sent for a task given the information we
         have about it
+
+        (Sorry for the None disjunction, this is in the middle of the part where
+        we supress messages whose result is already known)
         """
         verb, name = command_key
 
         if verb == 'SUBMIT':
             if self._status[name] < TaskStatus.RUNNING:
-                return self.submit_task_by_name(name)
+                sub = self.submit_task_by_name(name)
+                if sub is not None:
+                    return self.route_message(None, sub)
             return None
 
         if verb == 'GET':
             if self.script.commands[command_key].is_pending():
-                return self.get(self.route, name)
+                get = self.get(name)
+                if get is not None:
+                    return self.route_message(None, get)
             return None
 
         if verb == 'STAT':
             if self.script.commands[command_key].is_pending():
-                return gm.Stat.plain_reply(self.route, name=name)
+                return self.route_message(None, gm.Stat(name=name))
             return None
 
         raise NotImplementedError(verb)
@@ -346,7 +353,18 @@ class BrokerProtocol(ReplyProtocol):
     # ======================
     # For simplicity these set the route inside them
 
-    def submit_task_by_name(self, task_name: TaskName):
+    def route_message(self, orig: RoutedMessage | None, new: gm.Message | RoutedMessage):
+        """
+        Send message back to original sender only for replies to GETs
+
+        Everything else is default-addressed to the broker
+        """
+        if isinstance(new, gm.Put | gm.NotFound):
+            assert orig is not None
+            return orig.reply(new)
+        return super().route_message(orig, new)
+
+    def submit_task_by_name(self, task_name: TaskName) -> gm.Submit | None:
         """Loads task dicts, handles literals and subtasks, and manage stats"""
 
         # Task dict was added by a stat call
@@ -355,13 +373,13 @@ class BrokerProtocol(ReplyProtocol):
             raise ValueError(f"Task {task_name.hex()} is unknown")
         if isinstance(task_def, CoreTaskDef):
             self.submitted_count[task_name] += 1
-            return gm.Submit.plain_reply(self.route, task_def=task_def)
+            return gm.Submit(task_def=task_def)
         # Literals and SubTasks are always satisfied, and never have
         # recursive children
-        return self.on_done(gm.Done(incoming=[], forward=[], task_def=task_def,
-            children=[]))
+        self.on_done(gm.Done(task_def=task_def, children=[]))
+        return None
 
-    def get(self, route, name: TaskName):
+    def get(self, name: TaskName) -> gm.Get | None:
         """
         Send GET for task if not locally available
         """
@@ -370,7 +388,7 @@ class BrokerProtocol(ReplyProtocol):
             children = self.store.get_children(name)
         except KeyError:
             # Not found, send a normal GET
-            return gm.Get.plain_reply(route, name=name)
+            return gm.Get(name=name)
 
         # Found, mark command as done and pass on children
         self.script.commands['GET', name].done(children)
@@ -382,15 +400,17 @@ class BrokerProtocol(ReplyProtocol):
     # Protocol callbacks
     # ==================
     def on_get(self, msg: gm.Get):
+        """
+        Sends back Put or NotFound
+        """
         name = msg.name
         reply: gm.Put | gm.NotFound
         try:
             data, children = self.store.get_serial(name)
-            reply = gm.Put.reply(msg,
-                name=name, data=data, children=children)
+            reply = gm.Put(name=name, data=data, children=children)
             logging.debug('Client GET on %s', name.hex())
         except KeyError:
-            reply = gm.NotFound.reply(msg, name=name)
+            reply = gm.NotFound(name=name)
             logging.warning('Client missed GET on %s', name)
 
         return reply
@@ -416,7 +436,7 @@ class BrokerProtocol(ReplyProtocol):
         # Schedule for sub-GETs to be sent in the future
         self.schedule_new()
 
-    def on_done(self, msg: gm.Done):
+    def on_done(self, msg: gm.Done) -> None:
         """Given that done_task just finished, mark it as done, letting the
         command system schedule any dependent ready to be submitted, schedule
         GETs for final tasks, etc.
@@ -440,6 +460,8 @@ class BrokerProtocol(ReplyProtocol):
             # Triplet (is_done, dict, children?)
             command.done((True, task_def, msg.children))
             self.schedule_new()
+
+        return None
 
     def on_doing(self, msg: gm.Doing):
         """
