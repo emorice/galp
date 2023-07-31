@@ -15,39 +15,11 @@ more protocols
 
 PlainMessage = tuple[tuple[Route, Route], list[bytes]]
 
-class MessageList(list):
-    """
-    Litterally just a list of message objects.
-
-    Allows to distinguish messages from list of messages by type
-    """
-    @classmethod
-    def from_any(cls, messages):
-        """
-        Wraps messages in a MessageList if not already one
-
-        Also recognizes None, False, etc as empty lists of messages.
-        """
-        if not messages:
-            return cls()
-        if isinstance(messages, cls):
-            return messages
-        message = messages
-        return cls([message])
-
-    def __repr__(self):
-        return f'MessageList({super().__repr__()})'
-
-    def __add__(self, other):
-        new_list = MessageList(self)
-        new_list.extend(other)
-        return new_list
-
 class BaseProtocol:
     """
     Abstract class defining the interface expected by the transport
     """
-    def write_message(self, msg: PlainMessage):
+    def write_message(self, msg):
         """
         Takes an application-specific message description, and returns the
         sequence of bytes to send. Return None to suppress the message instead.
@@ -61,7 +33,7 @@ class BaseProtocol:
         Args:
             msg_parts: a list of message parts, each part being a bytes object
         Returns:
-            A MessageList, a collection of messages that can be iterated and
+            A list of messages that can be iterated and
             given one by one to `write_message`
         """
         raise NotImplementedError
@@ -79,7 +51,8 @@ class BaseSplitProtocol(BaseProtocol):
             msg_body: all the message parts starting with the galp verb
 
         Returns:
-            A list of messages to send
+            A list of messages to send (same as on_message, must be iterable and
+            the items compatible with write_message)
         """
         raise NotImplementedError
 
@@ -160,7 +133,7 @@ class LowerProtocol(BaseSplitProtocol):
         if msg_body:
             return self.on_verb(route, msg_body)
 
-    def write_message(self, msg: PlainMessage):
+    def write_plain_message(self, msg: PlainMessage):
         """
         Concats route and message.
         """
@@ -193,13 +166,6 @@ class LowerProtocol(BaseSplitProtocol):
         # could never be actually sent, logically this is the same as dropped.
         return msg_parts
 
-    def ping(self, route):
-        """
-        Send a ping.
-        """
-        # Really just an empty message
-        return route, []
-
     def default_route(self) -> tuple[Route, Route]:
         """
         Route to pass to send methods to simply send a message a connected
@@ -212,9 +178,10 @@ class LowerProtocol(BaseSplitProtocol):
     # Internal parsing utilities
     # ==========================
 
-    def _validate(self, condition, route, reason) -> NoReturn:
+    def _validate(self, condition, route, reason):
         """
-        Calls invalid message callback. Must always raise and be caught
+        Calls invalid message callback. Must always raise and be caught if the
+        condition fails.
         """
         if not condition:
             self.on_invalid(route, reason)

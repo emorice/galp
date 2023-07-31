@@ -99,18 +99,16 @@ class Protocol(LowerProtocol):
             frames.append(msg.body.data)
         return route, frames
 
-    def write_message(self, msg: PlainMessage | RoutedMessage):
+    def write_message(self, msg: RoutedMessage):
         """
         Serialize gm.Message objects, allowing them to be returned directly from
         handlers
         """
         if isinstance(msg, RoutedMessage):
-            plain = self._dump_message(msg)
-        elif isinstance(msg, gm.Message):
+            return super().write_plain_message(self._dump_message(msg))
+        if isinstance(msg, gm.Message):
             raise ValueError('Message must be routed (addressed) before being written out')
-        else:
-            plain = msg
-        return super().write_message(plain)
+        raise TypeError(f'Invalid message type {type(msg)}')
 
     def route_messages(self, orig: RoutedMessage | None, news: Replies
             ) -> list[RoutedMessage]:

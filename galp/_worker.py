@@ -27,7 +27,6 @@ import galp.messages as gm
 
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
-from galp.lower_protocol import MessageList
 from galp.protocol import (ProtocolEndException, IllegalRequestError,
     RoutedMessage, Replies)
 from galp.reply_protocol import ReplyProtocol
@@ -278,7 +277,7 @@ class WorkerProtocol(ReplyProtocol):
         """
         Generate galp messages from a command reply list
         """
-        messages = MessageList()
+        messages = []
         while self.script.new_commands:
             verb, name = self.script.new_commands.popleft()
             if verb != 'GET':
