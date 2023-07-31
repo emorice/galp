@@ -5,6 +5,7 @@ High-level tests for galp
 import os
 import asyncio
 import pstats
+import time
 
 import numpy as np
 from async_timeout import timeout
@@ -304,21 +305,31 @@ async def test_parallel_tasks(client_pool):
     """
     Runs several long tasks in parallel in a big pool
     """
-    pre_task = galp.steps.galp_hello()
-
-    # Run a first task to warm the pool
-    # FIXME: this is a hack, not a reliable way to ensure workers are online
-    # pre_ans = await asyncio.wait_for(client_pool.collect(pre_task), 5)
-    await asyncio.sleep(3)
-
-    tasks = [
+    all_tasks = [
         gts.sleeps(1, i)
-        for i in range(10)
+        for i in range(20)
         ]
 
-    ans = await asyncio.wait_for(client_pool.collect(*tasks), 2)
+    pre_tasks, tasks = all_tasks[:10], all_tasks[10:]
 
-    assert set(ans) == set(range(10))
+    # Run a first batch of tasks to start the pool. The system spawns workers on
+    # demand, so the first set of tasks will have quite unpredictable completion
+    # times
+    time1 = time.time()
+    pre_ans = await asyncio.wait_for(client_pool.collect(*pre_tasks), 5)
+    dtime1 = time.time() - time1
+    assert set(pre_ans) == set(range(10))
+
+    # Run the actual batch and check that all ten run in not much more that the
+    # time for one
+    time2 = time.time()
+    ans = await asyncio.wait_for(client_pool.collect(*tasks), 2)
+    dtime2 = time.time() - time2
+    assert set(ans) == set(range(10, 20))
+
+    print(f'Warmup: {dtime1}s')
+    print(f'Run   : {dtime2}s')
+
 
 async def test_variadic(client):
     """

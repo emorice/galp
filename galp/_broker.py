@@ -43,6 +43,7 @@ class Allocation:
     resources: Resources
     client_route: Any
     msg_body: list[bytes]
+    task_id: bytes
 
 class CommonProtocol(ReplyProtocol):
     """
@@ -63,8 +64,10 @@ class CommonProtocol(ReplyProtocol):
         # Route to a worker spawner
         self.pool: Route | None = None
 
-        # verb + name -> (in_route, msg)
+        # Tasks currenty accepted or ruuning, by unique id
         self.alloc_from_task: dict[bytes, Allocation] = {}
+
+        # Tasks currently running on a worker
         self.alloc_from_wroute: dict[Any, Allocation] = {}
 
     def on_invalid(self, route, reason):
@@ -95,7 +98,7 @@ class CommonProtocol(ReplyProtocol):
                 self.route_from_peer[msg.local_id] = msg.incoming
 
                 # Then check for the expected pending mission and send it
-                pending_alloc = self.alloc_from_task.pop(msg.mission, None)
+                pending_alloc = self.alloc_from_task.get(msg.mission, None)
                 if pending_alloc is None:
                     logging.error('Worker came with unknown mission %s', msg.mission)
                     self.idle_workers.append(msg.incoming)
@@ -119,6 +122,8 @@ class CommonProtocol(ReplyProtocol):
         if alloc:
             # Free resources
             self.resources += alloc.resources
+            if self.alloc_from_task.pop(alloc.task_id, None) is None:
+                logging.error('Double free of allocation %s', alloc)
             # Free worker for reuse
             self.idle_workers.append(worker_route)
         # Else, the free came from an unmetered source, for instance a PUT sent
@@ -203,6 +208,15 @@ class CommonProtocol(ReplyProtocol):
         # Todo: include in incoming msg
         resources = Resources(cpus=1)
 
+        # Drop if we already accepted the same task
+        # This ideally should not happen if the client receives proper feedback
+        # on when to re-submit, but should happen from time to time under normal
+        # operation
+        task_id = gm.task_key(msg_body)
+        if task_id in self.alloc_from_task:
+            logging.info('Dropping %s (already allocated)', verb)
+            return None
+
         # Drop if we don't have a way to spawn workers
         if not self.pool:
             logging.info('Dropping %s (pool not joined)', verb)
@@ -221,8 +235,10 @@ class CommonProtocol(ReplyProtocol):
         alloc = Allocation(
                 resources=resources,
                 client_route=incoming_route,
-                msg_body=msg_body
+                msg_body=msg_body,
+                task_id = gm.task_key(msg_body)
                 )
+        self.alloc_from_task[alloc.task_id] = alloc
 
         # If we have idle workers, directly forward to one
         if self.idle_workers:
@@ -238,10 +254,8 @@ class CommonProtocol(ReplyProtocol):
             # We build the message and return it to transport
             return new_route, msg_body
 
-        # Else, spawn a new one, and save the request for when it joins
+        # Else, spawn a new one, and send the request later when it joins
         # For now spawning just mean forwarding the whole request to the
         # pool
-        key = gm.task_key(msg_body)
-        self.alloc_from_task[key] = alloc
         new_route = [], self.pool
         return new_route, msg_body
