@@ -35,14 +35,6 @@ def is_body(msg, body):
     assert len(msg) >= 3
     return msg[3:] == body
 
-
-def body_startswith(msg, body_start):
-    """
-    Remove route and counter before comparing a message to a body
-    """
-    assert len(msg) >= 3
-    return msg[3:3+len(body_start)] == body_start
-
 def asserted_zmq_recv_multipart(socket):
     """
     Asserts that the socket received a message in a given time, and returns said
@@ -56,7 +48,7 @@ def load_message(msg: list[bytes]) -> gm.Message:
     """
     Deserialize message body
     """
-    assert len(msg) == 5 # null, counter, counter, verb, payload
+    assert len(msg) == 3 # null, verb, payload
     return TypeAdapter(gm.AnyMessage).validate_python({
         'forward': [], 'incoming': [],
         **msgpack.loads(msg[-1])
