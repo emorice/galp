@@ -93,7 +93,7 @@ class Pool:
         Sends a message back to broker to signal a worker died
         """
         await self.broker_transport.send_message(
-                RoutedMessage.default(
+                self.broker_protocol.route_message(None,
                     gm.Exited(peer=str(pid))
                 )
             )
@@ -102,9 +102,8 @@ class Pool:
         """
         Sends a message back to broker to signal we joined
         """
-        route = self.broker_protocol.default_route()
         await self.broker_transport.send_message(
-                RoutedMessage.default(
+                self.broker_protocol.route_message(None,
                     gm.Ready(role=gm.Role.POOL, local_id=str(os.getpid()), mission=b'')
                     )
                 )

@@ -47,13 +47,6 @@ class RoutedMessage:
         """
         return type(self)(incoming=self.forward, forward=self.incoming, body=new)
 
-    @classmethod
-    def default(cls, new: gm.Message) -> 'RoutedMessage':
-        """
-        Address a message by default
-        """
-        return cls(incoming=Route(), forward=Route(), body=new)
-
 Replies: TypeAlias = gm.Message | RoutedMessage | list[gm.Message | RoutedMessage] | None
 """
 Allowed returned type of message handers

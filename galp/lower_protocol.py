@@ -112,15 +112,6 @@ class LowerProtocol(BaseSplitProtocol):
 
         return route_parts + [b''] + msg_body
 
-    def default_route(self) -> tuple[Route, Route]:
-        """
-        Route to pass to send methods to simply send a message a connected
-        unnamed peer
-        """
-        # This is a tuple (incoming, forward) with both routes set to the empty
-        # route
-        return ([], [])
-
     # Internal parsing utilities
     # ==========================
 

@@ -5,7 +5,7 @@ Synchronous API exposing a limited subsets of functionnalities
 import logging
 import zmq
 
-from galp.protocol import Protocol, Route, RoutedMessage
+from galp.protocol import Protocol, RoutedMessage
 from galp.serializer import Serializer
 from galp.task_types import TaskName
 from galp.messages import Put, Get
@@ -33,7 +33,7 @@ class SynClient(Protocol):
         """
         self.socket.send_multipart(
             self.write_message(
-                RoutedMessage.default(
+                self.route_message(None,
                     Get(name=name)
                     )
                 )

@@ -120,7 +120,7 @@ class WorkerProtocol(ReplyProtocol):
 
     def route_message(self, orig: RoutedMessage | None, new: gm.Message):
         """
-        Always reply back to original message.
+        Always reply back to original message, if any.
 
         While the client may send unadressed messages to the broker for them to
         be allocated, the worker always replies to a request from an established
@@ -133,7 +133,8 @@ class WorkerProtocol(ReplyProtocol):
         This makes the broker essentially transparent as far as the worker is
         concerned.
         """
-        assert orig is not None
+        if orig is None:
+            return super().route_message(None, new)
         return orig.reply(new)
 
     def on_invalid(self, route, reason):
@@ -386,16 +387,14 @@ class Worker:
         """
         Main message processing loop of the worker.
         """
-        route = self.protocol.default_route()
         ready = gm.Ready(
             role=gm.Role.WORKER,
             local_id=str(os.getpid()),
             mission=self.mission,
             )
-        await self.transport.send_message(RoutedMessage(
-            incoming=route[0], forward=route[1],
-            body=ready
-            ))
+        await self.transport.send_message(
+                self.protocol.route_message(None, ready)
+                )
 
         await self.transport.listen_reply_loop()
 

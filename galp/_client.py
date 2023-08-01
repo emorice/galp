@@ -250,10 +250,6 @@ class BrokerProtocol(ReplyProtocol):
 
         self.schedule = schedule
 
-        # With a DEALER socket, we send messages with no routing information by
-        # default.
-        self.route = self.default_route()
-
         # Memory only native+serial cache
         self.store = CacheStack(
             dirpath=None,

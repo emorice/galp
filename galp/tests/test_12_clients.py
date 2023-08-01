@@ -80,7 +80,7 @@ async def test_fill_queue(blocked_client):
     with pytest.raises(asyncio.TimeoutError):
         async with timeout(1):
             await client.transport.send_message(
-                    RoutedMessage.default(
+                    client.protocol.route_message(None,
                         Submit(task_def=task.task_def)
                         )
                     )
@@ -111,7 +111,7 @@ async def test_unique_submission(peer_client):
             for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
                 await peer.send_message(
-                        RoutedMessage.default(
+                        peer.protocol.route_message(None,
                             NotFound(name=name)
                             )
                         )
@@ -123,7 +123,7 @@ async def test_unique_submission(peer_client):
             await peer.recv_message()
             logging.info('Mock processing')
             await peer.send_message(
-                    RoutedMessage.default(
+                    peer.protocol.route_message(None,
                         Doing(name=task.name) # pylint: disable=no-member
                         )
                     )
