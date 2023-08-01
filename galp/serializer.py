@@ -108,7 +108,7 @@ def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
 T = TypeVar('T', bound=BaseModel)
 
 def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
-        ) -> tuple[T | None, str | None]:
+        ) -> T:
     """
     Load a msgpack-serialized pydantic model
 
@@ -119,6 +119,9 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
         payload: The msgpack-encoded buffer with the object data
         extra_fieds: attributes to add to the decoded payload before validation,
             intended to add out-of-band fields to the structure.
+
+    Raises:
+        DeserializeError on any failed deserialization or validation.
     """
     try:
         doc = msgpack.loads(payload)
@@ -128,16 +131,17 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
     # Per msgpack docs:
     # "unpack may raise exception other than subclass of UnpackException.
     # If you want to catch all error, catch Exception instead.:
-    except Exception: # pylint: disable=broad-except
+    except Exception as exc: # pylint: disable=broad-except
         err = 'Invalid msgpack message'
         logging.exception(err)
-        return None, err
+        raise DeserializeError(err) from exc
+
     try:
-        return TypeAdapter(model_type).validate_python(doc), None
-    except ValidationError:
+        return TypeAdapter(model_type).validate_python(doc)
+    except ValidationError as exc:
         err = 'Invalid model data'
         logging.exception(err)
-        return None, err
+        raise DeserializeError(err) from exc
 
 
 # Private serializer helpers

@@ -12,6 +12,14 @@ more protocols
 
 PlainMessage = tuple[tuple[Route, Route], list[bytes]]
 
+class IllegalRequestError(Exception):
+    """Base class for all badly formed requests, should trigger sending an ILLEGAL
+    message back"""
+    def __init__(self, route: tuple[Route, Route], reason: str):
+        super().__init__()
+        self.route = route
+        self.reason = reason
+
 class LowerProtocol:
     """
     Lower half of a galp protocol handler.
@@ -95,13 +103,12 @@ class LowerProtocol:
 
     def on_verb(self, route: tuple[Route, Route], msg_body: list[bytes]) -> list:
         """
-        Higher level interface.
+        Higher level interface to implement by subclassing.
         """
         raise NotImplementedError
 
     def on_invalid(self, route, reason: str) -> NoReturn:
         """
-        Invalid hander. Must be implemented by subclasses to raise a sensible
-        exception.
+        An invalid message was received.
         """
-        raise NotImplementedError(f'No handler for invalid message ({reason})')
+        raise IllegalRequestError(route, reason)

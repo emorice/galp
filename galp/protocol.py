@@ -4,28 +4,21 @@ GALP protocol implementation
 
 import logging
 
-from typing import NoReturn, TypeAlias
+from typing import TypeAlias
 from dataclasses import dataclass
 
 import galp.messages as gm
-from galp.lower_protocol import LowerProtocol, Route
-from galp.serializer import dump_model, load_model
+from galp.lower_protocol import LowerProtocol, Route, IllegalRequestError
+from galp.serializer import dump_model, load_model, DeserializeError
 
 # Errors and exceptions
 # =====================
+
 class ProtocolEndException(Exception):
     """
     Exception thrown by a handler to signal that no more messages are expected
     and the transport should be closed
     """
-
-class IllegalRequestError(Exception):
-    """Base class for all badly formed requests, triggers sending an ILLEGAL
-    message back"""
-    def __init__(self, route, reason):
-        super().__init__()
-        self.route = route
-        self.reason = reason
 
 # High-level protocol
 # ===================
@@ -71,12 +64,6 @@ class Protocol(LowerProtocol):
         A message without an overriden callback was received.
         """
         logging.error("Unhandled GALP verb %s", msg.verb)
-
-    def on_invalid(self, route, reason: str) -> NoReturn:
-        """
-        An invalid message was received.
-        """
-        raise IllegalRequestError(route, reason)
 
     # Send methods
     # ============
@@ -159,17 +146,16 @@ class Protocol(LowerProtocol):
         """
 
 
-        match msg_body:
-            case [payload]:
-                msg_obj, err = load_model(gm.AnyMessage, payload)
-            case [payload, data]:
-                msg_obj, err = load_model(gm.AnyMessage, payload, data=data)
-            case _:
-                self._validate(False, route, 'Wrong number of frames')
-
-        if msg_obj is None:
-            self._validate(False, route, err)
-            assert False
+        try:
+            match msg_body:
+                case [payload]:
+                    msg_obj : gm.Message = load_model(gm.AnyMessage, payload)
+                case [payload, data]:
+                    msg_obj = load_model(gm.AnyMessage, payload, data=data)
+                case _:
+                    self.on_invalid(route, 'Wrong number of frames')
+        except DeserializeError as exc:
+            self.on_invalid(route, f'Bad message: {exc.args[0]}')
 
         incoming, forward = route
         rmsg = RoutedMessage(incoming=incoming, forward=forward, body=msg_obj)
