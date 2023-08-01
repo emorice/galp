@@ -28,13 +28,6 @@ def make_msg(*parts):
     """
     return [b'', b'\0\0\0\0', b'\x10\0\0\0', *parts]
 
-def is_body(msg, body):
-    """
-    Remove route and counter before comparing a message to a body
-    """
-    assert len(msg) >= 3
-    return msg[3:] == body
-
 def asserted_zmq_recv_multipart(socket):
     """
     Asserts that the socket received a message in a given time, and returns said
@@ -48,7 +41,7 @@ def load_message(msg: list[bytes]) -> gm.Message:
     """
     Deserialize message body
     """
-    assert len(msg) == 3 # null, verb, payload
+    assert len(msg) == 2 # null, payload
     return TypeAdapter(gm.AnyMessage).validate_python({
         'forward': [], 'incoming': [],
         **msgpack.loads(msg[-1])
@@ -122,7 +115,7 @@ async def test_fork_worker(tmpdir):
     """
     Workers can be created through a fork based call
     """
-    socket = zmq.asyncio.Context.instance().socket(zmq.ROUTER)
+    socket = zmq.asyncio.Context.instance().socket(zmq.DEALER)
     socket.bind('tcp://127.0.0.1:*')
     endpoint = socket.getsockopt(zmq.LAST_ENDPOINT)
 
@@ -134,6 +127,6 @@ async def test_fork_worker(tmpdir):
         async with timeout(3):
             msg = await socket.recv_multipart()
 
-        assert b'READY' in msg
+        assert isinstance(load_message(msg), gm.Ready)
     finally:
         os.kill(pid, signal.SIGKILL)

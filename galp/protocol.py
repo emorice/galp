@@ -91,7 +91,6 @@ class Protocol(LowerProtocol):
     def _dump_message(self, msg: RoutedMessage):
         route = (msg.incoming, msg.forward)
         frames = [
-                msg.body.verb.upper().encode('ascii'),
                 dump_model(msg.body, exclude={'data'})
                 ]
         if hasattr(msg.body, 'data'):
@@ -168,9 +167,9 @@ class Protocol(LowerProtocol):
 
 
         match msg_body:
-            case [_verb, payload]:
+            case [payload]:
                 msg_obj, err = load_model(gm.AnyMessage, payload)
-            case [_verb, payload, data]:
+            case [payload, data]:
                 msg_obj, err = load_model(gm.AnyMessage, payload, data=data)
             case _:
                 self._validate(False, route, 'Wrong number of frames')
