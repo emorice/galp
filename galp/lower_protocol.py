@@ -2,8 +2,6 @@
 Implementation of the lower level of GALP, handles routing.
 """
 
-import logging
-
 from typing import NoReturn
 
 Route = list[bytes]
@@ -14,55 +12,7 @@ more protocols
 
 PlainMessage = tuple[tuple[Route, Route], list[bytes]]
 
-class BaseProtocol:
-    """
-    Abstract class defining the interface expected by the transport
-    """
-    def write_message(self, msg):
-        """
-        Takes an application-specific message description, and returns the
-        sequence of bytes to send. Return None to suppress the message instead.
-        """
-        raise NotImplementedError
-
-    def on_message(self, msg_parts):
-        """
-        Handler called when a message is received.
-
-        Args:
-            msg_parts: a list of message parts, each part being a bytes object
-        Returns:
-            A list of messages that can be iterated and
-            given one by one to `write_message`
-        """
-        raise NotImplementedError
-
-class BaseSplitProtocol(BaseProtocol):
-    """
-    Abstract class defining how a protocol is split into an Upper and LowerPart
-    """
-    def on_verb(self, route, msg_body) -> list:
-        """
-        High-level message handler.
-
-        Args:
-            route: a tuple (incoming_route, forwarding route)
-            msg_body: all the message parts starting with the galp verb
-
-        Returns:
-            A list of messages to send (same as on_message, must be iterable and
-            the items compatible with write_message)
-        """
-        raise NotImplementedError
-
-    def on_invalid(self, route, reason):
-        """
-        Callback for malformed messages that still contained a well-formed
-        route.
-        """
-        raise NotImplementedError
-
-class LowerProtocol(BaseSplitProtocol):
+class LowerProtocol:
     """
     Lower half of a galp protocol handler.
 
@@ -143,12 +93,11 @@ class LowerProtocol(BaseSplitProtocol):
 
         return msg, route
 
-    def on_verb(self, route, msg_body) -> list:
+    def on_verb(self, route: tuple[Route, Route], msg_body: list[bytes]) -> list:
         """
-        Default action, simply log the message
+        Higher level interface.
         """
-        logging.info("No upper-level handler for verb %s", msg_body[:1])
-        return []
+        raise NotImplementedError
 
     def on_invalid(self, route, reason: str) -> NoReturn:
         """
