@@ -67,34 +67,6 @@ def serialize_child(index):
         index.to_bytes(4, 'little')
         )
 
-U = TypeVar('U', bound=TaskDef)
-
-def load_task_def(name: bytes, def_buffer: bytes,
-                  task_def_t : type[U] = TaskDef) -> U:
-    """
-    Util to deserialize a named task def with the name and def split
-
-    This is use both in cache and protocol, so it makes more sense to keep it
-    here despite it not being related to the rest of the serialization code for
-    now.
-
-    Args:
-        name: name of the task
-        def_buffer: msgpack encoded task def
-        task_def_t: additional type constraint on type of task def
-    """
-    doc = msgpack.unpackb(def_buffer)
-    doc.update(name=name)
-    # We want it to work with TaskDef which is a union, so we need an Adapter
-    # here
-    return TypeAdapter(task_def_t).validate_python(doc)
-
-def dump_task_def(task_def: TaskDef) -> tuple[TaskName, bytes]:
-    """
-    Converse of load_task_def
-    """
-    return task_def.name, msgpack.dumps(task_def.model_dump())
-
 def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
     """
     Serialize pydantic model with msgpack

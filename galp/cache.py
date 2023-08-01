@@ -10,7 +10,7 @@ import msgpack
 from galp.task_types import (TaskName, TaskReference, Task, TaskDef,
         TaskNode, LiteralTaskDef)
 from galp.graph import make_child_task_def
-from galp.serializer import Serializer, serialize_child, load_task_def
+from galp.serializer import Serializer, serialize_child, dump_model, load_model
 
 class StoreReadError(Exception):
     """
@@ -188,7 +188,7 @@ class CacheStack():
         if key in self.serialcache:
             return
 
-        self.serialcache[key] = msgpack.packb(task_def.model_dump())
+        self.serialcache[key] = dump_model(task_def)
 
     def put_task(self, task: Task) -> None:
         """
@@ -215,7 +215,7 @@ class CacheStack():
         """
         Loads a task definition, non-recursively
         """
-        return load_task_def(name, self.serialcache[name + b'.task'])
+        return load_model(TaskDef, self.serialcache[name + b'.task'])
 
 def add_store_argument(parser, optional=False):
     """
