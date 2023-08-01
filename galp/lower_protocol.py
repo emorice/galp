@@ -90,15 +90,6 @@ class LowerProtocol(BaseSplitProtocol):
         """
         msg_body, route = self._parse_lower(msg_parts)
 
-
-        msg_log_str, meta_log_str = self._log_str(route, msg_body)
-        if route[1]:
-            # Just forwarding
-            logging.debug('<- %s', msg_log_str)
-        else:
-            logging.info('<- %s', msg_log_str)
-        logging.debug('<- %s', meta_log_str)
-
         return self.on_verb(route, msg_body)
 
     def write_plain_message(self, msg: PlainMessage):
@@ -111,19 +102,13 @@ class LowerProtocol(BaseSplitProtocol):
             # We used to allow these and re-interpret the routes, but that was a
             # hack
             assert not incoming_route, 'Message with an origin but no dest'
+
         if self.router:
             # If routing, we need an id, we take it from the forward segment
             next_hop, *forward_route = forward_route
-            incoming_route = [next_hop, *incoming_route]
-        route_parts = incoming_route + forward_route
-        msg_log_str, meta_log_str = self._log_str(
-            (incoming_route, forward_route), msg_body)
-        if incoming_route:
-            # Forwarding only
-            logging.debug('-> %s', msg_log_str)
+            route_parts = [next_hop] + incoming_route + forward_route
         else:
-            logging.info('-> %s', msg_log_str)
-        logging.debug('-> %s', meta_log_str)
+            route_parts = incoming_route + forward_route
 
         return route_parts + [b''] + msg_body
 
@@ -166,20 +151,6 @@ class LowerProtocol(BaseSplitProtocol):
         msg = msg[1:]
 
         return msg, route
-
-    # Logging utils
-    def _log_str(self, route: tuple[Route, Route], msg_body: list[bytes]
-            ) -> tuple[str, str]:
-        msg_str = (
-            f"{self.proto_name +' ' if self.proto_name else ''}"
-            f"[{route[0][0].hex() if route[0] else ''}]"
-            f" {msg_body[0].decode('ascii') if msg_body else 'PING'}"
-            )
-        meta_log_str = (
-            f"hops {len(route[0] + route[1])}"
-            )
-
-        return msg_str, meta_log_str
 
     def on_verb(self, route, msg_body) -> list:
         """

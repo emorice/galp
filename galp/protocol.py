@@ -8,7 +8,7 @@ from typing import NoReturn, TypeAlias
 from dataclasses import dataclass
 
 import galp.messages as gm
-from galp.lower_protocol import LowerProtocol, Route, PlainMessage
+from galp.lower_protocol import LowerProtocol, Route
 from galp.serializer import dump_model, load_model
 
 # Errors and exceptions
@@ -53,7 +53,6 @@ class RoutedMessage:
         Address a message by default
         """
         return cls(incoming=Route(), forward=Route(), body=new)
-
 
 Replies: TypeAlias = gm.Message | RoutedMessage | list[gm.Message | RoutedMessage] | None
 """
@@ -105,6 +104,7 @@ class Protocol(LowerProtocol):
         handlers
         """
         if isinstance(msg, RoutedMessage):
+            self._log_message(msg, is_incoming=False)
             return super().write_plain_message(self._dump_message(msg))
         if isinstance(msg, gm.Message):
             raise ValueError('Message must be routed (addressed) before being written out')
@@ -165,6 +165,8 @@ class Protocol(LowerProtocol):
         Returns:
             Whatever the final handler for this message returned.
         """
+
+
         match msg_body:
             case [_verb, payload]:
                 msg_obj, err = load_model(gm.AnyMessage, payload)
@@ -175,9 +177,12 @@ class Protocol(LowerProtocol):
 
         if msg_obj is None:
             self._validate(False, route, err)
+            assert False
 
         incoming, forward = route
         rmsg = RoutedMessage(incoming=incoming, forward=forward, body=msg_obj)
+
+        self._log_message(rmsg, is_incoming=True)
 
         return self.route_messages(rmsg, self.on_routed_message(rmsg))
 
@@ -190,3 +195,31 @@ class Protocol(LowerProtocol):
         if not hasattr(self, method_name):
             return self.on_unhandled(msg.body)
         return getattr(self, method_name)(msg.body)
+
+    # Logging
+
+    def _log_message(self, msg: RoutedMessage, is_incoming: bool) -> None:
+
+        # Addr is the one expected on any routed communication
+        # Extra addr is either an additional forward segment when receiving, or
+        # additional source segment when sending, and characterizes a forwarded
+        # message
+        if is_incoming:
+            addr, extra_addr = msg.incoming, msg.forward
+        else:
+            addr, extra_addr = msg.forward, msg.incoming
+
+        msg_log_str = (
+            f"{self.proto_name +' ' if self.proto_name else ''}"
+            f"[{addr[0].hex() if addr else ''}]"
+            f" {msg.body.verb.upper()}"
+            )
+        meta_log_str = f"hops {len(addr + extra_addr)}"
+
+        pattern = '<- %s' if is_incoming else '-> %s'
+
+        if extra_addr:
+            logging.debug(pattern, msg_log_str)
+        else:
+            logging.info(pattern, msg_log_str)
+        logging.debug(pattern, meta_log_str)
