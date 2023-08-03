@@ -239,7 +239,11 @@ class Client:
                 )
         except ProtocolEndException:
             pass
-        return collect.status, collect.result
+        return collect.status, (
+                collect.val.result
+                if hasattr(collect.val, 'result')
+                else collect.val.error
+                )
 
 class BrokerProtocol(ReplyProtocol):
     """

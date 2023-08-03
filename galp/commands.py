@@ -17,6 +17,34 @@ from .task_types import (
         TaskName, LiteralTaskDef, QueryTaskDef, TaskDef, TaskOp
         )
 
+# Result types
+# ============
+
+Ok = TypeVar('Ok')
+Err = TypeVar('Err')
+
+# pylint: disable=too-few-public-methods
+class Pending():
+    """
+    Special type for a result not known yet
+    """
+
+@dataclass
+class Done(Generic[Ok]):
+    """
+    Wrapper type for result
+    """
+    result: Ok
+
+@dataclass
+class Failed(Generic[Err]):
+    """
+    Wrapper type for error
+    """
+    error: Err
+
+Result = Pending | Done[Ok] | Failed[Err]
+
 class Status(Enum):
     """
     Command status
@@ -28,15 +56,17 @@ class Status(Enum):
     def __bool__(self):
         return self != Status.DONE
 
-T = TypeVar('T')
 
-class Command(Generic[T]):
+# Commands
+# ========
+
+class Command(Generic[Ok, Err]):
     """
     An asynchronous command
     """
     def __init__(self) -> None:
         self.status = Status.PENDING
-        self.result: T = None
+        self.val: Result[Ok, Err] = Pending()
         self.outputs : WeakSet[Command] = WeakSet()
         self._state = '_init'
         self._sub_commands : list[Command] = []
@@ -56,10 +86,10 @@ class Command(Generic[T]):
             # Note: this drops new_sub_commands by design since there is no need
             # to inject them into the event loop with the parent failed.
             if sub_status == Status.FAILED:
-                self.result = next(
-                        sub.result
+                self.val = Failed(next(
+                        sub.val.error
                         for sub in sub_commands
-                        if sub.status == Status.FAILED)
+                        if isinstance(sub.val, Failed)))
                 return Status.FAILED, []
 
             # At this point, all sub commands are DONE
@@ -69,7 +99,7 @@ class Command(Generic[T]):
             except KeyError:
                 raise NotImplementedError(self.__class__, self._state) from None
 
-            results = [sub.result for sub in sub_commands]
+            results = [sub.val.result for sub in sub_commands] # actually safe
             ret = handler(*results)
             # Sugar: allow omitting sub commands or passing only one instead of
             # a list
@@ -117,7 +147,7 @@ class Command(Generic[T]):
 
         return new_sub_commands
 
-    def done(self, result=None):
+    def done(self, result: Ok):
         """
         Mark the future as done and runs callbacks.
 
@@ -126,7 +156,9 @@ class Command(Generic[T]):
 
         However successive done calls will overwrite the result.
         """
-        return self._mark_as(Status.DONE, result)
+        if isinstance(self.val, Pending):
+            self.val = Done(result)
+        return self._mark_as(Status.DONE)
 
     def is_pending(self):
         """
@@ -134,7 +166,7 @@ class Command(Generic[T]):
         """
         return self.status == Status.PENDING
 
-    def failed(self, result=None):
+    def failed(self, error: Err):
         """
         Mark the future as failed and runs callbacks.
 
@@ -143,25 +175,20 @@ class Command(Generic[T]):
 
         However successive done calls will overwrite the result.
         """
-        return self._mark_as(Status.FAILED, result)
+        if isinstance(self.val, Pending):
+            self.val = Failed(error)
+        return self._mark_as(Status.FAILED)
 
-    def _mark_as(self, status: Status, result: T) -> None:
+    def _mark_as(self, status: Status) -> None:
         """
         Externally change the status of the command.
         """
-        assert isinstance(self, InertCommand)
-
         # Guard against double marks
         # FIXME: This typically happen because we cannot tell apart STAT-DONE and
         # SUBMIT-DONE pairs, we should have distinct messages
         if self.status != Status.PENDING:
             return
-
         self.status = status
-        self.result = result
-
-        # Removed: this is now the caller's responsibility
-        #advance_all(self.script, self.outputs)
 
     @property
     def _str_res(self):
@@ -170,7 +197,7 @@ class Command(Generic[T]):
             if self.status == Status.DONE else ''
             )
 
-class UniqueCommand(Command[T]):
+class UniqueCommand(Command[Ok, Err]):
     """
     Any command that is fully defined and identified by a task name
     """
@@ -181,7 +208,7 @@ class UniqueCommand(Command[T]):
     def __str__(self):
         return f'{self.__class__.__name__.lower()} {self.name}'
 
-class InertCommand(UniqueCommand[T]):
+class InertCommand(UniqueCommand[Ok, Err]):
     """
     Command tied to an external event
     """
@@ -203,31 +230,6 @@ class InertCommand(UniqueCommand[T]):
         Unique key
         """
         return (self.__class__.__name__.upper(), self.name)
-
-Ok = TypeVar('Ok')
-Err = TypeVar('Err')
-
-# pylint: disable=too-few-public-methods
-class Pending():
-    """
-    Special type for a result not known yet
-    """
-
-@dataclass
-class Done(Generic[Ok]):
-    """
-    Wrapper type for result
-    """
-    result: Ok
-
-@dataclass
-class Failed(Generic[Err]):
-    """
-    Wrapper type for error
-    """
-    error: Err
-
-Result = Pending | Done[Ok] | Failed[Err]
 
 class PrimitiveProxy(Generic[Ok, Err]):
     """
@@ -341,7 +343,7 @@ class Script(Command):
 
         if isinstance(command, Stat):
             if new_status == Status.DONE:
-                task_done, task_dict, _children = command.result
+                task_done, task_dict, _children = command.val.result # Safe
                 if not task_done and 'step_name' in task_dict:
                     self._task_dicts[command.name] = task_dict
                     print_status('PLAN', command.name,
@@ -436,12 +438,12 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     script.new_commands.extend(p.key for p in primitives)
     return primitives
 
-class Get(InertCommand[list[TaskName]]):
+class Get(InertCommand[list[TaskName], str]):
     """
     Get a single resource part
     """
 
-class Submit(InertCommand[list[TaskName]]):
+class Submit(InertCommand[list[TaskName], str]):
     """
     Remotely execute a single step
     """
@@ -449,12 +451,12 @@ class Submit(InertCommand[list[TaskName]]):
 # done, def, children
 StatResult = tuple[bool, TaskDef, list[TaskName]]
 
-class Stat(InertCommand[StatResult]):
+class Stat(InertCommand[StatResult, str]):
     """
     Get a task's metadata
     """
 
-class Rget(UniqueCommand[None]):
+class Rget(UniqueCommand[None, str]):
     """
     Recursively gets a resource and all its parts
     """
@@ -465,9 +467,10 @@ class Rget(UniqueCommand[None]):
         return '_sub_gets', [ Rget(child_name) for child_name in children ]
 
     def _sub_gets(self, *_):
+        self.val = Done(None)
         return Status.DONE
 
-class Collect(Command[list]):
+class Collect(Command[list, str]):
     """
     A collection of other commands
     """
@@ -482,7 +485,7 @@ class Collect(Command[list]):
         return '_collect', self.commands
 
     def _collect(self, *results):
-        self.result = results
+        self.val = Done(results)
         return Status.DONE
 
 class Callback(Command):
@@ -504,11 +507,14 @@ class Callback(Command):
 
     def _eval(self, script: 'Script'):
         if self._in.status != Status.PENDING:
-            self._callback(self._in.status, self._in.result)
+            self._callback(self._in.status,
+                           self._in.val.result if isinstance(self._in.val, Done)
+                           else self._in.val.error
+                           )
             return Status.DONE, []
         return Status.PENDING, []
 
-class SSubmit(UniqueCommand[list[TaskName]]):
+class SSubmit(UniqueCommand[list[TaskName], str]):
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
@@ -533,7 +539,7 @@ class SSubmit(UniqueCommand[list[TaskName]]):
             children = task_def.children
 
         if children is not None:
-            self.result = children
+            self.val = Done(children)
             return Status.DONE
 
         # Query, should never have reached this layer as queries have custom run
@@ -558,7 +564,7 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         # For dry-runs, bypass the submission
         if self._dry:
             # Explicitely set the result to "no children"
-            self.result = []
+            self.val = Done([])
             return Status.DONE
 
         # Task itself
@@ -568,7 +574,7 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         """
         Check the main result and return possible children tasks
         """
-        self.result = children
+        self.val = Done(children)
         return Status.DONE
 
 class DrySSubmit(SSubmit):
@@ -577,7 +583,7 @@ class DrySSubmit(SSubmit):
     """
     _dry = True
 
-class RSubmit(UniqueCommand[None]):
+class RSubmit(UniqueCommand[None, str]):
     """
     Recursive submit, with children, aka an SSubmit plus a RSubmit per child
     """
@@ -602,6 +608,7 @@ class RSubmit(UniqueCommand[None]):
         """
         Check completion of children and propagate result
         """
+        self.val = Done(None)
         return Status.DONE
 
 # Despite the name, since a DryRun never does any fetches, it is implemented as
@@ -623,7 +630,7 @@ class DryRun(RSubmit):
     """
     _dry = True
 
-class Run(UniqueCommand[None]):
+class Run(UniqueCommand[None, str]):
     """
     Combined rsubmit + rget
     """
@@ -634,9 +641,10 @@ class Run(UniqueCommand[None]):
         return '_rget', Rget(self.name)
 
     def _rget(self, _):
+        self.val = Done(None)
         return Status.DONE
 
-class SRun(UniqueCommand[None]):
+class SRun(UniqueCommand[None, str]):
     """
     Shallow run: combined ssubmit + get, fetches the raw result of a task but
     not its children
@@ -648,4 +656,5 @@ class SRun(UniqueCommand[None]):
         return '_get', Get(self.name)
 
     def _get(self, _):
+        self.val = Done(None)
         return Status.DONE

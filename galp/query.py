@@ -4,13 +4,12 @@ Implementation of complex queries within the command asynchronous system
 
 import logging
 
+from . import commands as cm
 from .task_types import TaskNode, QueryTaskDef, TaskName, Task, CoreTaskDef
-from .commands import (Command, Status, Script, Get, Rget, Stat, SSubmit, Run,
-    DryRun, SRun)
 from .cache import StoreReadError
 from .serializer import DeserializeError
 
-def run_task(script: Script, task: TaskNode, dry: bool = False) -> Command:
+def run_task(script: cm.Script, task: TaskNode, dry: bool = False) -> cm.Command:
     """
     Creates command appropriate to type of task (query or non-query)
     """
@@ -21,10 +20,10 @@ def run_task(script: Script, task: TaskNode, dry: bool = False) -> Command:
         return Query(script, task_def.subject, task_def.query)
 
     if dry:
-        return DryRun(task.name)
-    return Run(task.name)
+        return cm.DryRun(task.name)
+    return cm.Run(task.name)
 
-class Query(Command):
+class Query(cm.Command):
     """
     Local execution of a query
 
@@ -32,7 +31,7 @@ class Query(Command):
         subject: the name of the task to apply the query to
         query: the native object representing the query
     """
-    def __init__(self, script: Script, subject: TaskName, query):
+    def __init__(self, script: cm.Script, subject: TaskName, query):
         self.subject = subject
         self.query = query
         self.op = None
@@ -93,12 +92,12 @@ class Query(Command):
         Execute handler for operator after the required commands are done
         """
         try:
-            self.result = self.op.result(sub_commands)
-            return Status.DONE
+            self.val = cm.Done(self.op.result(sub_commands))
+            return cm.Status.DONE
         except (StoreReadError, DeserializeError) as exc:
             logging.exception('In %s:', self)
-            self.result = exc
-            return Status.FAILED
+            self.val = cm.Failed(exc)
+            return cm.Status.FAILED
 
 def parse_query(query):
     """
@@ -153,7 +152,7 @@ class Operator:
         self.subject = query.subject
         self._req_cmd = None
 
-    requires: type[Command] | None = None
+    requires: type[cm.Command] | None = None
 
     _ops = {}
     def __init_subclass__(cls, /, named=True, **kwargs):
@@ -201,7 +200,7 @@ class Base(Operator):
     Base operator, returns shallow object itself with the linked tasks left as
     references
     """
-    requires = Get
+    requires = cm.Get
 
     def _result(self, _srun_cmd, _subs):
         return self.store.get_native(
@@ -211,7 +210,7 @@ class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
-    requires = Rget
+    requires = cm.Rget
 
     def _result(self, _run_cmd, _subs):
         return self.store.get_native(
@@ -221,7 +220,7 @@ class Done(Operator):
     """
     Completion state operator
     """
-    requires = Stat
+    requires = cm.Stat
 
     def _result(self, stat_result, _subs):
         task_done, *_ = stat_result
@@ -231,7 +230,7 @@ class Def(Operator):
     """
     Definition oerator
     """
-    requires = Stat
+    requires = cm.Stat
 
     def _result(self, stat_result, _subs):
         _done, task_dict, _children = stat_result
@@ -241,7 +240,7 @@ class Args(Operator):
     """
     Task arguments operator
     """
-    requires = Stat
+    requires = cm.Stat
 
     def _recurse(self, stat_result):
         """
@@ -294,7 +293,7 @@ class Children(Args):
     """
     Recurse on children after simple task run
     """
-    requires = SSubmit
+    requires = cm.SSubmit
 
     def _recurse(self, children: list[TaskName]):
         """
@@ -335,7 +334,7 @@ class GetItem(Operator, named=False):
         super().__init__(query, sub_query)
         self.index = index
 
-    requires = SRun
+    requires = cm.SRun
 
     def _recurse(self, _srun_cmd):
         """
@@ -389,7 +388,7 @@ class Iterate(Operator, named=False):
     """
     Iterate over object
     """
-    requires = SRun
+    requires = cm.SRun
 
     def _recurse(self, _srun_cmd):
         """
