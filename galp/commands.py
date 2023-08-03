@@ -8,6 +8,8 @@ from enum import Enum
 from collections import deque
 from weakref import WeakSet
 from typing import TypeVar, Generic
+from dataclasses import dataclass
+from itertools import chain
 
 import logging
 
@@ -184,7 +186,7 @@ class Command(Generic[T]):
 
     def _mark_as(self, status: Status, result: T) -> None:
         """
-        Externally change the status of the command, then try to advance it
+        Externally change the status of the command.
         """
         assert isinstance(self, InertCommand)
 
@@ -197,22 +199,18 @@ class Command(Generic[T]):
         self.status = status
         self.result = result
 
-        advance_all(self.script, self.outputs)
+        # Removed: this is now the caller's responsibility
+        #advance_all(self.script, self.outputs)
 
     def do_once(self, verb: str, name: TaskName, *args, **kwargs) -> 'UniqueCommand':
         """
-        Creates a unique command
+        Legacy: created a unique command, now just create a new instance to
+        avoid depending on a global state.
         """
-        key =  verb, name
         cls = _once_commands[verb]
 
         assert isinstance(name, TaskName)
-        if key in self.script.commands:
-            cmd = self.script.commands[key]
-            return cmd
-        cmd = cls(self.script, name, *args, **kwargs)
-        self.script.commands[key] = cmd
-        return cmd
+        return  cls(self.script, name, *args, **kwargs)
 
     @property
     def _str_res(self):
@@ -232,6 +230,92 @@ class UniqueCommand(Command[T]):
     def __str__(self):
         return f'{self.__class__.__name__.lower()} {self.name}'
 
+class InertCommand(UniqueCommand[T]):
+    """
+    Command tied to an external event
+    """
+    def __str__(self):
+        return f'{self.__class__.__name__.lower().ljust(7)} {self.name}' + self._str_res
+
+    def _eval(self):
+        return Status.PENDING, []
+
+    @property
+    def key(self) -> tuple[str, TaskName]:
+        """
+        Unique key
+        """
+        return (self.__class__.__name__.upper(), self.name)
+
+Ok = TypeVar('Ok')
+Err = TypeVar('Err')
+
+# pylint: disable=too-few-public-methods
+class Pending():
+    """
+    Special type for a result not known yet
+    """
+
+@dataclass
+class Done(Generic[Ok]):
+    """
+    Wrapper type for result
+    """
+    result: Ok
+
+@dataclass
+class Failed(Generic[Err]):
+    """
+    Wrapper type for error
+    """
+    error: Err
+
+Result = Pending | Done[Ok] | Failed[Err]
+
+class PrimitiveProxy(Generic[Ok, Err]):
+    """
+    Helper class to propagate results to several logical instances of the same
+    primitive
+    """
+    instances: WeakSet[InertCommand]
+    val: Result[Ok, Err] = Pending()
+    script: 'Script'
+
+    def __init__(self, script: 'Script', *instances: InertCommand):
+        self.instances = WeakSet(instances)
+        self.script = script
+
+    def done(self, result: Ok) -> list[InertCommand]:
+        """
+        Mark all instances as done
+        """
+        self.val = Done(result)
+        for cmd in self.instances:
+            cmd.done(result)
+        return self._advance_all()
+
+    def failed(self, error: Err) -> list[InertCommand]:
+        """
+        Mark all instances as failed
+        """
+        self.val = Failed(error)
+        for cmd in self.instances:
+            cmd.failed(error)
+        return self._advance_all()
+
+    def _advance_all(self) -> list[InertCommand]:
+        return advance_all(self.script,
+                list(chain.from_iterable(cmd.outputs for cmd in self.instances))
+                )
+
+    def is_pending(self) -> bool:
+        """
+        Check if pending
+        """
+        return isinstance(self.val, Pending)
+
+CommandKey = tuple[str, TaskName]
+
 class Script(Command):
     """
     A collection of maker methods for Commands
@@ -244,17 +328,16 @@ class Script(Command):
             fails. If False, attempts to "fail fast" instead, and finishes as
             soon as any command fails.
     """
-    def __init__(self, verbose=True, store=None, keep_going=False):
+    def __init__(self, verbose=True, store=None, keep_going: bool = False):
         # Strong references to all pending commands
-        self.pending = set()
+        self.pending: set[Command] = set()
 
         super().__init__(self)
-        self.commands = {}
-        self.new_commands = deque()
+        self.commands : dict[CommandKey, PrimitiveProxy] = {}
+        self.new_commands : deque[CommandKey] = deque()
         self.verbose = verbose
-        self.keep_going=keep_going
+        self.keep_going = keep_going
         self.store = store
-
 
         self._task_dicts = {}
 
@@ -343,23 +426,6 @@ class Script(Command):
             return Status.FAILED
         return Status.PENDING
 
-class InertCommand(UniqueCommand[T]):
-    """
-    Command tied to an external event
-    """
-    def __str__(self):
-        return f'{self.__class__.__name__.lower().ljust(7)} {self.name}' + self._str_res
-
-    def _eval(self):
-        return Status.PENDING, []
-
-    @property
-    def key(self) -> tuple[str, TaskName]:
-        """
-        Unique key
-        """
-        return (self.__class__.__name__.upper(), self.name)
-
 def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     """
     Try to advance all given commands, and all downstream depending on them the
@@ -372,8 +438,25 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
         command = commands.pop()
         match command:
             case InertCommand():
-                # Todo: check against book
-                primitives.append(command)
+                # Check if we already have instances of that command
+                master = script.commands.get(command.key)
+                if master is None:
+                    # If not create it, and add it to the new primitives to return
+                    script.commands[command.key] = PrimitiveProxy(script, command)
+                    primitives.append(command)
+                else:
+                    # If yes, depends if it's resolved
+                    match master.val:
+                        case Pending():
+                            # If not, we simply add our copy to the list
+                            master.instances.add(command)
+                            continue
+                            # If yes, transfer the state and schedule the rest
+                        case Done():
+                            command.done(master.val.result)
+                        case Failed():
+                            command.failed(master.val.error)
+                    commands.extend(command.outputs)
             case _:
                 if command.status != Status.PENDING:
                     # FIXME: Why does that even happen ?
