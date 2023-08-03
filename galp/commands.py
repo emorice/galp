@@ -69,7 +69,8 @@ class Command(Generic[T]):
             except KeyError:
                 raise NotImplementedError(self.__class__, self._state) from None
 
-            ret = handler(*sub_commands)
+            results = [sub.result for sub in sub_commands]
+            ret = handler(*results)
             # Sugar: allow omitting sub commands or passing only one instead of
             # a list
             if isinstance(ret, tuple):
@@ -445,7 +446,10 @@ class Submit(InertCommand[list[TaskName]]):
     Remotely execute a single step
     """
 
-class Stat(InertCommand[tuple[bool, TaskDef, list[TaskName] | None]]):
+# done, def, children
+StatResult = tuple[bool, TaskDef, list[TaskName]]
+
+class Stat(InertCommand[StatResult]):
     """
     Get a task's metadata
     """
@@ -457,11 +461,8 @@ class Rget(UniqueCommand[None]):
     def _init(self):
         return '_get', Get(self.name)
 
-    def _get(self, get: Get):
-        return '_sub_gets', [
-                Rget(child_name)
-                for child_name in get.result
-                ]
+    def _get(self, children: list[TaskName]):
+        return '_sub_gets', [ Rget(child_name) for child_name in children ]
 
     def _sub_gets(self, *_):
         return Status.DONE
@@ -480,8 +481,8 @@ class Collect(Command[list]):
     def _init(self):
         return '_collect', self.commands
 
-    def _collect(self, *commands):
-        self.result = [ c.result for c in commands ]
+    def _collect(self, *results):
+        self.result = results
         return Status.DONE
 
 class Callback(Command):
@@ -521,11 +522,11 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         # metadata
         return '_sort', Stat(self.name)
 
-    def _sort(self, stat: Stat):
+    def _sort(self, stat_result: StatResult):
         """
         Sort out queries, remote jobs and literals
         """
-        _task_done, task_def, children = stat.result
+        _task_done, task_def, children = stat_result
 
         # Short circuit for tasks already processed and literals
         if isinstance(task_def, LiteralTaskDef):
@@ -563,11 +564,11 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         # Task itself
         return '_main', Submit(self.name)
 
-    def _main(self, main_sub: Submit) -> Status:
+    def _main(self, children: list[TaskName]) -> Status:
         """
         Check the main result and return possible children tasks
         """
-        self.result = main_sub.result
+        self.result = children
         return Status.DONE
 
 class DrySSubmit(SSubmit):
@@ -589,12 +590,10 @@ class RSubmit(UniqueCommand[None]):
         cmd = DrySSubmit if self._dry else SSubmit
         return '_main', cmd(self.name)
 
-    def _main(self, ssub: SSubmit):
+    def _main(self, children: list[TaskName]):
         """
         Check the main result and proceed with possible children tasks
         """
-        children = ssub.result
-
         cmd = DryRun if self._dry else RSubmit
         return '_children', [ cmd(child_name)
                 for child_name in children ]

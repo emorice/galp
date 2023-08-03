@@ -223,8 +223,8 @@ class Done(Operator):
     """
     requires = Stat
 
-    def _result(self, stat_cmd, _subs):
-        task_done, *_ = stat_cmd.result
+    def _result(self, stat_result, _subs):
+        task_done, *_ = stat_result
         return task_done
 
 class Def(Operator):
@@ -233,8 +233,8 @@ class Def(Operator):
     """
     requires = Stat
 
-    def _result(self, stat_cmd, _subs):
-        _done, task_dict, _children = stat_cmd.result
+    def _result(self, stat_result, _subs):
+        _done, task_dict, _children = stat_result
         return task_dict
 
 class Args(Operator):
@@ -243,12 +243,12 @@ class Args(Operator):
     """
     requires = Stat
 
-    def _recurse(self, stat_cmd):
+    def _recurse(self, stat_result):
         """
         Build list of sub-queries for arguments of subject task from the
         definition obtained from STAT
         """
-        _task_done, task_def, _children = stat_cmd.result
+        _task_done, task_def, _children = stat_result
 
         # FIXME: this should delegate handling of the sub-query
         is_compound, arg_subqueries = parse_query(self.sub_query)
@@ -286,7 +286,7 @@ class Args(Operator):
 
         result = {}
         for index, qitem in zip(arg_subqueries, query_items):
-            result[str(index)] = qitem.result
+            result[str(index)] = qitem
 
         return result
 
@@ -296,13 +296,11 @@ class Children(Args):
     """
     requires = SSubmit
 
-    def _recurse(self, ssub_cmd):
+    def _recurse(self, children: list[TaskName]):
         """
         Build a list of sub-queries for children of subject task
         from the children list obtained from SRUN
         """
-        children = ssub_cmd.result
-
         child_subqueries = self.sub_query
         sub_commands = []
 
@@ -367,7 +365,7 @@ class GetItem(Operator, named=False):
         Return result of simple indexed command
         """
         item, = subs
-        return item.result
+        return item
 
 class Compound(Operator, named=False):
     """
@@ -383,9 +381,9 @@ class Compound(Operator, named=False):
             for sub_query in self.sub_queries
             ]
 
-    def _result(self, _no_cmd, sub_cmds):
-        return { sub_cmd.query[0]: sub_cmd.result
-                for sub_cmd in sub_cmds }
+    def _result(self, _no_cmd, results):
+        return { query[0]: result
+                for query, result in zip(self.sub_queries, results)}
 
 class Iterate(Operator, named=False):
     """
@@ -412,8 +410,8 @@ class Iterate(Operator, named=False):
 
         return sub_query_commands
 
-    def _result(self, _srun_cmd, items):
+    def _result(self, _srun_cmd, results):
         """
         Pack items
         """
-        return [ item.result for item in items ]
+        return list(results)
