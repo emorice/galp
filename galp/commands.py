@@ -42,11 +42,8 @@ class Command(Generic[T]):
     """
     An asynchronous command
     """
-    def __init__(self, script: 'Script') -> None:
-        self.script = script
+    def __init__(self) -> None:
         self.status = Status.PENDING
-        if script:
-            script.pending.add(self)
         self.result: T = None
         self.outputs : WeakSet[Command] = WeakSet()
         self._state = '_init'
@@ -59,14 +56,14 @@ class Command(Generic[T]):
         self.outputs.add(cmd)
         return self
 
-    def _eval(self):
+    def _eval(self, script: 'Script'):
         """
         State-based handling
         """
         sub_commands = self._sub_commands
         new_sub_commands = []
         # Aggregate status of all sub-commands
-        sub_status = self.script.status_conj(sub_commands)
+        sub_status = script.status_conj(sub_commands)
         while sub_status != Status.PENDING:
             # By default, we stop processing a command on failures. In theory
             # the command could have other independent work to do, but we have
@@ -106,7 +103,7 @@ class Command(Generic[T]):
                 return self._state, []
 
             # Re-inspect status of new set of sub-commands and loop
-            sub_status = self.script.status_conj(sub_commands)
+            sub_status = script.status_conj(sub_commands)
 
         # Ensure all remaining sub-commands have downstream links pointing to
         # this command before relinquishing control
@@ -118,7 +115,7 @@ class Command(Generic[T]):
 
         return Status.PENDING, new_sub_commands
 
-    def advance(self):
+    def advance(self, script: 'Script'):
         """
         Try to advance the commands state. If the move causes new commands to be
         created or moves to a terminal state and trigger downstream commands,
@@ -132,11 +129,11 @@ class Command(Generic[T]):
         # Command is pending, i.e. waiting for an external trigger. Maybe this
         # trigger came since the last advance attempt, so we try to move states.
         # TODO: this should also return possible child commands.
-        self.status, new_sub_commands = self._eval()
+        self.status, new_sub_commands = self._eval(script)
 
         # Give the script the chance to hook anything, like printing out progress
-        if self.script:
-            self.script.notify_change(self, old_status, self.status)
+        if script:
+            script.notify_change(self, old_status, self.status)
 
         # Also log the change anyway
         logging.info('%s %s', self.status.name.ljust(7), self)
@@ -210,7 +207,7 @@ class Command(Generic[T]):
         cls = _once_commands[verb]
 
         assert isinstance(name, TaskName)
-        return  cls(self.script, name, *args, **kwargs)
+        return  cls(name, *args, **kwargs)
 
     @property
     def _str_res(self):
@@ -223,9 +220,9 @@ class UniqueCommand(Command[T]):
     """
     Any command that is fully defined and identified by a task name
     """
-    def __init__(self, script: 'Script', name: TaskName):
+    def __init__(self, name: TaskName):
         self.name = name
-        super().__init__(script)
+        super().__init__()
 
     def __str__(self):
         return f'{self.__class__.__name__.lower()} {self.name}'
@@ -237,8 +234,8 @@ class InertCommand(UniqueCommand[T]):
     def __str__(self):
         return f'{self.__class__.__name__.lower().ljust(7)} {self.name}' + self._str_res
 
-    def _eval(self):
-        return Status.PENDING, []
+    def _eval(self, *_):
+        raise NotImplementedError
 
     @property
     def key(self) -> tuple[str, TaskName]:
@@ -332,7 +329,7 @@ class Script(Command):
         # Strong references to all pending commands
         self.pending: set[Command] = set()
 
-        super().__init__(self)
+        super().__init__()
         self.commands : dict[CommandKey, PrimitiveProxy] = {}
         self.new_commands : deque[CommandKey] = deque()
         self.verbose = verbose
@@ -345,21 +342,24 @@ class Script(Command):
         """
         Creates a command representing a collection of other commands
         """
-        return Collect(self, commands)
+        cmd =  Collect(commands)
+        self.pending.add(cmd)
+        return cmd
 
-    def callback(self, command, callback):
+    def callback(self, command: Command, callback):
         """
         Adds an arbitrary callback to an existing command. This triggers
         execution of the command as far as possible, and of the callback if
         ready.
         """
-        cb_command = Callback(self, command, callback)
+        cb_command = Callback(command, callback)
+        self.pending.add(cb_command)
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
-        advance_all(self.script, [command])
+        advance_all(self, [command])
         return cb_command
 
-    def notify_change(self, command, old_status, new_status):
+    def notify_change(self, command: Command, old_status: Status, new_status: Status):
         """
         Hook called when the graph status changes
         """
@@ -462,7 +462,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     # FIXME: Why does that even happen ?
                     continue
                 # For now, subcommands need to be recursively initialized
-                sub_commands = command.advance()
+                sub_commands = command.advance(script)
                 if sub_commands:
                     commands.extend(sub_commands)
                 # Maybe this caused the command to advance to a terminal state (DONE or
@@ -513,9 +513,9 @@ class Collect(Command[list]):
     """
     A collection of other commands
     """
-    def __init__(self, script, commands):
+    def __init__(self, commands):
         self.commands = commands
-        super().__init__(script)
+        super().__init__()
 
     def __str__(self):
         return 'collect'
@@ -535,16 +535,16 @@ class Callback(Command):
     be collected before having a chance to fire since downstream links are
     weakrefs.
     """
-    def __init__(self, script, command, callback):
+    def __init__(self, command, callback):
         self._callback = callback
         self._in = command
         self._in.out(self)
-        super().__init__(script=script)
+        super().__init__()
 
     def __str__(self):
         return f'callback {self._callback.__name__}'
 
-    def _eval(self):
+    def _eval(self, script: 'Script'):
         if self._in.status != Status.PENDING:
             self._callback(self._in.status, self._in.result)
             return Status.DONE, []

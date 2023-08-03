@@ -35,7 +35,8 @@ class Query(Command):
         self.subject = subject
         self.query = query
         self.op = None
-        super().__init__(script)
+        self.script = script
+        super().__init__()
 
     def __str__(self):
         return f'query on {self.subject} {self.query}'
