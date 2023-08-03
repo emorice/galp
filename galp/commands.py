@@ -41,13 +41,6 @@ class Command(Generic[T]):
         self._state = '_init'
         self._sub_commands : list[Command] = []
 
-    def out(self, cmd):
-        """
-        Add command to the set of outputs, returns self for easy chaining.
-        """
-        self.outputs.add(cmd)
-        return self
-
     def _eval(self, script: 'Script'):
         """
         State-based handling
@@ -100,7 +93,7 @@ class Command(Generic[T]):
         # Ensure all remaining sub-commands have downstream links pointing to
         # this command before relinquishing control
         for sub in sub_commands:
-            sub.out(self)
+            sub.outputs.add(self)
 
         # Save for callback
         self._sub_commands = sub_commands
@@ -133,18 +126,6 @@ class Command(Generic[T]):
         However successive done calls will overwrite the result.
         """
         return self._mark_as(Status.DONE, result)
-
-    def is_done(self):
-        """
-        Boolean, if command done
-        """
-        return self.status == Status.DONE
-
-    def is_failed(self):
-        """
-        Boolean, if command done
-        """
-        return self.status == Status.FAILED
 
     def is_pending(self):
         """
@@ -185,7 +166,7 @@ class Command(Generic[T]):
     def _str_res(self):
         return (
             f' = [{", ".join(str(r) for r in self.result)}]'
-            if self.is_done() else ''
+            if self.status == Status.DONE else ''
             )
 
 class UniqueCommand(Command[T]):
@@ -514,7 +495,7 @@ class Callback(Command):
     def __init__(self, command, callback):
         self._callback = callback
         self._in = command
-        self._in.out(self)
+        self._in.outputs.add(self)
         super().__init__()
 
     def __str__(self):
