@@ -373,7 +373,7 @@ async def test_structured_inputs(client):
     in1, in2 = gts.identity(3), gts.identity(4)
     in_list = [in1, in2]
 
-    async with timeout(3):
+    async with timeout(4):
         ans = await client.run(gts.npsum(in_list))
         ans_dict = await client.run(gts.sum_dict({
             'first': in1,

@@ -6,7 +6,7 @@ import sys
 import time
 from enum import Enum
 from collections import deque
-from weakref import WeakSet
+from weakref import WeakSet, WeakValueDictionary
 from typing import TypeVar, Generic
 from dataclasses import dataclass
 from itertools import chain
@@ -231,6 +231,12 @@ class InertCommand(UniqueCommand[T]):
     """
     Command tied to an external event
     """
+    # Strong ref to master. This allows to make the master dict weak, which in
+    # turns drops the master when the last copy gets collected
+    # This is purely for memory management and should not be used for any other
+    # purpose
+    master: 'PrimitiveProxy'
+
     def __str__(self):
         return f'{self.__class__.__name__.lower().ljust(7)} {self.name}' + self._str_res
 
@@ -330,7 +336,7 @@ class Script(Command):
         self.pending: set[Command] = set()
 
         super().__init__()
-        self.commands : dict[CommandKey, PrimitiveProxy] = {}
+        self.commands : WeakValueDictionary[CommandKey, PrimitiveProxy] = WeakValueDictionary()
         self.new_commands : deque[CommandKey] = deque()
         self.verbose = verbose
         self.keep_going = keep_going
@@ -343,7 +349,6 @@ class Script(Command):
         Creates a command representing a collection of other commands
         """
         cmd =  Collect(commands)
-        self.pending.add(cmd)
         return cmd
 
     def callback(self, command: Command, callback):
@@ -442,14 +447,17 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                 master = script.commands.get(command.key)
                 if master is None:
                     # If not create it, and add it to the new primitives to return
-                    script.commands[command.key] = PrimitiveProxy(script, command)
+                    master = PrimitiveProxy(script, command)
+                    command.master = master # strong
+                    script.commands[command.key] = master # weak
                     primitives.append(command)
                 else:
                     # If yes, depends if it's resolved
                     match master.val:
                         case Pending():
                             # If not, we simply add our copy to the list
-                            master.instances.add(command)
+                            master.instances.add(command) # weak
+                            command.master = master # strong
                             continue
                             # If yes, transfer the state and schedule the rest
                         case Done():

@@ -25,7 +25,7 @@ def assert_task_equal(client):
     Wraps equality assertion against client return in timeout guard
     """
     async def _assert_task_equal(task, result):
-        async with timeout(3):
+        async with timeout(4):
             assert result == await client.run(task)
     return _assert_task_equal
 

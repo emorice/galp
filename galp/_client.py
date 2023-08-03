@@ -324,26 +324,24 @@ class BrokerProtocol(ReplyProtocol):
         """
         verb, name = command_key
 
-        if verb == 'SUBMIT':
-            if self._status[name] < TaskStatus.RUNNING:
-                sub = self.submit_task_by_name(name)
-                if sub is not None:
-                    return self.route_message(None, sub)
+        command = self.script.commands.get(command_key)
+        if command is None or not command.is_pending():
             return None
 
-        if verb == 'GET':
-            if self.script.commands[command_key].is_pending():
+        match verb:
+            case 'SUBMIT':
+                if self._status[name] < TaskStatus.RUNNING:
+                    sub = self.submit_task_by_name(name)
+                    if sub is not None:
+                        return self.route_message(None, sub)
+            case 'GET':
                 get = self.get(name)
                 if get is not None:
                     return self.route_message(None, get)
-            return None
-
-        if verb == 'STAT':
-            if self.script.commands[command_key].is_pending():
+            case 'STAT':
                 return self.route_message(None, gm.Stat(name=name))
-            return None
-
-        raise NotImplementedError(verb)
+            case _:
+                raise NotImplementedError(verb)
 
     # Custom protocol sender
     # ======================
