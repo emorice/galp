@@ -28,14 +28,6 @@ class Status(Enum):
     def __bool__(self):
         return self != Status.DONE
 
-_once_commands = {}
-def once(cls):
-    """
-    Register a class for use by `do_once`
-    """
-    _once_commands[cls.__name__.upper()] = cls
-    return cls
-
 T = TypeVar('T')
 
 class Command(Generic[T]):
@@ -121,24 +113,14 @@ class Command(Generic[T]):
         created or moves to a terminal state and trigger downstream commands,
         returns them for them to be advanced by the caller too.
         """
-        assert not isinstance(self, InertCommand)
-        new_sub_commands = []
-
         old_status = self.status
 
-        # Command is pending, i.e. waiting for an external trigger. Maybe this
-        # trigger came since the last advance attempt, so we try to move states.
-        # TODO: this should also return possible child commands.
         self.status, new_sub_commands = self._eval(script)
 
-        # Give the script the chance to hook anything, like printing out progress
-        if script:
-            script.notify_change(self, old_status, self.status)
+        script.notify_change(self, old_status, self.status)
 
-        # Also log the change anyway
         logging.info('%s %s', self.status.name.ljust(7), self)
 
-        # Else, still pending, nothing else to check
         return new_sub_commands
 
     def done(self, result=None):
@@ -472,25 +454,21 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     script.new_commands.extend(p.key for p in primitives)
     return primitives
 
-@once
 class Get(InertCommand[list[TaskName]]):
     """
     Get a single resource part
     """
 
-@once
 class Submit(InertCommand[list[TaskName]]):
     """
     Remotely execute a single step
     """
 
-@once
 class Stat(InertCommand[tuple[bool, TaskDef, list[TaskName] | None]]):
     """
     Get a task's metadata
     """
 
-@once
 class Rget(UniqueCommand[None]):
     """
     Recursively gets a resource and all its parts
@@ -548,7 +526,6 @@ class Callback(Command):
             return Status.DONE, []
         return Status.PENDING, []
 
-@once
 class SSubmit(UniqueCommand[list[TaskName]]):
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
@@ -612,14 +589,12 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         self.result = main_sub.result
         return Status.DONE
 
-@once
 class DrySSubmit(SSubmit):
     """
     Dry-run variant of SSubmit
     """
     _dry = True
 
-@once
 class RSubmit(UniqueCommand[None]):
     """
     Recursive submit, with children, aka an SSubmit plus a RSubmit per child
@@ -651,7 +626,6 @@ class RSubmit(UniqueCommand[None]):
 
 # Despite the name, since a DryRun never does any fetches, it is implemented as
 # a special case of RSubmit and not Run (Run is RSubmit + RGet)
-@once
 class DryRun(RSubmit):
     """
     A task dry-run. Similar to RSUBMIT, but does not actually submit tasks, and
@@ -669,7 +643,6 @@ class DryRun(RSubmit):
     """
     _dry = True
 
-@once
 class Run(UniqueCommand[None]):
     """
     Combined rsubmit + rget
@@ -683,7 +656,6 @@ class Run(UniqueCommand[None]):
     def _rget(self, _):
         return Status.DONE
 
-@once
 class SRun(UniqueCommand[None]):
     """
     Shallow run: combined ssubmit + get, fetches the raw result of a task but
