@@ -100,7 +100,7 @@ def create_app(config):
             kwargs = {}
             for keyword, tin in tdef.kwargs.items():
                 # You need to hold a reference, because advance_all won't !
-                cmd = proto.script.do_once('RGET', tin.name)
+                cmd = galp.commands.Rget(tin.name)
                 galp.commands.advance_all(proto.script, [cmd])
                 proto.schedule_new()
                 kwargs[keyword] = proto.store.get_native(tin.name)

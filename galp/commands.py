@@ -199,16 +199,6 @@ class Command(Generic[T]):
         # Removed: this is now the caller's responsibility
         #advance_all(self.script, self.outputs)
 
-    def do_once(self, verb: str, name: TaskName, *args, **kwargs) -> 'UniqueCommand':
-        """
-        Legacy: created a unique command, now just create a new instance to
-        avoid depending on a global state.
-        """
-        cls = _once_commands[verb]
-
-        assert isinstance(name, TaskName)
-        return  cls(name, *args, **kwargs)
-
     @property
     def _str_res(self):
         return (
@@ -506,11 +496,11 @@ class Rget(UniqueCommand[None]):
     Recursively gets a resource and all its parts
     """
     def _init(self):
-        return '_get', self.do_once('GET', self.name)
+        return '_get', Get(self.name)
 
     def _get(self, get: Get):
         return '_sub_gets', [
-                self.do_once('RGET', child_name)
+                Rget(child_name)
                 for child_name in get.result
                 ]
 
@@ -571,7 +561,7 @@ class SSubmit(UniqueCommand[list[TaskName]]):
         Emit the initial stat
         """
         # metadata
-        return '_sort', self.do_once('STAT', self.name)
+        return '_sort', Stat(self.name)
 
     def _sort(self, stat: Stat):
         """
@@ -593,12 +583,12 @@ class SSubmit(UniqueCommand[list[TaskName]]):
             raise NotImplementedError
 
         # Else, regular job, process dependencies first
-        cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
+        cmd = DryRun if self._dry else RSubmit
         # FIXME: optimize type of command based on type of link
         # Always doing a RSUB will work, but it will run things more eagerly that
         # needed or propagate failures too aggressively.
         return '_deps', [
-                self.do_once(cmd, tin.name)
+                cmd(tin.name)
                 for tin in task_def.dependencies(TaskOp.BASE)
                 ]
 
@@ -613,7 +603,7 @@ class SSubmit(UniqueCommand[list[TaskName]]):
             return Status.DONE
 
         # Task itself
-        return '_main', self.do_once('SUBMIT', self.name)
+        return '_main', Submit(self.name)
 
     def _main(self, main_sub: Submit) -> Status:
         """
@@ -640,8 +630,8 @@ class RSubmit(UniqueCommand[None]):
         """
         Emit the simple submit
         """
-        cmd = 'DRYSSUBMIT' if self._dry else 'SSUBMIT'
-        return '_main', self.do_once(cmd, self.name)
+        cmd = DrySSubmit if self._dry else SSubmit
+        return '_main', cmd(self.name)
 
     def _main(self, ssub: SSubmit):
         """
@@ -649,8 +639,8 @@ class RSubmit(UniqueCommand[None]):
         """
         children = ssub.result
 
-        cmd = 'DRYRUN' if self._dry else 'RSUBMIT'
-        return '_children', [ self.do_once(cmd, child_name)
+        cmd = DryRun if self._dry else RSubmit
+        return '_children', [ cmd(child_name)
                 for child_name in children ]
 
     def _children(self, *_):
@@ -685,10 +675,10 @@ class Run(UniqueCommand[None]):
     Combined rsubmit + rget
     """
     def _init(self):
-        return '_rsub', self.do_once('RSUBMIT', self.name)
+        return '_rsub', RSubmit(self.name)
 
     def _rsub(self, _):
-        return '_rget', self.do_once('RGET', self.name)
+        return '_rget', Rget(self.name)
 
     def _rget(self, _):
         return Status.DONE
@@ -700,10 +690,10 @@ class SRun(UniqueCommand[None]):
     not its children
     """
     def _init(self):
-        return '_ssub', self.do_once('SSUBMIT', self.name)
+        return '_ssub', SSubmit(self.name)
 
     def _ssub(self, _):
-        return '_get', self.do_once('GET', self.name)
+        return '_get', Get(self.name)
 
     def _get(self, _):
         return Status.DONE

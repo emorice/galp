@@ -5,7 +5,8 @@ Implementation of complex queries within the command asynchronous system
 import logging
 
 from .task_types import TaskNode, QueryTaskDef, TaskName, Task, CoreTaskDef
-from .commands import Command, Status, Script
+from .commands import (Command, Status, Script, Get, Rget, Stat, SSubmit, Run,
+    DryRun, SRun)
 from .cache import StoreReadError
 from .serializer import DeserializeError
 
@@ -20,8 +21,8 @@ def run_task(script: Script, task: TaskNode, dry: bool = False) -> Command:
         return Query(script, task_def.subject, task_def.query)
 
     if dry:
-        return script.do_once('DRYRUN', task.name)
-    return script.do_once('RUN', task.name)
+        return DryRun(task.name)
+    return Run(task.name)
 
 class Query(Command):
     """
@@ -79,7 +80,7 @@ class Query(Command):
         if self.op.requires is None:
             return '_operator'
 
-        return '_operator', self.do_once(self.op.requires, self.subject)
+        return '_operator', self.op.requires(self.subject)
 
     def _operator(self, *command):
         """
@@ -152,7 +153,7 @@ class Operator:
         self.subject = query.subject
         self._req_cmd = None
 
-    requires: str | None = None
+    requires: type[Command] | None = None
 
     _ops = {}
     def __init_subclass__(cls, /, named=True, **kwargs):
@@ -200,7 +201,7 @@ class Base(Operator):
     Base operator, returns shallow object itself with the linked tasks left as
     references
     """
-    requires = 'GET'
+    requires = Get
 
     def _result(self, _srun_cmd, _subs):
         return self.store.get_native(
@@ -210,7 +211,7 @@ class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
-    requires = 'RGET'
+    requires = Rget
 
     def _result(self, _run_cmd, _subs):
         return self.store.get_native(
@@ -220,7 +221,7 @@ class Done(Operator):
     """
     Completion state operator
     """
-    requires = 'STAT'
+    requires = Stat
 
     def _result(self, stat_cmd, _subs):
         task_done, *_ = stat_cmd.result
@@ -230,7 +231,7 @@ class Def(Operator):
     """
     Definition oerator
     """
-    requires = 'STAT'
+    requires = Stat
 
     def _result(self, stat_cmd, _subs):
         _done, task_dict, _children = stat_cmd.result
@@ -240,7 +241,7 @@ class Args(Operator):
     """
     Task arguments operator
     """
-    requires = 'STAT'
+    requires = Stat
 
     def _recurse(self, stat_cmd):
         """
@@ -293,7 +294,7 @@ class Children(Args):
     """
     Recurse on children after simple task run
     """
-    requires = 'SSUBMIT'
+    requires = SSubmit
 
     def _recurse(self, ssub_cmd):
         """
@@ -336,7 +337,7 @@ class GetItem(Operator, named=False):
         super().__init__(query, sub_query)
         self.index = index
 
-    requires = 'SRUN'
+    requires = SRun
 
     def _recurse(self, _srun_cmd):
         """
@@ -390,7 +391,7 @@ class Iterate(Operator, named=False):
     """
     Iterate over object
     """
-    requires = 'SRUN'
+    requires = SRun
 
     def _recurse(self, _srun_cmd):
         """
