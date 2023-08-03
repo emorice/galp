@@ -34,9 +34,9 @@ def once(cls):
     _once_commands[cls.__name__.upper()] = cls
     return cls
 
-CommandResult = TypeVar('CommandResult')
+T = TypeVar('T')
 
-class Command(Generic[CommandResult]):
+class Command(Generic[T]):
     """
     An asynchronous command
     """
@@ -45,7 +45,7 @@ class Command(Generic[CommandResult]):
         self.status = Status.PENDING
         if script:
             script.pending.add(self)
-        self.result: CommandResult = None
+        self.result: T = None
         self.outputs : WeakSet[Command] = WeakSet()
         self._state = '_init'
         self._sub_commands : list[Command] = []
@@ -116,30 +116,21 @@ class Command(Generic[CommandResult]):
 
         return Status.PENDING, new_sub_commands
 
-    def advance(self, external_status=None):
+    def advance(self):
         """
         Try to advance the commands state. If the move causes new commands to be
         created or moves to a terminal state and trigger downstream commands,
         returns them for them to be advanced by the caller too.
         """
+        assert not isinstance(self, InertCommand)
         new_sub_commands = []
 
-        # If command is already in terminal state, do nothing. In theory, the
-        # rest of the procedure should be a no-op anyway, but that makes it
-        # easier e.g. to log things only once.
-        if self.status != Status.PENDING:
-            # Avoid silently ignoring conflicting external status
-            assert external_status is None or external_status == self.status
-            return []
         old_status = self.status
 
         # Command is pending, i.e. waiting for an external trigger. Maybe this
         # trigger came since the last advance attempt, so we try to move states.
-        if external_status is None:
-            # TODO: this should also return possible child commands.
-            self.status, new_sub_commands = self._eval()
-        else:
-            self.status = external_status
+        # TODO: this should also return possible child commands.
+        self.status, new_sub_commands = self._eval()
 
         # Give the script the chance to hook anything, like printing out progress
         if self.script:
@@ -147,11 +138,6 @@ class Command(Generic[CommandResult]):
 
         # Also log the change anyway
         logging.info('%s %s', self.status.name.ljust(7), self)
-
-        # Maybe this caused the command to advance to a terminal state (DONE or
-        # FAILED). In that case downstream commands must be checked too.
-        if self.status != Status.PENDING:
-            return new_sub_commands + list(self.outputs)
 
         # Else, still pending, nothing else to check
         return new_sub_commands
@@ -196,12 +182,22 @@ class Command(Generic[CommandResult]):
         """
         return self._mark_as(Status.FAILED, result)
 
-    def _mark_as(self, status, result):
+    def _mark_as(self, status: Status, result: T) -> None:
         """
         Externally change the status of the command, then try to advance it
         """
+        assert isinstance(self, InertCommand)
+
+        # Guard against double marks
+        # FIXME: This typically happen because we cannot tell apart STAT-DONE and
+        # SUBMIT-DONE pairs, we should have distinct messages
+        if self.status != Status.PENDING:
+            return
+
+        self.status = status
         self.result = result
-        advance_all(self.advance(status))
+
+        advance_all(self.script, self.outputs)
 
     def do_once(self, verb: str, name: TaskName, *args, **kwargs) -> 'UniqueCommand':
         """
@@ -216,7 +212,6 @@ class Command(Generic[CommandResult]):
             return cmd
         cmd = cls(self.script, name, *args, **kwargs)
         self.script.commands[key] = cmd
-        self.script.new_commands.append(key)
         return cmd
 
     @property
@@ -226,17 +221,7 @@ class Command(Generic[CommandResult]):
             if self.is_done() else ''
             )
 
-def advance_all(commands):
-    """
-    Try to advance all given commands, and all downstream depending on them the
-    case being
-    """
-    commands = list(commands)
-    while commands:
-        command = commands.pop()
-        commands.extend(command.advance())
-
-class UniqueCommand(Command[CommandResult]):
+class UniqueCommand(Command[T]):
     """
     Any command that is fully defined and identified by a task name
     """
@@ -288,7 +273,7 @@ class Script(Command):
         cb_command = Callback(self, command, callback)
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
-        advance_all([command])
+        advance_all(self.script, [command])
         return cb_command
 
     def notify_change(self, command, old_status, new_status):
@@ -358,7 +343,7 @@ class Script(Command):
             return Status.FAILED
         return Status.PENDING
 
-class InertCommand(UniqueCommand[CommandResult]):
+class InertCommand(UniqueCommand[T]):
     """
     Command tied to an external event
     """
@@ -367,6 +352,44 @@ class InertCommand(UniqueCommand[CommandResult]):
 
     def _eval(self):
         return Status.PENDING, []
+
+    @property
+    def key(self) -> tuple[str, TaskName]:
+        """
+        Unique key
+        """
+        return (self.__class__.__name__.upper(), self.name)
+
+def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
+    """
+    Try to advance all given commands, and all downstream depending on them the
+    case being
+    """
+    commands = list(commands)
+    primitives : list[InertCommand] = []
+
+    while commands:
+        command = commands.pop()
+        match command:
+            case InertCommand():
+                # Todo: check against book
+                primitives.append(command)
+            case _:
+                if command.status != Status.PENDING:
+                    # FIXME: Why does that even happen ?
+                    continue
+                # For now, subcommands need to be recursively initialized
+                sub_commands = command.advance()
+                if sub_commands:
+                    commands.extend(sub_commands)
+                # Maybe this caused the command to advance to a terminal state (DONE or
+                # FAILED). In that case downstream commands must be checked too.
+                elif command.status != Status.PENDING:
+                    commands.extend(command.outputs)
+
+    # Compat with previous, non-functional interface
+    script.new_commands.extend(p.key for p in primitives)
+    return primitives
 
 @once
 class Get(InertCommand[list[TaskName]]):
@@ -544,6 +567,7 @@ class RSubmit(UniqueCommand[None]):
         Check completion of children and propagate result
         """
         return Status.DONE
+
 # Despite the name, since a DryRun never does any fetches, it is implemented as
 # a special case of RSubmit and not Run (Run is RSubmit + RGet)
 @once
