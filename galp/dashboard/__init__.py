@@ -99,7 +99,7 @@ def create_app(config):
             assert not tdef.args
             kwargs = {}
             for keyword, tin in tdef.kwargs.items():
-                galp.commands.advance_all([proto.script.do_once('RGET', tin.name)])
+                galp.commands.advance_all(proto.script, [proto.script.do_once('RGET', tin.name)])
                 proto.schedule_new()
                 kwargs[keyword] = proto.store.get_native(tin.name)
 
