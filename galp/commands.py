@@ -123,25 +123,15 @@ class Command(Generic[Ok, Err]):
         return new_sub_commands
 
     def _as_deferred(self, obj: Any) -> Deferred[Any, Any, Err]:
-        inputs: list[Command]
         match obj:
-            case str():
-                method_name, inputs = obj, []
-            case (str() as mname, Command() as cmd):
-                method_name, inputs = mname, [cmd]
-            case (str(), list()):
-                method_name, inputs = obj
             case Deferred():
                 return obj
+            case Failed():
+                self.val = obj
+                return Deferred(self._end, [])
             case _:
                 self.val = Done(obj)
                 return Deferred(self._end, [])
-        try:
-            handler = getattr(self, method_name)
-        except KeyError:
-            raise NotImplementedError(self.__class__, method_name) from None
-
-        return Deferred(handler, inputs)
 
     def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
         """
@@ -206,12 +196,17 @@ CallbackRet = (
         | Deferred[InOk, Ok, Err]
         )
 
-@dataclass
 class Gather(Generic[Ok, Err]):
     """
     Then-able list
     """
     commands: list[Command[Ok, Err]]
+
+    def __init__(self, commands: Command | list[Command]):
+        if isinstance(commands, Command):
+            self.commands = [commands]
+        else:
+            self.commands = commands
 
     def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
         """
@@ -561,8 +556,7 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
             children = task_def.children
 
         if children is not None:
-            self.val = Done(children)
-            return '_end'
+            return children
 
         # Query, should never have reached this layer as queries have custom run
         # mechanics
@@ -586,8 +580,7 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
         # For dry-runs, bypass the submission
         if self._dry:
             # Explicitely set the result to "no children"
-            self.val = Done([])
-            return '_end'
+            return []
 
         # Task itself
         return Submit(self.name).then(self._main)

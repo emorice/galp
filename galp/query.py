@@ -77,26 +77,25 @@ class Query(cm.Command):
             raise NotImplementedError(self.query)
 
         if self.op.requires is None:
-            return '_operator'
+            return cm.Gather([]).then(self._operator)
 
-        return '_operator', self.op.requires(self.subject)
+        return self.op.requires(self.subject).then(self._operator)
 
     def _operator(self, *command):
         """
         Execute handler for operator after the required commands are done
         """
-        return '_operator_result', self.op.recurse(*command)
+        return cm.Gather(self.op.recurse(*command)).then(self._operator_result)
 
     def _operator_result(self, *sub_commands):
         """
         Execute handler for operator after the required commands are done
         """
         try:
-            self.val = cm.Done(self.op.result(sub_commands))
+            return self.op.result(sub_commands)
         except (StoreReadError, DeserializeError) as exc:
             logging.exception('In %s:', self)
-            self.val = cm.Failed(exc)
-        return '_end'
+            return cm.Failed(exc)
 
 def parse_query(query):
     """
