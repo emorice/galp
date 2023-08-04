@@ -4,10 +4,9 @@ Lists of internal commands
 
 import sys
 import time
-from enum import Enum
 from collections import deque
 from weakref import WeakSet, WeakValueDictionary
-from typing import TypeVar, Generic, Callable, Any
+from typing import TypeVar, Generic, Callable, Any, Protocol
 from dataclasses import dataclass
 from itertools import chain
 
@@ -46,25 +45,53 @@ class Failed(Generic[Err]):
 Result = Pending | Done[Ok] | Failed[Err]
 FinalResult = Done[Ok] | Failed[Err]
 
-
 # Commands
 # ========
 
-class Command(Generic[Ok, Err]):
+class BaseCommand(Generic[Ok, Err]):
     """
-    An asynchronous command
+    A promise or future, essentially
     """
     def __init__(self) -> None:
         self.val: Result[Ok, Err] = Pending()
-        self.outputs : WeakSet[Command] = WeakSet()
-        self._state = '_init'
-        self._sub_commands : list[Command] = []
+        self.outputs : WeakSet[BaseCommand] = WeakSet()
+
+T_contra = TypeVar('T_contra', contravariant=True)
+U_co = TypeVar('U_co', covariant=True)
+class CallbackT(Protocol[T_contra, U_co]):
+    """Callback type"""
+    def __call__(self, *args: T_contra) -> U_co: ...
+
+InOk = TypeVar('InOk')
+
+@dataclass
+class Deferred(Generic[InOk, Ok, Err]):
+    """Wraps commands with matching callback"""
+    callback: CallbackT[InOk, Ok]
+    inputs: list['BaseCommand[InOk, Err]']
+
+class Command(BaseCommand[Ok, Err]):
+    """
+    A promise of the return value Ok of a callback applied to an input promise
+    InOk
+    """
+    _state: Deferred[Any, Ok, Err]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._state = Deferred(self._init, [])
+
+    def _init(self, *_):
+        raise NotImplementedError
+
+    def _end(self, *_):
+        raise RuntimeError('Dont call me')
 
     def _eval(self, script: 'Script'):
         """
         State-based handling
         """
-        sub_commands = self._sub_commands
+        sub_commands = self._state.inputs
         new_sub_commands = []
         # Aggregate value of all sub-commands
         agg_value = script.value_conj(sub_commands)
@@ -77,28 +104,18 @@ class Command(Generic[Ok, Err]):
 
             # At this point, aggregate value is Done
 
-            try:
-                handler = getattr(self, self._state)
-            except KeyError:
-                raise NotImplementedError(self.__class__, self._state) from None
 
-            ret = handler(*agg_value.result)
-            # Sugar: allow omitting sub commands or passing only one instead of
-            # a list
-            if isinstance(ret, tuple):
-                new_state, sub_commands = ret
-            else:
-                new_state, sub_commands = ret, []
-            if isinstance(sub_commands, Command):
-                sub_commands = [sub_commands]
+            ret = self._state.callback(*agg_value.result)
+            new_state = self._as_deferred(ret)
 
-            new_sub_commands = sub_commands
+            sub_commands = new_state.inputs
+            new_sub_commands = new_state.inputs
 
             logging.debug('%s: %s => %s', self, self._state, new_state)
             self._state = new_state
 
             # Actual command termination
-            if self._state == '_end':
+            if self._state.callback == self._end:
                 assert not new_sub_commands
                 return []
 
@@ -110,10 +127,27 @@ class Command(Generic[Ok, Err]):
         for sub in sub_commands:
             sub.outputs.add(self)
 
-        # Save for callback
-        self._sub_commands = sub_commands
-
         return new_sub_commands
+
+    def _as_deferred(self, obj: tuple[str, list[BaseCommand] | BaseCommand] | str) -> Deferred:
+        # Sugar: allow omitting sub commands or passing only one instead of
+        # a list
+        if isinstance(obj, tuple):
+            method_name, args = obj
+        else:
+            method_name, args = obj, []
+
+        if isinstance(args, BaseCommand):
+            inputs = [args]
+        else:
+            inputs = args
+
+        try:
+            handler = getattr(self, method_name)
+        except KeyError:
+            raise NotImplementedError(self.__class__, method_name) from None
+
+        return Deferred(handler, inputs)
 
     def advance(self, script: 'Script'):
         """
@@ -338,7 +372,7 @@ class Script(Command):
     def __str__(self):
         return 'script'
 
-    def value_conj(self, commands: list[Command[Ok, Err]]
+    def value_conj(self, commands: list[BaseCommand[Ok, Err]]
                     ) -> Result[list[Ok], Err]:
         """
         Value conjunction respecting self.keep_going
