@@ -52,7 +52,7 @@ T_contra = TypeVar('T_contra', contravariant=True)
 U = TypeVar('U')
 class CallbackT(Protocol[T_contra, U]):
     """Callback type"""
-    def __call__(self, *args: T_contra) -> 'CallbackRet[U, Any]': ...
+    def __call__(self, *args: T_contra) -> 'CallbackRet[Any, U, Any] | U': ...
 
 InOk = TypeVar('InOk')
 
@@ -122,7 +122,8 @@ class Command(Generic[Ok, Err]):
 
         return new_sub_commands
 
-    def _as_deferred(self, obj: 'CallbackRet[Any, Err]') -> Deferred[Any, Any, Err]:
+    def _as_deferred(self, obj: Any) -> Deferred[Any, Any, Err]:
+        inputs: list[Command]
         match obj:
             case str():
                 method_name, inputs = obj, []
@@ -133,7 +134,8 @@ class Command(Generic[Ok, Err]):
             case Deferred():
                 return obj
             case _:
-                raise TypeError('Bad handler return type')
+                self.val = Done(obj)
+                return Deferred(self._end, [])
         try:
             handler = getattr(self, method_name)
         except KeyError:
@@ -199,7 +201,10 @@ class Command(Generic[Ok, Err]):
             if isinstance(self.val, Done) else ''
             )
 
-CallbackRet = tuple[str, list[Command[Ok, Err]] | Command[Ok, Err]] | str
+CallbackRet = (
+        tuple[str, list[Command[InOk, Err]] | Command[InOk, Err]] | str
+        | Deferred[InOk, Ok, Err]
+        )
 
 @dataclass
 class Gather(Generic[Ok, Err]):
@@ -489,8 +494,7 @@ class Rget(UniqueCommand[None, str]):
             ]).then(self._sub_gets)
 
     def _sub_gets(self, *_):
-        self.val = Done(None)
-        return '_end'
+        return
 
 class Collect(Command[list, str]):
     """
@@ -507,8 +511,7 @@ class Collect(Command[list, str]):
         return Gather(self.commands).then(self._collect)
 
     def _collect(self, *results):
-        self.val = Done(results)
-        return '_end'
+        return results
 
 class Callback(Command):
     """
@@ -593,8 +596,7 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
         """
         Check the main result and return possible children tasks
         """
-        self.val = Done(children)
-        return '_end'
+        return children
 
 class DrySSubmit(SSubmit):
     """
@@ -627,8 +629,7 @@ class RSubmit(UniqueCommand[None, str]):
         """
         Check completion of children and propagate result
         """
-        self.val = Done(None)
-        return '_end'
+        return
 
 # Despite the name, since a DryRun never does any fetches, it is implemented as
 # a special case of RSubmit and not Run (Run is RSubmit + RGet)
@@ -660,8 +661,7 @@ class Run(UniqueCommand[None, str]):
         return Rget(self.name).then(self._rget)
 
     def _rget(self, _):
-        self.val = Done(None)
-        return '_end'
+        return
 
 class SRun(UniqueCommand[None, str]):
     """
@@ -675,5 +675,4 @@ class SRun(UniqueCommand[None, str]):
         return Get(self.name).then(self._get)
 
     def _get(self, _):
-        self.val = Done(None)
-        return '_end'
+        return
