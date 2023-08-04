@@ -93,11 +93,10 @@ class Query(cm.Command):
         """
         try:
             self.val = cm.Done(self.op.result(sub_commands))
-            return cm.Status.DONE
         except (StoreReadError, DeserializeError) as exc:
             logging.exception('In %s:', self)
             self.val = cm.Failed(exc)
-            return cm.Status.FAILED
+        return '_end'
 
 def parse_query(query):
     """

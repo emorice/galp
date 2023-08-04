@@ -17,6 +17,7 @@ import zmq
 import zmq.asyncio
 
 import galp.messages as gm
+import galp.commands as cm
 
 from galp import async_utils
 from galp.graph import ensure_task_node
@@ -26,7 +27,6 @@ from galp.protocol import ProtocolEndException, RoutedMessage, Replies
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
-from galp.commands import Script
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, TaskDef,
         QueryTaskDef, CoreTaskDef)
@@ -149,13 +149,18 @@ class Client:
         # Update the task graph
         self.protocol.add(task_nodes)
 
-        err, cmd_results = await asyncio.wait_for(
+        val = await asyncio.wait_for(
             self.run_collection(task_nodes, return_exceptions=return_exceptions,
                 dry_run=dry_run),
             timeout=timeout)
 
-        if err and not return_exceptions:
-            raise TaskFailedError(cmd_results)
+        if isinstance(val, cm.Failed):
+            if not return_exceptions:
+                raise TaskFailedError(val.error)
+            # Fixme: actually implement this
+            cmd_results = [val.error] * len(task_nodes)
+        else:
+            cmd_results = val.result
 
         if dry_run:
             return None
@@ -200,14 +205,14 @@ class Client:
         return results
 
     async def run_collection(self, tasks: list[TaskNode],
-            return_exceptions: bool, dry_run: bool):
+            return_exceptions: bool, dry_run: bool) -> cm.FinalResult[list, str]:
         """
         Processes messages until the collection target is achieved
         """
 
         # Register the termination command
-        def _end(status, _result):
-            raise ProtocolEndException(status)
+        def _end(value):
+            raise ProtocolEndException(value)
 
         script = self.protocol.script
 
@@ -239,11 +244,7 @@ class Client:
                 )
         except ProtocolEndException:
             pass
-        return collect.status, (
-                collect.val.result
-                if hasattr(collect.val, 'result')
-                else collect.val.error
-                )
+        return collect.val
 
 class BrokerProtocol(ReplyProtocol):
     """
@@ -260,7 +261,7 @@ class BrokerProtocol(ReplyProtocol):
             serializer=Serializer())
 
         # Commands
-        self.script = Script(store=self.store)
+        self.script = cm.Script(store=self.store)
 
         # Should be phased out, currently used only with the RUNNING state to
         # prevent re-sending a submit after receiving a DOING notification

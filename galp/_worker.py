@@ -24,14 +24,16 @@ import zmq.asyncio
 import galp.steps
 import galp.cli
 import galp.messages as gm
+import galp.commands as cm
 
+
+from galp import commands
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException, IllegalRequestError,
     RoutedMessage, Replies)
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.commands import Script
 from galp.query import Query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
@@ -116,7 +118,7 @@ class WorkerProtocol(ReplyProtocol):
         super().__init__(name, router)
         self.worker = worker
         self.store = store
-        self.script = Script(store=self.store)
+        self.script = cm.Script(store=self.store)
 
     def route_message(self, orig: RoutedMessage | None, new: gm.Message):
         """
@@ -367,9 +369,9 @@ class Worker:
         Callback to schedule a task for execution.
         """
         task_def = msg.task_def
-        def _start_task(status, inputs):
+        def _start_task(inputs: cm.FinalResult[list, str]):
             task = asyncio.create_task(
-                self.run_submission(status, request, msg, inputs)
+                self.run_submission(request, msg, inputs)
                 )
             self.galp_jobs.put_nowait(task)
 
@@ -401,7 +403,8 @@ class Worker:
     # Task execution logic
     # ====================
 
-    async def run_submission(self, status, request: RoutedMessage, msg: gm.Submit, inputs) -> JobResult:
+    async def run_submission(self, request: RoutedMessage, msg: gm.Submit,
+                             inputs: cm.FinalResult[list, str]) -> JobResult:
         """
         Actually run the task
         """
@@ -412,10 +415,10 @@ class Worker:
         kwarg_tins = task_def.kwargs
 
         try:
-            if status:
+            if isinstance(inputs, cm.Failed):
                 logging.error('Could not gather task inputs'
                         ' for step %s (%s)', name, step_name)
-                raise NonFatalTaskError
+                raise NonFatalTaskError(inputs.error)
 
             logging.info('Executing step %s (%s)', name, step_name)
 
@@ -427,13 +430,13 @@ class Worker:
 
             # Unpack inputs from flattened input list
             try:
-                inputs = list(reversed(inputs))
+                r_inputs = list(reversed(inputs.result))
                 args = []
                 for _tin in arg_tins:
-                    args.append(inputs.pop())
+                    args.append(r_inputs.pop())
                 kwargs = {}
                 for keyword in kwarg_tins:
-                    kwargs[keyword] = inputs.pop()
+                    kwargs[keyword] = r_inputs.pop()
             except UnicodeDecodeError as exc:
                 # Either you tried to use python's non-ascii keywords feature,
                 # or more likely you messed up the encoding on the caller side.

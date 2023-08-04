@@ -7,14 +7,14 @@ import time
 from enum import Enum
 from collections import deque
 from weakref import WeakSet, WeakValueDictionary
-from typing import TypeVar, Generic
+from typing import TypeVar, Generic, Callable, Any
 from dataclasses import dataclass
 from itertools import chain
 
 import logging
 
 from .task_types import (
-        TaskName, LiteralTaskDef, QueryTaskDef, TaskDef, TaskOp
+        TaskName, LiteralTaskDef, QueryTaskDef, TaskDef, TaskOp, CoreTaskDef
         )
 
 # Result types
@@ -44,17 +44,7 @@ class Failed(Generic[Err]):
     error: Err
 
 Result = Pending | Done[Ok] | Failed[Err]
-
-class Status(Enum):
-    """
-    Command status
-    """
-    PENDING = 'P'
-    DONE = 'D'
-    FAILED = 'F'
-
-    def __bool__(self):
-        return self != Status.DONE
+FinalResult = Done[Ok] | Failed[Err]
 
 
 # Commands
@@ -65,7 +55,6 @@ class Command(Generic[Ok, Err]):
     An asynchronous command
     """
     def __init__(self) -> None:
-        self.status = Status.PENDING
         self.val: Result[Ok, Err] = Pending()
         self.outputs : WeakSet[Command] = WeakSet()
         self._state = '_init'
@@ -77,30 +66,23 @@ class Command(Generic[Ok, Err]):
         """
         sub_commands = self._sub_commands
         new_sub_commands = []
-        # Aggregate status of all sub-commands
-        sub_status = script.status_conj(sub_commands)
-        while sub_status != Status.PENDING:
-            # By default, we stop processing a command on failures. In theory
-            # the command could have other independent work to do, but we have
-            # no use case yet.
+        # Aggregate value of all sub-commands
+        agg_value = script.value_conj(sub_commands)
+        while not isinstance(agg_value, Pending): # = advance until stuck again
             # Note: this drops new_sub_commands by design since there is no need
             # to inject them into the event loop with the parent failed.
-            if sub_status == Status.FAILED:
-                self.val = Failed(next(
-                        sub.val.error
-                        for sub in sub_commands
-                        if isinstance(sub.val, Failed)))
-                return Status.FAILED, []
+            if isinstance(agg_value, Failed):
+                self.val = agg_value
+                return []
 
-            # At this point, all sub commands are DONE
+            # At this point, aggregate value is Done
 
             try:
                 handler = getattr(self, self._state)
             except KeyError:
                 raise NotImplementedError(self.__class__, self._state) from None
 
-            results = [sub.val.result for sub in sub_commands] # actually safe
-            ret = handler(*results)
+            ret = handler(*agg_value.result)
             # Sugar: allow omitting sub commands or passing only one instead of
             # a list
             if isinstance(ret, tuple):
@@ -114,12 +96,14 @@ class Command(Generic[Ok, Err]):
 
             logging.debug('%s: %s => %s', self, self._state, new_state)
             self._state = new_state
-            if self._state in (Status.DONE, Status.FAILED):
-                assert not new_sub_commands
-                return self._state, []
 
-            # Re-inspect status of new set of sub-commands and loop
-            sub_status = script.status_conj(sub_commands)
+            # Actual command termination
+            if self._state == '_end':
+                assert not new_sub_commands
+                return []
+
+            # Re-inspect values of new set of sub-commands and loop
+            agg_value = script.value_conj(sub_commands)
 
         # Ensure all remaining sub-commands have downstream links pointing to
         # this command before relinquishing control
@@ -129,7 +113,7 @@ class Command(Generic[Ok, Err]):
         # Save for callback
         self._sub_commands = sub_commands
 
-        return Status.PENDING, new_sub_commands
+        return new_sub_commands
 
     def advance(self, script: 'Script'):
         """
@@ -137,13 +121,12 @@ class Command(Generic[Ok, Err]):
         created or moves to a terminal state and trigger downstream commands,
         returns them for them to be advanced by the caller too.
         """
-        old_status = self.status
+        old_value = self.val
 
-        self.status, new_sub_commands = self._eval(script)
+        new_sub_commands = self._eval(script)
 
-        script.notify_change(self, old_status, self.status)
-
-        logging.info('%s %s', self.status.name.ljust(7), self)
+        script.notify_change(self, old_value, self.val)
+        logging.info('%s %s', self.val, self)
 
         return new_sub_commands
 
@@ -158,13 +141,12 @@ class Command(Generic[Ok, Err]):
         """
         if isinstance(self.val, Pending):
             self.val = Done(result)
-        return self._mark_as(Status.DONE)
 
     def is_pending(self):
         """
         Boolean, if command still pending
         """
-        return self.status == Status.PENDING
+        return isinstance(self.val, Pending)
 
     def failed(self, error: Err):
         """
@@ -177,24 +159,12 @@ class Command(Generic[Ok, Err]):
         """
         if isinstance(self.val, Pending):
             self.val = Failed(error)
-        return self._mark_as(Status.FAILED)
-
-    def _mark_as(self, status: Status) -> None:
-        """
-        Externally change the status of the command.
-        """
-        # Guard against double marks
-        # FIXME: This typically happen because we cannot tell apart STAT-DONE and
-        # SUBMIT-DONE pairs, we should have distinct messages
-        if self.status != Status.PENDING:
-            return
-        self.status = status
 
     @property
-    def _str_res(self):
+    def _str_res(self) -> str:
         return (
-            f' = [{", ".join(str(r) for r in self.result)}]'
-            if self.status == Status.DONE else ''
+            f' = [{", ".join(str(r) for r in self.val.result)}]'
+            if isinstance(self.val, Done) else ''
             )
 
 class UniqueCommand(Command[Ok, Err]):
@@ -298,16 +268,16 @@ class Script(Command):
         self.keep_going = keep_going
         self.store = store
 
-        self._task_dicts = {}
+        # For logging
+        self._task_defs: dict[TaskName, CoreTaskDef] = {}
 
-    def collect(self, commands):
+    def collect(self, commands: list[Command]) -> 'Collect':
         """
         Creates a command representing a collection of other commands
         """
-        cmd =  Collect(commands)
-        return cmd
+        return Collect(commands)
 
-    def callback(self, command: Command, callback):
+    def callback(self, command: Command, callback: Callable[[FinalResult], Any]):
         """
         Adds an arbitrary callback to an existing command. This triggers
         execution of the command as far as possible, and of the callback if
@@ -320,7 +290,7 @@ class Script(Command):
         advance_all(self, [command])
         return cb_command
 
-    def notify_change(self, command: Command, old_status: Status, new_status: Status):
+    def notify_change(self, command: Command, old_value: Result, new_value: Result):
         """
         Hook called when the graph status changes
         """
@@ -328,13 +298,12 @@ class Script(Command):
         # keeps a strong reference to the command.
         # This is intended so that commands triggering a callback stay in memory
         # until they're final, then get collected once the callback has fired.
-        if command in self.pending and new_status in (Status.DONE,
-                Status.FAILED):
+        if command in self.pending and not isinstance(self, Pending):
             self.pending.remove(command)
 
         if not self.verbose:
             return
-        del old_status
+        del old_value
 
         def print_status(stat, name, step_name):
             print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {stat:4} [{name}]'
@@ -342,26 +311,26 @@ class Script(Command):
                     file=sys.stderr, flush=True)
 
         if isinstance(command, Stat):
-            if new_status == Status.DONE:
-                task_done, task_dict, _children = command.val.result # Safe
-                if not task_done and 'step_name' in task_dict:
-                    self._task_dicts[command.name] = task_dict
-                    print_status('PLAN', command.name,
-                            task_dict['step_name'].decode('ascii'))
+            if isinstance(new_value, Done):
+                task_done, task_def, _children = new_value.result
+                if not task_done and isinstance(self, CoreTaskDef):
+                    self._task_defs[command.name] = task_def
+                    print_status('PLAN', command.name, task_def.step)
 
         if isinstance(command, Submit):
-            if command.name in self._task_dicts:
-                step_name_s = self._task_dicts[command.name]['step_name'].decode('ascii')
+            if command.name in self._task_defs:
+                step_name_s = self._task_defs[command.name].step
 
                 # We log 'SUB' every time a submit command's status "changes" to
                 # PENDING. Currently this only happens when the command is
                 # created.
-                if new_status == Status.PENDING:
-                    print_status('SUB', command.name, step_name_s)
-                elif new_status == Status.DONE:
-                    print_status('DONE', command.name, step_name_s)
-                if new_status == Status.FAILED:
-                    print_status('FAIL', command.name, step_name_s)
+                match new_value:
+                    case Pending():
+                        print_status('SUB', command.name, step_name_s)
+                    case Done():
+                        print_status('DONE', command.name, step_name_s)
+                    case Failed():
+                        print_status('FAIL', command.name, step_name_s)
 
     def advance(self, *_, **_k):
         return []
@@ -369,23 +338,27 @@ class Script(Command):
     def __str__(self):
         return 'script'
 
-    def status_conj(self, commands):
+    def value_conj(self, commands: list[Command[Ok, Err]]
+                    ) -> Result[list[Ok], Err]:
         """
-        Status conjunction respecting self.keep_going
+        Value conjunction respecting self.keep_going
         """
-        status = [cmd.status for cmd in commands]
-
-        if all(s == Status.DONE for s in status):
-            return Status.DONE
-
-        if self.keep_going:
-            if any(s == Status.PENDING for s in status):
-                return Status.PENDING
-            return Status.FAILED
-
-        if any(s == Status.FAILED for s in status):
-            return Status.FAILED
-        return Status.PENDING
+        results = []
+        failed = None
+        for val in (cmd.val for cmd in commands):
+            match val:
+                case Pending():
+                    return Pending()
+                case Done():
+                    results.append(val.result)
+                case Failed():
+                    if not self.keep_going:
+                        return Failed(val.error)
+                    if failed is None:
+                        failed = val
+        if failed is None:
+            return Done(results)
+        return Failed(failed.error)
 
 def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     """
@@ -422,7 +395,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                             command.failed(master.val.error)
                     commands.extend(command.outputs)
             case _:
-                if command.status != Status.PENDING:
+                if not command.is_pending():
                     # FIXME: Why does that even happen ?
                     continue
                 # For now, subcommands need to be recursively initialized
@@ -431,7 +404,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     commands.extend(sub_commands)
                 # Maybe this caused the command to advance to a terminal state (DONE or
                 # FAILED). In that case downstream commands must be checked too.
-                elif command.status != Status.PENDING:
+                elif not command.is_pending():
                     commands.extend(command.outputs)
 
     # Compat with previous, non-functional interface
@@ -468,7 +441,7 @@ class Rget(UniqueCommand[None, str]):
 
     def _sub_gets(self, *_):
         self.val = Done(None)
-        return Status.DONE
+        return '_end'
 
 class Collect(Command[list, str]):
     """
@@ -486,7 +459,7 @@ class Collect(Command[list, str]):
 
     def _collect(self, *results):
         self.val = Done(results)
-        return Status.DONE
+        return '_end'
 
 class Callback(Command):
     """
@@ -496,7 +469,7 @@ class Callback(Command):
     be collected before having a chance to fire since downstream links are
     weakrefs.
     """
-    def __init__(self, command, callback):
+    def __init__(self, command: Command, callback: Callable[[FinalResult], Any]):
         self._callback = callback
         self._in = command
         self._in.outputs.add(self)
@@ -506,13 +479,10 @@ class Callback(Command):
         return f'callback {self._callback.__name__}'
 
     def _eval(self, script: 'Script'):
-        if self._in.status != Status.PENDING:
-            self._callback(self._in.status,
-                           self._in.val.result if isinstance(self._in.val, Done)
-                           else self._in.val.error
-                           )
-            return Status.DONE, []
-        return Status.PENDING, []
+        in_val = self._in.val
+        if not isinstance(in_val, Pending):
+            self._callback(in_val)
+        return []
 
 class SSubmit(UniqueCommand[list[TaskName], str]):
     """
@@ -540,7 +510,7 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
 
         if children is not None:
             self.val = Done(children)
-            return Status.DONE
+            return '_end'
 
         # Query, should never have reached this layer as queries have custom run
         # mechanics
@@ -565,17 +535,17 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
         if self._dry:
             # Explicitely set the result to "no children"
             self.val = Done([])
-            return Status.DONE
+            return '_end'
 
         # Task itself
         return '_main', Submit(self.name)
 
-    def _main(self, children: list[TaskName]) -> Status:
+    def _main(self, children: list[TaskName]):
         """
         Check the main result and return possible children tasks
         """
         self.val = Done(children)
-        return Status.DONE
+        return '_end'
 
 class DrySSubmit(SSubmit):
     """
@@ -609,7 +579,7 @@ class RSubmit(UniqueCommand[None, str]):
         Check completion of children and propagate result
         """
         self.val = Done(None)
-        return Status.DONE
+        return '_end'
 
 # Despite the name, since a DryRun never does any fetches, it is implemented as
 # a special case of RSubmit and not Run (Run is RSubmit + RGet)
@@ -642,7 +612,7 @@ class Run(UniqueCommand[None, str]):
 
     def _rget(self, _):
         self.val = Done(None)
-        return Status.DONE
+        return '_end'
 
 class SRun(UniqueCommand[None, str]):
     """
@@ -657,4 +627,4 @@ class SRun(UniqueCommand[None, str]):
 
     def _get(self, _):
         self.val = Done(None)
-        return Status.DONE
+        return '_end'
