@@ -48,14 +48,6 @@ FinalResult = Done[Ok] | Failed[Err]
 # Commands
 # ========
 
-class BaseCommand(Generic[Ok, Err]):
-    """
-    A promise or future, essentially
-    """
-    def __init__(self) -> None:
-        self.val: Result[Ok, Err] = Pending()
-        self.outputs : WeakSet[BaseCommand] = WeakSet()
-
 T_contra = TypeVar('T_contra', contravariant=True)
 U_co = TypeVar('U_co', covariant=True)
 class CallbackT(Protocol[T_contra, U_co]):
@@ -68,18 +60,19 @@ InOk = TypeVar('InOk')
 class Deferred(Generic[InOk, Ok, Err]):
     """Wraps commands with matching callback"""
     callback: CallbackT[InOk, Ok]
-    inputs: list['BaseCommand[InOk, Err]']
+    inputs: list['Command[InOk, Err]']
 
-class Command(BaseCommand[Ok, Err]):
+class Command(Generic[Ok, Err]):
     """
     A promise of the return value Ok of a callback applied to an input promise
     InOk
     """
-    _state: Deferred[Any, Ok, Err]
 
     def __init__(self) -> None:
         super().__init__()
-        self._state = Deferred(self._init, [])
+        self.val: Result[Ok, Err] = Pending()
+        self.outputs : WeakSet[Command] = WeakSet()
+        self._state: Deferred[Any, Ok, Err]= Deferred(self._init, [])
 
     def _init(self, *_):
         raise NotImplementedError
@@ -129,7 +122,7 @@ class Command(BaseCommand[Ok, Err]):
 
         return new_sub_commands
 
-    def _as_deferred(self, obj: tuple[str, list[BaseCommand] | BaseCommand] | str) -> Deferred:
+    def _as_deferred(self, obj: 'tuple[str, list[Command] | Command] | str') -> Deferred:
         # Sugar: allow omitting sub commands or passing only one instead of
         # a list
         if isinstance(obj, tuple):
@@ -137,7 +130,7 @@ class Command(BaseCommand[Ok, Err]):
         else:
             method_name, args = obj, []
 
-        if isinstance(args, BaseCommand):
+        if isinstance(args, Command):
             inputs = [args]
         else:
             inputs = args
@@ -372,7 +365,7 @@ class Script(Command):
     def __str__(self):
         return 'script'
 
-    def value_conj(self, commands: list[BaseCommand[Ok, Err]]
+    def value_conj(self, commands: list[Command[Ok, Err]]
                     ) -> Result[list[Ok], Err]:
         """
         Value conjunction respecting self.keep_going
