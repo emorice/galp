@@ -28,14 +28,14 @@ class Pending():
     Special type for a result not known yet
     """
 
-@dataclass
+@dataclass(frozen=True)
 class Done(Generic[Ok]):
     """
     Wrapper type for result
     """
     result: Ok
 
-@dataclass
+@dataclass(frozen=True)
 class Failed(Generic[Err]):
     """
     Wrapper type for error
@@ -154,35 +154,11 @@ class Command(Generic[Ok, Err]):
 
         return new_sub_commands
 
-    def done(self, result: Ok):
-        """
-        Mark the future as done and runs callbacks.
-
-        A task can be safely marked several times, the callbacks are run only
-        when the status transitions from unknown to known.
-
-        However successive done calls will overwrite the result.
-        """
-        if isinstance(self.val, Pending):
-            self.val = Done(result)
-
     def is_pending(self):
         """
         Boolean, if command still pending
         """
         return isinstance(self.val, Pending)
-
-    def failed(self, error: Err):
-        """
-        Mark the future as failed and runs callbacks.
-
-        A task can be safely marked several times, the callbacks are run only
-        when the status transitions from unknown to known.
-
-        However successive done calls will overwrite the result.
-        """
-        if isinstance(self.val, Pending):
-            self.val = Failed(error)
 
     @property
     def _str_res(self) -> str:
@@ -266,8 +242,6 @@ class PrimitiveProxy(Generic[Ok, Err]):
         Mark all instances as done
         """
         self.val = Done(result)
-        for cmd in self.instances:
-            cmd.done(result)
         return self._advance_all()
 
     def failed(self, error: Err) -> list[InertCommand]:
@@ -275,11 +249,11 @@ class PrimitiveProxy(Generic[Ok, Err]):
         Mark all instances as failed
         """
         self.val = Failed(error)
-        for cmd in self.instances:
-            cmd.failed(error)
         return self._advance_all()
 
     def _advance_all(self) -> list[InertCommand]:
+        for cmd in self.instances:
+            cmd.val = self.val
         return advance_all(self.script,
                 list(chain.from_iterable(cmd.outputs for cmd in self.instances))
                 )
@@ -429,18 +403,14 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     primitives.append(command)
                 else:
                     # If yes, depends if it's resolved
-                    match master.val:
-                        case Pending():
-                            # If not, we simply add our copy to the list
-                            master.instances.add(command) # weak
-                            command.master = master # strong
-                            continue
-                            # If yes, transfer the state and schedule the rest
-                        case Done():
-                            command.done(master.val.result)
-                        case Failed():
-                            command.failed(master.val.error)
-                    commands.extend(command.outputs)
+                    if master.is_pending():
+                        # If not, we simply add our copy to the list
+                        master.instances.add(command) # weak
+                        command.master = master # strong
+                    else:
+                        # If yes, transfer the state and schedule the rest
+                        command.val = master.val
+                        commands.extend(command.outputs)
             case _:
                 if not command.is_pending():
                     # FIXME: Why does that even happen ?
