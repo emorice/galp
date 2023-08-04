@@ -96,11 +96,14 @@ class Command(Generic[Ok, Err]):
                 return []
 
             # At this point, aggregate value is Done
-
             ret = self._state.callback(*agg_value.result)
             match ret:
                 case Deferred():
                     self._state = ret
+                case Gather():
+                    self._state = Deferred(lambda *r: r, ret.commands)
+                case Command():
+                    self._state = Deferred(lambda r: r, [ret])
                 case Failed() | Done():
                     self.val = ret
                     return []
@@ -254,7 +257,7 @@ class PrimitiveProxy(Generic[Ok, Err]):
 
 CommandKey = tuple[str, TaskName]
 
-class Script(Command):
+class Script:
     """
     A collection of maker methods for Commands
 
@@ -340,12 +343,6 @@ class Script(Command):
                         print_status('DONE', command.name, step_name_s)
                     case Failed():
                         print_status('FAIL', command.name, step_name_s)
-
-    def advance(self, *_, **_k):
-        return []
-
-    def __str__(self):
-        return 'script'
 
     def value_conj(self, commands: list[Command[Ok, Err]]
                     ) -> Result[list[Ok], Err]:
@@ -444,10 +441,7 @@ class Rget(UniqueCommand[None, str]):
     def _get(self, children: list[TaskName]):
         return Gather([
             Rget(child_name) for child_name in children
-            ]).then(self._sub_gets)
-
-    def _sub_gets(self, *_):
-        return
+            ])
 
 class Collect(Command[list, str]):
     """
@@ -461,10 +455,7 @@ class Collect(Command[list, str]):
         return 'collect'
 
     def _init(self):
-        return Gather(self.commands).then(self._collect)
-
-    def _collect(self, *results):
-        return results
+        return Gather(self.commands)
 
 class Callback(Command):
     """
@@ -541,13 +532,7 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
             return []
 
         # Task itself
-        return Submit(self.name).then(self._main)
-
-    def _main(self, children: list[TaskName]):
-        """
-        Check the main result and return possible children tasks
-        """
-        return children
+        return Submit(self.name)
 
 class DrySSubmit(SSubmit):
     """
@@ -574,13 +559,7 @@ class RSubmit(UniqueCommand[None, str]):
         """
         cmd = DryRun if self._dry else RSubmit
         return Gather([ cmd(child_name)
-                for child_name in children ]).then(self._children)
-
-    def _children(self, *_):
-        """
-        Check completion of children and propagate result
-        """
-        return
+                for child_name in children ])
 
 # Despite the name, since a DryRun never does any fetches, it is implemented as
 # a special case of RSubmit and not Run (Run is RSubmit + RGet)
@@ -609,10 +588,7 @@ class Run(UniqueCommand[None, str]):
         return RSubmit(self.name).then(self._rsub)
 
     def _rsub(self, _):
-        return Rget(self.name).then(self._rget)
-
-    def _rget(self, _):
-        return
+        return Rget(self.name)
 
 class SRun(UniqueCommand[None, str]):
     """
@@ -623,7 +599,4 @@ class SRun(UniqueCommand[None, str]):
         return SSubmit(self.name).then(self._ssub)
 
     def _ssub(self, _):
-        return Get(self.name).then(self._get)
-
-    def _get(self, _):
-        return
+        return Get(self.name)
