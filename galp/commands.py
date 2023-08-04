@@ -49,10 +49,10 @@ FinalResult = Done[Ok] | Failed[Err]
 # ========
 
 T_contra = TypeVar('T_contra', contravariant=True)
-U_co = TypeVar('U_co', covariant=True)
-class CallbackT(Protocol[T_contra, U_co]):
+U = TypeVar('U')
+class CallbackT(Protocol[T_contra, U]):
     """Callback type"""
-    def __call__(self, *args: T_contra) -> U_co: ...
+    def __call__(self, *args: T_contra) -> 'CallbackRet[U, Any]': ...
 
 InOk = TypeVar('InOk')
 
@@ -122,25 +122,30 @@ class Command(Generic[Ok, Err]):
 
         return new_sub_commands
 
-    def _as_deferred(self, obj: 'tuple[str, list[Command] | Command] | str') -> Deferred:
-        # Sugar: allow omitting sub commands or passing only one instead of
-        # a list
-        if isinstance(obj, tuple):
-            method_name, args = obj
-        else:
-            method_name, args = obj, []
-
-        if isinstance(args, Command):
-            inputs = [args]
-        else:
-            inputs = args
-
+    def _as_deferred(self, obj: 'CallbackRet[Any, Err]') -> Deferred[Any, Any, Err]:
+        match obj:
+            case str():
+                method_name, inputs = obj, []
+            case (str() as mname, Command() as cmd):
+                method_name, inputs = mname, [cmd]
+            case (str(), list()):
+                method_name, inputs = obj
+            case Deferred():
+                return obj
+            case _:
+                raise TypeError('Bad handler return type')
         try:
             handler = getattr(self, method_name)
         except KeyError:
             raise NotImplementedError(self.__class__, method_name) from None
 
         return Deferred(handler, inputs)
+
+    def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
+        """
+        Chain callback to this command
+        """
+        return Deferred(callback, [self])
 
     def advance(self, script: 'Script'):
         """
@@ -193,6 +198,8 @@ class Command(Generic[Ok, Err]):
             f' = [{", ".join(str(r) for r in self.val.result)}]'
             if isinstance(self.val, Done) else ''
             )
+
+CallbackRet = tuple[str, list[Command[Ok, Err]] | Command[Ok, Err]] | str
 
 class UniqueCommand(Command[Ok, Err]):
     """
@@ -460,8 +467,8 @@ class Rget(UniqueCommand[None, str]):
     """
     Recursively gets a resource and all its parts
     """
-    def _init(self):
-        return '_get', Get(self.name)
+    def _init(self) -> Deferred:
+        return Get(self.name).then(self._get)
 
     def _get(self, children: list[TaskName]):
         return '_sub_gets', [ Rget(child_name) for child_name in children ]
@@ -523,7 +530,7 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
         Emit the initial stat
         """
         # metadata
-        return '_sort', Stat(self.name)
+        return Stat(self.name).then(self._sort)
 
     def _sort(self, stat_result: StatResult):
         """
@@ -565,7 +572,7 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
             return '_end'
 
         # Task itself
-        return '_main', Submit(self.name)
+        return Submit(self.name).then(self._main)
 
     def _main(self, children: list[TaskName]):
         """
@@ -591,7 +598,7 @@ class RSubmit(UniqueCommand[None, str]):
         Emit the simple submit
         """
         cmd = DrySSubmit if self._dry else SSubmit
-        return '_main', cmd(self.name)
+        return cmd(self.name).then(self._main)
 
     def _main(self, children: list[TaskName]):
         """
@@ -632,10 +639,10 @@ class Run(UniqueCommand[None, str]):
     Combined rsubmit + rget
     """
     def _init(self):
-        return '_rsub', RSubmit(self.name)
+        return RSubmit(self.name).then(self._rsub)
 
     def _rsub(self, _):
-        return '_rget', Rget(self.name)
+        return Rget(self.name).then(self._rget)
 
     def _rget(self, _):
         self.val = Done(None)
@@ -647,10 +654,10 @@ class SRun(UniqueCommand[None, str]):
     not its children
     """
     def _init(self):
-        return '_ssub', SSubmit(self.name)
+        return SSubmit(self.name).then(self._ssub)
 
     def _ssub(self, _):
-        return '_get', Get(self.name)
+        return Get(self.name).then(self._get)
 
     def _get(self, _):
         self.val = Done(None)
