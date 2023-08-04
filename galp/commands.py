@@ -201,6 +201,19 @@ class Command(Generic[Ok, Err]):
 
 CallbackRet = tuple[str, list[Command[Ok, Err]] | Command[Ok, Err]] | str
 
+@dataclass
+class Gather(Generic[Ok, Err]):
+    """
+    Then-able list
+    """
+    commands: list[Command[Ok, Err]]
+
+    def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
+        """
+        Chain callback to this list
+        """
+        return Deferred(callback, self.commands)
+
 class UniqueCommand(Command[Ok, Err]):
     """
     Any command that is fully defined and identified by a task name
@@ -471,7 +484,9 @@ class Rget(UniqueCommand[None, str]):
         return Get(self.name).then(self._get)
 
     def _get(self, children: list[TaskName]):
-        return '_sub_gets', [ Rget(child_name) for child_name in children ]
+        return Gather([
+            Rget(child_name) for child_name in children
+            ]).then(self._sub_gets)
 
     def _sub_gets(self, *_):
         self.val = Done(None)
@@ -489,7 +504,7 @@ class Collect(Command[list, str]):
         return 'collect'
 
     def _init(self):
-        return '_collect', self.commands
+        return Gather(self.commands).then(self._collect)
 
     def _collect(self, *results):
         self.val = Done(results)
@@ -556,10 +571,10 @@ class SSubmit(UniqueCommand[list[TaskName], str]):
         # FIXME: optimize type of command based on type of link
         # Always doing a RSUB will work, but it will run things more eagerly that
         # needed or propagate failures too aggressively.
-        return '_deps', [
+        return Gather([
                 cmd(tin.name)
                 for tin in task_def.dependencies(TaskOp.BASE)
-                ]
+                ]).then(self._deps)
 
     def _deps(self, *_):
         """
@@ -605,8 +620,8 @@ class RSubmit(UniqueCommand[None, str]):
         Check the main result and proceed with possible children tasks
         """
         cmd = DryRun if self._dry else RSubmit
-        return '_children', [ cmd(child_name)
-                for child_name in children ]
+        return Gather([ cmd(child_name)
+                for child_name in children ]).then(self._children)
 
     def _children(self, *_):
         """
