@@ -6,7 +6,7 @@ import sys
 import time
 from collections import deque
 from weakref import WeakSet, WeakValueDictionary
-from typing import TypeVar, Generic, Callable, Any, Protocol
+from typing import TypeVar, Generic, Callable, Any, Protocol, Iterable
 from dataclasses import dataclass
 from itertools import chain
 
@@ -169,11 +169,11 @@ class Gather(Generic[Ok, Err]):
     """
     commands: list[Command[Ok, Err]]
 
-    def __init__(self, commands: Command | list[Command]):
+    def __init__(self, commands: Command | Iterable[Command]):
         if isinstance(commands, Command):
             self.commands = [commands]
         else:
-            self.commands = commands
+            self.commands = list(commands)
 
     def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
         """
@@ -436,12 +436,9 @@ class Rget(UniqueCommand[None, str]):
     Recursively gets a resource and all its parts
     """
     def _init(self) -> Deferred:
-        return Get(self.name).then(self._get)
-
-    def _get(self, children: list[TaskName]):
-        return Gather([
-            Rget(child_name) for child_name in children
-            ])
+        return Get(self.name).then(
+                lambda children: Gather(map(Rget, children))
+                )
 
 class Collect(Command[list, str]):
     """
@@ -585,10 +582,7 @@ class Run(UniqueCommand[None, str]):
     Combined rsubmit + rget
     """
     def _init(self):
-        return RSubmit(self.name).then(self._rsub)
-
-    def _rsub(self, _):
-        return Rget(self.name)
+        return RSubmit(self.name).then(lambda _: Rget(self.name))
 
 class SRun(UniqueCommand[None, str]):
     """
@@ -596,7 +590,4 @@ class SRun(UniqueCommand[None, str]):
     not its children
     """
     def _init(self):
-        return SSubmit(self.name).then(self._ssub)
-
-    def _ssub(self, _):
-        return Get(self.name)
+        return SSubmit(self.name).then(lambda _: Get(self.name))
