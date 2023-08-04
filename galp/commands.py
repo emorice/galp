@@ -97,20 +97,19 @@ class Command(Generic[Ok, Err]):
 
             # At this point, aggregate value is Done
 
-
             ret = self._state.callback(*agg_value.result)
-            new_state = self._as_deferred(ret)
+            match ret:
+                case Deferred():
+                    self._state = ret
+                case Failed() | Done():
+                    self.val = ret
+                    return []
+                case _:
+                    self.val = Done(ret)
+                    return []
 
-            sub_commands = new_state.inputs
-            new_sub_commands = new_state.inputs
-
-            logging.debug('%s: %s => %s', self, self._state, new_state)
-            self._state = new_state
-
-            # Actual command termination
-            if self._state.callback == self._end:
-                assert not new_sub_commands
-                return []
+            sub_commands = self._state.inputs
+            new_sub_commands = self._state.inputs
 
             # Re-inspect values of new set of sub-commands and loop
             agg_value = script.value_conj(sub_commands)
@@ -121,17 +120,6 @@ class Command(Generic[Ok, Err]):
             sub.outputs.add(self)
 
         return new_sub_commands
-
-    def _as_deferred(self, obj: Any) -> Deferred[Any, Any, Err]:
-        match obj:
-            case Deferred():
-                return obj
-            case Failed():
-                self.val = obj
-                return Deferred(self._end, [])
-            case _:
-                self.val = Done(obj)
-                return Deferred(self._end, [])
 
     def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
         """
