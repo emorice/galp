@@ -34,7 +34,7 @@ from galp.protocol import (ProtocolEndException, IllegalRequestError,
     RoutedMessage, Replies)
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.query import Query
+from galp.query import query
 from galp.profiler import Profiler
 from galp.graph import NoSuchStep, Block
 from galp.task_types import TaskName
@@ -377,7 +377,7 @@ class Worker:
 
         script = self.protocol.script
         collect = script.collect([
-                Query(script, tin.name, tin.op)
+                query(script, tin.name, tin.op)
                 for tin in [
                     *task_def.args,
                     *task_def.kwargs.values()

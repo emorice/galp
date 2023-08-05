@@ -80,20 +80,13 @@ class Command(Generic[Ok, Err]):
         self.val: Result[Ok, Err] = Pending()
         self.outputs : WeakSet[Command] = WeakSet()
         if deferred is None:
-            self._state: Deferred[Any, Ok, Err] = Deferred(self._init, [])
-        else:
-            self._state = deferred
-            for inp in deferred.inputs:
-                inp.outputs.add(self)
+            deferred = Deferred(lambda _: None, [])
+        self._state = deferred
+        for inp in deferred.inputs:
+            inp.outputs.add(self)
 
     def __repr__(self):
         return f'Command(val={repr(self.val)}, state={repr(self._state)})'
-
-    def _init(self, *_):
-        raise NotImplementedError
-
-    def _end(self, *_):
-        raise RuntimeError('Dont call me')
 
     def _eval(self, script: 'Script'):
         """

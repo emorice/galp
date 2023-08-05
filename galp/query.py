@@ -3,6 +3,8 @@ Implementation of complex queries within the command asynchronous system
 """
 
 import logging
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from . import commands as cm
 from .task_types import TaskNode, QueryTaskDef, TaskName, Task, CoreTaskDef
@@ -17,48 +19,38 @@ def run_task(script: cm.Script, task: TaskNode, dry: bool = False) -> cm.Command
     if isinstance(task_def, QueryTaskDef):
         if dry:
             raise NotImplementedError('Cannot dry-run queries yet')
-        return Query(script, task_def.subject, task_def.query)
+        return query(script, task_def.subject, task_def.query)
 
     return cm.run(task.name, dry)
 
-class Query(cm.Command):
+@dataclass
+class _Query:
+    script: cm.Script
+    subject: TaskName
+    query: Any
+
+def query(script: cm.Script, subject: TaskName, _query):
     """
-    Local execution of a query
-
-    Args:
-        subject: the name of the task to apply the query to
-        query: the native object representing the query
+    Process the query and decide on further commands to issue
     """
-    def __init__(self, script: cm.Script, subject: TaskName, query):
-        self.subject = subject
-        self.query = query
-        self.script = script
-        super().__init__()
+    query_obj = _Query(script, subject, _query)
+    operator = query_to_op(query_obj, _query)
 
-    def __str__(self):
-        return f'query on {self.subject} {self.query}'
+    if operator is None:
+        raise NotImplementedError(_query)
 
-    def _init(self):
-        """
-        Process the query and decide on further commands to issue
-        """
-        operator = query_to_op(self, self.query)
+    if operator.requires is None:
+        required: cm.Thenable = cm.Gather([])
+    else:
+        required = operator.requires(subject)
 
-        if operator is None:
-            raise NotImplementedError(self.query)
-
-        if operator.requires is None:
-            required = cm.Gather([])
-        else:
-            required = operator.requires(self.subject)
-
-        return required.then(
-                lambda *command: cm.Gather(operator.recurse(*command)).then(
-                    lambda *sub_commands : operator.safe_result(sub_commands)
-                    )
+    return required.then(
+            lambda *command: cm.Gather(operator.recurse(*command)).then(
+                lambda *sub_commands : operator.safe_result(sub_commands)
                 )
+            )
 
-def parse_query(query):
+def parse_query(_query):
     """
     Split query into query key and sub-query, watching out for shorthands
 
@@ -67,34 +59,34 @@ def parse_query(query):
         else itself a pair (query_key, sub_query).
     """
     # Scalar shorthand: query terminator, implicit sub
-    if query is True:
+    if _query is True:
         return False, ('$sub', [])
 
     # Scalar shorthand: just a string, implicit terminator
-    if isinstance(query, str):
-        return False, (query, [])
+    if isinstance(_query, str):
+        return False, (_query, [])
 
     # Directly a mapping
-    if hasattr(query, 'items'):
-        return True, query
+    if hasattr(_query, 'items'):
+        return True, _query
 
     # Else, either regular string-sub_query sequence, or singleton mapping
     # expected
     try:
-        query_item, *sub_query = query
+        query_item, *sub_query = _query
     except (TypeError, ValueError):
-        raise NotImplementedError(query) from None
+        raise NotImplementedError(_query) from None
 
     if hasattr(query_item, 'items'):
         if sub_query:
-            # Compound query followed by a subquery, nonsense
-            raise NotImplementedError(query)
+            # Compound _query followed by a subquery, nonsense
+            raise NotImplementedError(_query)
         return True, query_item
 
     if not isinstance(query_item, str):
-        raise NotImplementedError(query)
+        raise NotImplementedError(_query)
 
-    # Normalize the query terminator
+    # Normalize the _query terminator
     if len(sub_query) == 1 and sub_query[0] is True:
         sub_query = []
 
@@ -111,7 +103,7 @@ class Operator:
         self.subject = query.subject
         self._req_cmd = None
 
-    requires: type[cm.Command] | None = None
+    requires : Callable[..., cm.Thenable] | None = None
 
     _ops = {}
     def __init_subclass__(cls, /, named=True, **kwargs):
@@ -164,7 +156,7 @@ class Operator:
             logging.exception('In %s:', self)
             return cm.Failed(exc)
 
-def query_to_op(cmd: Query, query) -> Operator:
+def query_to_op(cmd: _Query, query) -> Operator:
     """
     Convert query into operator
     """
@@ -194,6 +186,8 @@ def query_to_op(cmd: Query, query) -> Operator:
         ## Iterator
         if query_key == '*':
             return Iterate(cmd, sub_query)
+
+    return None
 
 class Base(Operator):
     """
@@ -270,7 +264,7 @@ class Args(Operator):
             except ValueError: # keyword argument
                 target = task_def.kwargs[index].name
             sub_commands.append(
-                Query(self.script, target, sub_query)
+                query(self.script, target, sub_query)
                 )
         return sub_commands
 
@@ -322,7 +316,7 @@ class Children(Args):
             except ValueError: # key-indexed child
                 raise NotImplementedError(index) from None
             sub_commands.append(
-                Query(self.script, target, sub_query)
+                query(self.script, target, sub_query)
                 )
         return sub_commands
 
@@ -357,7 +351,7 @@ class GetItem(Operator, named=False):
                 f'task, cannot apply sub_query "{sub_query}" to it'
                 )
 
-        return Query(self.script, task.name, sub_query)
+        return query(self.script, task.name, sub_query)
 
     def _result(self, _srun_cmd, subs):
         """
@@ -376,7 +370,7 @@ class Compound(Operator, named=False):
 
     def _recurse(self, _no_cmd):
         return [
-            Query(self.script, self.subject, sub_query)
+            query(self.script, self.subject, sub_query)
             for sub_query in self.sub_queries
             ]
 
@@ -404,7 +398,7 @@ class Iterate(Operator, named=False):
                 raise TypeError('Object is not a collection of tasks, cannot'
                     ' use a "*" query here')
             sub_query_commands.append(
-                    Query(self.script, task.name, sub_query)
+                    query(self.script, task.name, sub_query)
                     )
 
         return sub_query_commands
