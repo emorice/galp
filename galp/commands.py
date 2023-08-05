@@ -6,7 +6,7 @@ import sys
 import time
 from collections import deque
 from weakref import WeakSet, WeakValueDictionary
-from typing import TypeVar, Generic, Callable, Any, Protocol, Iterable
+from typing import TypeVar, Generic, Callable, Any, Protocol, Iterable, TypeAlias
 from dataclasses import dataclass
 from itertools import chain
 
@@ -62,6 +62,12 @@ class Deferred(Generic[InOk, Ok, Err]):
     callback: CallbackT[InOk, Ok]
     inputs: list['Command[InOk, Err]']
 
+    def then(self, callback: Callable[[Ok], U]) -> 'Deferred[Ok, U, Err]':
+        """
+        Chain several callbacks
+        """
+        return Command(self).then(callback)
+
 class Command(Generic[Ok, Err]):
     """
     A promise of the return value Ok of a callback applied to an input promise
@@ -76,6 +82,8 @@ class Command(Generic[Ok, Err]):
             self._state: Deferred[Any, Ok, Err] = Deferred(self._init, [])
         else:
             self._state = deferred
+            for inp in deferred.inputs:
+                inp.outputs.add(self)
 
     def _init(self, *_):
         raise NotImplementedError
@@ -166,23 +174,35 @@ CallbackRet = (
         | Deferred[InOk, Ok, Err]
         )
 
+
+def as_command(thenable: 'Thenable[Ok, Err]') -> Command[Ok, Err]:
+    match thenable:
+        case Command():
+            return thenable
+        case Deferred():
+            return Command(thenable)
+        case Gather():
+            return Command(
+                Deferred(lambda *r: list(r), thenable.commands)
+                )
+
 class Gather(Generic[Ok, Err]):
     """
     Then-able list
     """
     commands: list[Command[Ok, Err]]
 
-    def __init__(self, commands: Command | Iterable[Command]):
-        if isinstance(commands, Command):
-            self.commands = [commands]
-        else:
-            self.commands = list(commands)
+    def __init__(self, commands: 'Thenable[Ok, Err]' | Iterable['Thenable[Ok, Err]']):
+        thenables = commands if isinstance(commands, Iterable) else [commands]
+        self.commands = list(map(as_command, thenables))
 
     def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
         """
         Chain callback to this list
         """
         return Deferred(callback, self.commands)
+
+Thenable: TypeAlias = Command[Ok, Err] | Deferred[Any, Ok, Err] | Gather[Ok, Err]
 
 class UniqueCommand(Command[Ok, Err]):
     """
@@ -456,11 +476,7 @@ def rget(name: TaskName) -> Deferred[Any, Any, str]:
         .then(lambda children: Gather(map(Rget, children)))
         )
 
-def Rget(name):
-    """
-    Object wrapper
-    """
-    return Command(rget(name))
+Rget = rget
 
 class Collect(Command[list, str]):
     """
