@@ -208,7 +208,7 @@ class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
-    requires = cm.Rget
+    requires = staticmethod(cm.Rget)
 
     def _result(self, _run_cmd, _subs):
         return self.store.get_native(

@@ -68,11 +68,14 @@ class Command(Generic[Ok, Err]):
     InOk
     """
 
-    def __init__(self) -> None:
+    def __init__(self, deferred: Deferred[Any, Ok, Err] | None = None) -> None:
         super().__init__()
         self.val: Result[Ok, Err] = Pending()
         self.outputs : WeakSet[Command] = WeakSet()
-        self._state: Deferred[Any, Ok, Err]= Deferred(self._init, [])
+        if deferred is None:
+            self._state: Deferred[Any, Ok, Err] = Deferred(self._init, [])
+        else:
+            self._state = deferred
 
     def _init(self, *_):
         raise NotImplementedError
@@ -371,7 +374,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     Try to advance all given commands, and all downstream depending on them the
     case being
     """
-    commands = list(commands)
+    commands = get_all_subcommands(commands)
     primitives : list[InertCommand] = []
 
     while commands:
@@ -403,6 +406,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                 # For now, subcommands need to be recursively initialized
                 sub_commands = command.advance(script)
                 if sub_commands:
+                    sub_commands = get_all_subcommands(sub_commands)
                     commands.extend(sub_commands)
                 # Maybe this caused the command to advance to a terminal state (DONE or
                 # FAILED). In that case downstream commands must be checked too.
@@ -412,6 +416,18 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     # Compat with previous, non-functional interface
     script.new_commands.extend(p.key for p in primitives)
     return primitives
+
+def get_all_subcommands(commands):
+    """
+    Collect all the nodes of a command tree
+    """
+    all_commands = []
+    commands = list(commands)
+    while commands:
+        cmd = commands.pop()
+        all_commands.append(cmd)
+        commands.extend(cmd._state.inputs)
+    return all_commands
 
 class Get(InertCommand[list[TaskName], str]):
     """
@@ -431,14 +447,20 @@ class Stat(InertCommand[StatResult, str]):
     Get a task's metadata
     """
 
-class Rget(UniqueCommand[None, str]):
+def rget(name: TaskName) -> Deferred[Any, Any, str]:
     """
-    Recursively gets a resource and all its parts
+    Get a task result, then rescursively get all the sub-parts of it
     """
-    def _init(self) -> Deferred:
-        return Get(self.name).then(
-                lambda children: Gather(map(Rget, children))
-                )
+    return (
+        Get(name)
+        .then(lambda children: Gather(map(Rget, children)))
+        )
+
+def Rget(name):
+    """
+    Object wrapper
+    """
+    return Command(rget(name))
 
 class Collect(Command[list, str]):
     """
