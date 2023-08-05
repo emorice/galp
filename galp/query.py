@@ -32,7 +32,6 @@ class Query(cm.Command):
     def __init__(self, script: cm.Script, subject: TaskName, query):
         self.subject = subject
         self.query = query
-        self.op = None
         self.script = script
         super().__init__()
 
@@ -43,57 +42,21 @@ class Query(cm.Command):
         """
         Process the query and decide on further commands to issue
         """
+        operator = query_to_op(self, self.query)
 
-        is_compound, parsed_query = parse_query(self.query)
-        # Query set, turn each in its own query
-        if is_compound:
-            self.op = Compound(self, parsed_query.items())
-        else:
-            # Simple queries, parse into key-sub_query
-            query_key, sub_query = parsed_query
-
-            # Find operator by key
-            ## Regular named operator
-            if query_key.startswith('$'):
-                op_cls = Operator.by_name(query_key[1:])
-                if op_cls is None:
-                    raise NotImplementedError(
-                        f'No such operator: "{query_key}"'
-                        )
-                self.op = op_cls(self, sub_query)
-
-            ## Direct index
-            if query_key.isidentifier() or query_key.isnumeric():
-                index = int(query_key) if query_key.isnumeric() else query_key
-                self.op = GetItem(self, sub_query, index)
-
-            ## Iterator
-            if query_key == '*':
-                self.op = Iterate(self, sub_query)
-
-        if self.op is None:
+        if operator is None:
             raise NotImplementedError(self.query)
 
-        if self.op.requires is None:
-            return cm.Gather([]).then(self._operator)
+        if operator.requires is None:
+            required = cm.Gather([])
+        else:
+            required = operator.requires(self.subject)
 
-        return self.op.requires(self.subject).then(self._operator)
-
-    def _operator(self, *command):
-        """
-        Execute handler for operator after the required commands are done
-        """
-        return cm.Gather(self.op.recurse(*command)).then(self._operator_result)
-
-    def _operator_result(self, *sub_commands):
-        """
-        Execute handler for operator after the required commands are done
-        """
-        try:
-            return self.op.result(sub_commands)
-        except (StoreReadError, DeserializeError) as exc:
-            logging.exception('In %s:', self)
-            return cm.Failed(exc)
+        return required.then(
+                lambda *command: cm.Gather(operator.recurse(*command)).then(
+                    lambda *sub_commands : operator.safe_result(sub_commands)
+                    )
+                )
 
 def parse_query(query):
     """
@@ -190,6 +153,47 @@ class Operator:
 
     def _result(self, _req_cmd, _sub_cmds):
         return None
+
+    def safe_result(self, subs):
+        """
+        Wrapper around result for common exceptions
+        """
+        try:
+            return self.result(subs)
+        except (StoreReadError, DeserializeError) as exc:
+            logging.exception('In %s:', self)
+            return cm.Failed(exc)
+
+def query_to_op(cmd: Query, query) -> Operator:
+    """
+    Convert query into operator
+    """
+    is_compound, parsed_query = parse_query(query)
+    # Query set, turn each in its own query
+    if is_compound:
+        return Compound(cmd, parsed_query.items())
+    else:
+        # Simple queries, parse into key-sub_query
+        query_key, sub_query = parsed_query
+
+        # Find operator by key
+        ## Regular named operator
+        if query_key.startswith('$'):
+            op_cls = Operator.by_name(query_key[1:])
+            if op_cls is None:
+                raise NotImplementedError(
+                    f'No such operator: "{query_key}"'
+                    )
+            return op_cls(cmd, sub_query)
+
+        ## Direct index
+        if query_key.isidentifier() or query_key.isnumeric():
+            index = int(query_key) if query_key.isnumeric() else query_key
+            return GetItem(cmd, sub_query, index)
+
+        ## Iterator
+        if query_key == '*':
+            return Iterate(cmd, sub_query)
 
 class Base(Operator):
     """
