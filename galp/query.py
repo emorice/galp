@@ -291,7 +291,7 @@ class Children(Args):
     """
     Recurse on children after simple task run
     """
-    requires = cm.SSubmit
+    requires = staticmethod(cm.SSubmit)
 
     def _recurse(self, children: list[TaskName]):
         """
@@ -332,7 +332,7 @@ class GetItem(Operator, named=False):
         super().__init__(query, sub_query)
         self.index = index
 
-    requires = cm.SRun
+    requires = staticmethod(cm.SRun)
 
     def _recurse(self, _srun_cmd):
         """
@@ -386,7 +386,7 @@ class Iterate(Operator, named=False):
     """
     Iterate over object
     """
-    requires = cm.SRun
+    requires = staticmethod(cm.SRun)
 
     def _recurse(self, _srun_cmd):
         """

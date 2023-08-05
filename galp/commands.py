@@ -22,7 +22,7 @@ from .task_types import (
 Ok = TypeVar('Ok')
 Err = TypeVar('Err')
 
-# pylint: disable=too-few-public-methods
+@dataclass(frozen=True)
 class Pending():
     """
     Special type for a result not known yet
@@ -68,6 +68,9 @@ class Deferred(Generic[InOk, Ok, Err]):
         """
         return Command(self).then(callback)
 
+    def __repr__(self):
+        return f'Deferred({self.callback.__qualname__})'
+
 class Command(Generic[Ok, Err]):
     """
     A promise of the return value Ok of a callback applied to an input promise
@@ -84,6 +87,9 @@ class Command(Generic[Ok, Err]):
             self._state = deferred
             for inp in deferred.inputs:
                 inp.outputs.add(self)
+
+    def __repr__(self):
+        return f'Command(val={repr(self.val)}, state={repr(self._state)})'
 
     def _init(self, *_):
         raise NotImplementedError
@@ -152,7 +158,6 @@ class Command(Generic[Ok, Err]):
         new_sub_commands = self._eval(script)
 
         script.notify_change(self, old_value, self.val)
-        logging.info('%s %s', self.val, self)
 
         return new_sub_commands
 
@@ -176,6 +181,9 @@ CallbackRet = (
 
 
 def as_command(thenable: 'Thenable[Ok, Err]') -> Command[Ok, Err]:
+    """
+    Wrap object in command if necessary
+    """
     match thenable:
         case Command():
             return thenable
@@ -306,18 +314,19 @@ class Script:
         # For logging
         self._task_defs: dict[TaskName, CoreTaskDef] = {}
 
-    def collect(self, commands: list[Command]) -> 'Collect':
+    def collect(self, commands: list[Command]) -> Command:
         """
         Creates a command representing a collection of other commands
         """
-        return Collect(commands)
+        return as_command(Collect(commands))
 
-    def callback(self, command: Command, callback: Callable[[FinalResult], Any]):
+    def callback(self, thenable: Thenable, callback: Callable[[FinalResult], Any]):
         """
         Adds an arbitrary callback to an existing command. This triggers
         execution of the command as far as possible, and of the callback if
         ready.
         """
+        command = as_command(thenable)
         cb_command = Callback(command, callback)
         self.pending.add(cb_command)
         # The callback is set as a downstream link to the command, but it still
@@ -478,20 +487,9 @@ def rget(name: TaskName) -> Deferred[Any, Any, str]:
 
 Rget = rget
 
-class Collect(Command[list, str]):
-    """
-    A collection of other commands
-    """
-    def __init__(self, commands):
-        self.commands = commands
-        super().__init__()
+Collect = Gather
 
-    def __str__(self):
-        return 'collect'
-
-    def _init(self):
-        return Gather(self.commands)
-
+# Cannot be replaced yet, as Deferred lack the option to pass Failed
 class Callback(Command):
     """
     An arbitrary callback function, used to tie in other code
@@ -515,93 +513,56 @@ class Callback(Command):
             self._callback(in_val)
         return []
 
-class SSubmit(UniqueCommand[list[TaskName], str]):
+def ssubmit(name: TaskName, dry: bool = False
+            ) -> Deferred[Any, list[TaskName], str]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
     """
-    _dry = False
+    return Stat(name).then(lambda statr: _ssubmit(statr, dry))
 
-    def _init(self):
-        """
-        Emit the initial stat
-        """
-        # metadata
-        return Stat(self.name).then(self._sort)
-
-    def _sort(self, stat_result: StatResult):
-        """
-        Sort out queries, remote jobs and literals
-        """
-        _task_done, task_def, children = stat_result
-
-        # Short circuit for tasks already processed and literals
-        if isinstance(task_def, LiteralTaskDef):
-            children = task_def.children
-
-        if children is not None:
-            return children
-
-        # Query, should never have reached this layer as queries have custom run
-        # mechanics
-        if isinstance(task_def, QueryTaskDef):
-            raise NotImplementedError
-
-        # Else, regular job, process dependencies first
-        cmd = DryRun if self._dry else RSubmit
-        # FIXME: optimize type of command based on type of link
-        # Always doing a RSUB will work, but it will run things more eagerly that
-        # needed or propagate failures too aggressively.
-        return Gather([
-                cmd(tin.name)
-                for tin in task_def.dependencies(TaskOp.BASE)
-                ]).then(self._deps)
-
-    def _deps(self, *_):
-        """
-        Check deps availability before proceeding to main submit
-        """
-        # For dry-runs, bypass the submission
-        if self._dry:
-            # Explicitely set the result to "no children"
-            return []
-
-        # Task itself
-        return Submit(self.name)
-
-class DrySSubmit(SSubmit):
+def _ssubmit(stat_result: StatResult, dry: bool
+             ) -> list[TaskName] | Deferred[Any, list[TaskName], str]:
     """
-    Dry-run variant of SSubmit
+    Core ssubmit logic, recurse on dependencies and skip done tasks
     """
-    _dry = True
+    _task_done, task_def, children = stat_result
 
-class RSubmit(UniqueCommand[None, str]):
+    # Short circuit for tasks already processed and literals
+    if isinstance(task_def, LiteralTaskDef):
+        children = task_def.children
+
+    if children is not None:
+        return children
+
+    # Query, should never have reached this layer as queries have custom run
+    # mechanics
+    if isinstance(task_def, QueryTaskDef):
+        raise NotImplementedError
+
+    # Else, regular job, process dependencies first
+    # FIXME: optimize type of command based on type of link
+    # Always doing a RSUB will work, but it will run things more eagerly that
+    # needed or propagate failures too aggressively.
+    return (
+            Gather([rsubmit(tin.name,dry) for tin in task_def.dependencies(TaskOp.BASE)])
+            .then(lambda *_: [] if dry else Submit(task_def.name))
+            )
+
+SSubmit = ssubmit
+
+def DrySSubmit(name: TaskName):
     """
-    Recursive submit, with children, aka an SSubmit plus a RSubmit per child
+    Object bridge code
     """
-    _dry = False
+    return ssubmit(name, dry=True)
 
-    def _init(self):
-        """
-        Emit the simple submit
-        """
-        cmd = DrySSubmit if self._dry else SSubmit
-        return cmd(self.name).then(self._main)
-
-    def _main(self, children: list[TaskName]):
-        """
-        Check the main result and proceed with possible children tasks
-        """
-        cmd = DryRun if self._dry else RSubmit
-        return Gather([ cmd(child_name)
-                for child_name in children ])
-
-# Despite the name, since a DryRun never does any fetches, it is implemented as
-# a special case of RSubmit and not Run (Run is RSubmit + RGet)
-class DryRun(RSubmit):
+def rsubmit(name: TaskName, dry: bool = False):
     """
-    A task dry-run. Similar to RSUBMIT, but does not actually submit tasks, and
-    instead moves on as soon as the STAT command succeeded.
+    Recursive submit, with children, i.e a SSubmit plus a RSubmit per child
+
+    For dry-runs, does not actually submit tasks, and instead moves on as soon
+    as the STAT command succeeded,
 
     If a task has dynamic children (i.e., running the task returns new tasks to
     execute), the output will depend on the task status:
@@ -613,19 +574,33 @@ class DryRun(RSubmit):
     This is the intended behavior, it reflects the inherent limit of a dry-run:
     part of the task graph is unknown before we actually start executing it.
     """
-    _dry = True
+    return (
+            ssubmit(name, dry)
+            .then(lambda children: Gather([rsubmit(c, dry) for c in children]))
+            )
 
-class Run(UniqueCommand[None, str]):
+RSubmit = rsubmit
+
+def DryRun(name: TaskName):
+    """
+    Object bridge code
+    """
+    return rsubmit(name, dry=True)
+
+
+def run(name: TaskName):
     """
     Combined rsubmit + rget
     """
-    def _init(self):
-        return RSubmit(self.name).then(lambda _: Rget(self.name))
+    return rsubmit(name).then(lambda _: rget(name))
 
-class SRun(UniqueCommand[None, str]):
+Run = run
+
+def srun(name: TaskName):
     """
     Shallow run: combined ssubmit + get, fetches the raw result of a task but
     not its children
     """
-    def _init(self):
-        return SSubmit(self.name).then(lambda _: Get(self.name))
+    return ssubmit(name).then(lambda _: Get(name))
+
+SRun = srun
