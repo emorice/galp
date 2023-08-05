@@ -10,8 +10,6 @@ from typing import TypeVar, Generic, Callable, Any, Protocol, Iterable, TypeAlia
 from dataclasses import dataclass
 from itertools import chain
 
-import logging
-
 from .task_types import (
         TaskName, LiteralTaskDef, QueryTaskDef, TaskDef, TaskOp, CoreTaskDef
         )
@@ -167,13 +165,6 @@ class Command(Generic[Ok, Err]):
         """
         return isinstance(self.val, Pending)
 
-    @property
-    def _str_res(self) -> str:
-        return (
-            f' = [{", ".join(str(r) for r in self.val.result)}]'
-            if isinstance(self.val, Done) else ''
-            )
-
 CallbackRet = (
         tuple[str, list[Command[InOk, Err]] | Command[InOk, Err]] | str
         | Deferred[InOk, Ok, Err]
@@ -212,20 +203,11 @@ class Gather(Generic[Ok, Err]):
 
 Thenable: TypeAlias = Command[Ok, Err] | Deferred[Any, Ok, Err] | Gather[Ok, Err]
 
-class UniqueCommand(Command[Ok, Err]):
-    """
-    Any command that is fully defined and identified by a task name
-    """
-    def __init__(self, name: TaskName):
-        self.name = name
-        super().__init__()
-
-    def __str__(self):
-        return f'{self.__class__.__name__.lower()} {self.name}'
-
-class InertCommand(UniqueCommand[Ok, Err]):
+class InertCommand(Command[Ok, Err]):
     """
     Command tied to an external event
+
+    Fully defined and identified by a task name
     """
     # Strong ref to master. This allows to make the master dict weak, which in
     # turns drops the master when the last copy gets collected
@@ -233,8 +215,12 @@ class InertCommand(UniqueCommand[Ok, Err]):
     # purpose
     master: 'PrimitiveProxy'
 
+    def __init__(self, name: TaskName):
+        self.name = name
+        super().__init__()
+
     def __str__(self):
-        return f'{self.__class__.__name__.lower().ljust(7)} {self.name}' + self._str_res
+        return f'{self.__class__.__name__.lower()} {self.name}'
 
     def _eval(self, *_):
         raise NotImplementedError
@@ -482,10 +468,8 @@ def rget(name: TaskName) -> Deferred[Any, Any, str]:
     """
     return (
         Get(name)
-        .then(lambda children: Gather(map(Rget, children)))
+        .then(lambda children: Gather(map(rget, children)))
         )
-
-Rget = rget
 
 Collect = Gather
 
@@ -549,17 +533,9 @@ def _ssubmit(stat_result: StatResult, dry: bool
             .then(lambda *_: [] if dry else Submit(task_def.name))
             )
 
-SSubmit = ssubmit
-
-def DrySSubmit(name: TaskName):
-    """
-    Object bridge code
-    """
-    return ssubmit(name, dry=True)
-
 def rsubmit(name: TaskName, dry: bool = False):
     """
-    Recursive submit, with children, i.e a SSubmit plus a RSubmit per child
+    Recursive submit, with children, i.e a ssubmit plus a rsubmit per child
 
     For dry-runs, does not actually submit tasks, and instead moves on as soon
     as the STAT command succeeded,
@@ -579,22 +555,15 @@ def rsubmit(name: TaskName, dry: bool = False):
             .then(lambda children: Gather([rsubmit(c, dry) for c in children]))
             )
 
-RSubmit = rsubmit
-
-def DryRun(name: TaskName):
-    """
-    Object bridge code
-    """
-    return rsubmit(name, dry=True)
-
-
-def run(name: TaskName):
+def run(name: TaskName, dry=False):
     """
     Combined rsubmit + rget
-    """
-    return rsubmit(name).then(lambda _: rget(name))
 
-Run = run
+    If dry, just a dry rsubmit
+    """
+    if dry:
+        return rsubmit(name, dry=True)
+    return rsubmit(name).then(lambda _: rget(name))
 
 def srun(name: TaskName):
     """
@@ -602,5 +571,3 @@ def srun(name: TaskName):
     not its children
     """
     return ssubmit(name).then(lambda _: Get(name))
-
-SRun = srun

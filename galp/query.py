@@ -19,9 +19,7 @@ def run_task(script: cm.Script, task: TaskNode, dry: bool = False) -> cm.Command
             raise NotImplementedError('Cannot dry-run queries yet')
         return Query(script, task_def.subject, task_def.query)
 
-    if dry:
-        return cm.DryRun(task.name)
-    return cm.Run(task.name)
+    return cm.run(task.name, dry)
 
 class Query(cm.Command):
     """
@@ -208,7 +206,7 @@ class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
-    requires = staticmethod(cm.Rget)
+    requires = staticmethod(cm.rget)
 
     def _result(self, _run_cmd, _subs):
         return self.store.get_native(
@@ -291,7 +289,7 @@ class Children(Args):
     """
     Recurse on children after simple task run
     """
-    requires = staticmethod(cm.SSubmit)
+    requires = staticmethod(cm.ssubmit)
 
     def _recurse(self, children: list[TaskName]):
         """
@@ -332,7 +330,7 @@ class GetItem(Operator, named=False):
         super().__init__(query, sub_query)
         self.index = index
 
-    requires = staticmethod(cm.SRun)
+    requires = staticmethod(cm.srun)
 
     def _recurse(self, _srun_cmd):
         """
@@ -386,7 +384,7 @@ class Iterate(Operator, named=False):
     """
     Iterate over object
     """
-    requires = staticmethod(cm.SRun)
+    requires = staticmethod(cm.srun)
 
     def _recurse(self, _srun_cmd):
         """
