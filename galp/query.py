@@ -46,7 +46,7 @@ def query(script: cm.Script, subject: TaskName, _query):
 
     return required.then(
             lambda *command: cm.Gather(operator.recurse(*command)).then(
-                lambda *sub_commands : operator.safe_result(sub_commands)
+                operator.safe_result
                 )
             )
 

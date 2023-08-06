@@ -76,7 +76,6 @@ class Command(Generic[Ok, Err]):
     """
 
     def __init__(self, deferred: Deferred[Any, Ok, Err] | None = None) -> None:
-        super().__init__()
         self.val: Result[Ok, Err] = Pending()
         self.outputs : WeakSet[Command] = WeakSet()
         if deferred is None:
@@ -158,11 +157,17 @@ class Command(Generic[Ok, Err]):
         """
         return isinstance(self.val, Pending)
 
+    @property
+    def inputs(self):
+        """
+        Commands we depend on
+        """
+        return self._state.inputs
+
 CallbackRet = (
         tuple[str, list[Command[InOk, Err]] | Command[InOk, Err]] | str
         | Deferred[InOk, Ok, Err]
         )
-
 
 def as_command(thenable: 'Thenable[Ok, Err]') -> Command[Ok, Err]:
     """
@@ -178,21 +183,38 @@ def as_command(thenable: 'Thenable[Ok, Err]') -> Command[Ok, Err]:
                 Deferred(lambda *r: list(r), thenable.commands)
                 )
 
-class Gather(Generic[Ok, Err]):
+class Gather(Command[list[Ok], Err]):
     """
     Then-able list
     """
     commands: list[Command[Ok, Err]]
 
     def __init__(self, commands: 'Thenable[Ok, Err]' | Iterable['Thenable[Ok, Err]']):
+        super().__init__()
         thenables = commands if isinstance(commands, Iterable) else [commands]
         self.commands = list(map(as_command, thenables))
+        for inp in self.commands:
+            inp.outputs.add(self)
 
-    def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
+    def then(self, callback: Callable[[list[Ok]], U]) -> Deferred[Ok, U, Err]:
         """
         Chain callback to this list
         """
-        return Deferred(callback, self.commands)
+        return Deferred(callback, [self])
+
+    def _eval(self, script: 'Script'):
+        """
+        State-based handling
+        """
+        self.val = script.value_conj(self.commands)
+        return []
+
+    @property
+    def inputs(self):
+        """
+        Commands we depend on
+        """
+        return self.commands
 
 Thenable: TypeAlias = Command[Ok, Err] | Deferred[Any, Ok, Err] | Gather[Ok, Err]
 
@@ -434,7 +456,7 @@ def get_all_subcommands(commands):
     while commands:
         cmd = commands.pop()
         all_commands.append(cmd)
-        commands.extend(cmd._state.inputs)
+        commands.extend(cmd.inputs)
     return all_commands
 
 class Get(InertCommand[list[TaskName], str]):
