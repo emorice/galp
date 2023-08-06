@@ -64,22 +64,69 @@ class Deferred(Generic[InOk, Ok, Err]):
         """
         Chain several callbacks
         """
-        return Command(self).then(callback)
+        return DeferredCommand(self).then(callback)
 
     def __repr__(self):
         return f'Deferred({self.callback.__qualname__})'
 
 class Command(Generic[Ok, Err]):
     """
+    Base class for commands
+    """
+    def __init__(self) -> None:
+        self.val: Result[Ok, Err] = Pending()
+        self.outputs : WeakSet[Command] = WeakSet()
+
+    def __repr__(self):
+        return f'Command(val={repr(self.val)})'
+
+    def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
+        """
+        Chain callback to this command
+        """
+        return Deferred(callback, [self])
+
+    def advance(self, script: 'Script'):
+        """
+        Try to advance the commands state. If the move causes new commands to be
+        created or moves to a terminal state and trigger downstream commands,
+        returns them for them to be advanced by the caller too.
+        """
+        old_value = self.val
+
+        new_sub_commands = self._eval(script)
+
+        script.notify_change(self, old_value, self.val)
+
+        return new_sub_commands
+
+    def _eval(self, script: 'Script') -> 'list[Command]':
+        """
+        Logic of calculating the value
+        """
+        raise NotImplementedError
+
+    def is_pending(self):
+        """
+        Boolean, if command still pending
+        """
+        return isinstance(self.val, Pending)
+
+    @property
+    def inputs(self):
+        """
+        Commands we depend on
+        """
+        raise NotImplementedError
+
+class DeferredCommand(Command[Ok, Err]):
+    """
     A promise of the return value Ok of a callback applied to an input promise
     InOk
     """
 
-    def __init__(self, deferred: Deferred[Any, Ok, Err] | None = None) -> None:
-        self.val: Result[Ok, Err] = Pending()
-        self.outputs : WeakSet[Command] = WeakSet()
-        if deferred is None:
-            deferred = Deferred(lambda _: None, [])
+    def __init__(self, deferred: Deferred[Any, Ok, Err]) -> None:
+        super().__init__()
         self._state = deferred
         for inp in deferred.inputs:
             inp.outputs.add(self)
@@ -87,7 +134,7 @@ class Command(Generic[Ok, Err]):
     def __repr__(self):
         return f'Command(val={repr(self.val)}, state={repr(self._state)})'
 
-    def _eval(self, script: 'Script'):
+    def _eval(self, script: 'Script') -> list[Command]:
         """
         State-based handling
         """
@@ -131,32 +178,6 @@ class Command(Generic[Ok, Err]):
 
         return new_sub_commands
 
-    def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
-        """
-        Chain callback to this command
-        """
-        return Deferred(callback, [self])
-
-    def advance(self, script: 'Script'):
-        """
-        Try to advance the commands state. If the move causes new commands to be
-        created or moves to a terminal state and trigger downstream commands,
-        returns them for them to be advanced by the caller too.
-        """
-        old_value = self.val
-
-        new_sub_commands = self._eval(script)
-
-        script.notify_change(self, old_value, self.val)
-
-        return new_sub_commands
-
-    def is_pending(self):
-        """
-        Boolean, if command still pending
-        """
-        return isinstance(self.val, Pending)
-
     @property
     def inputs(self):
         """
@@ -177,11 +198,7 @@ def as_command(thenable: 'Thenable[Ok, Err]') -> Command[Ok, Err]:
         case Command():
             return thenable
         case Deferred():
-            return Command(thenable)
-        case Gather():
-            return Command(
-                Deferred(lambda *r: list(r), thenable.commands)
-                )
+            return DeferredCommand(thenable)
 
 class Gather(Command[list[Ok], Err]):
     """
@@ -246,6 +263,13 @@ class InertCommand(Command[Ok, Err]):
         Unique key
         """
         return (self.__class__.__name__.upper(), self.name)
+
+    @property
+    def inputs(self):
+        """
+        Commands we depend on
+        """
+        return []
 
 class PrimitiveProxy(Generic[Ok, Err]):
     """
