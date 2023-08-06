@@ -6,7 +6,7 @@ import sys
 import time
 from collections import deque
 from weakref import WeakSet, WeakValueDictionary
-from typing import TypeVar, Generic, Callable, Any, Protocol, Iterable, TypeAlias
+from typing import TypeVar, Generic, Callable, Any, Iterable, TypeAlias
 from dataclasses import dataclass
 from itertools import chain
 
@@ -46,21 +46,19 @@ FinalResult = Done[Ok] | Failed[Err]
 # Commands
 # ========
 
-T_contra = TypeVar('T_contra', contravariant=True)
 U = TypeVar('U')
-class CallbackT(Protocol[T_contra, U]):
-    """Callback type"""
-    def __call__(self, *args: T_contra) -> 'CallbackRet[Any, U, Any] | U': ...
 
+# Helper typevars when a second ok type is needed
 InOk = TypeVar('InOk')
+OutOk = TypeVar('OutOk')
 
 @dataclass
 class Deferred(Generic[InOk, Ok, Err]):
     """Wraps commands with matching callback"""
-    callback: CallbackT[InOk, Ok]
-    inputs: list['Command[InOk, Err]']
+    callback: 'CallbackT[InOk, Ok, Err]'
+    arg: 'Command[InOk, Err]'
 
-    def then(self, callback: Callable[[Ok], U]) -> 'Deferred[Ok, U, Err]':
+    def then(self, callback: 'CallbackT[Ok, OutOk, Err]') -> 'Deferred[Ok, OutOk, Err]':
         """
         Chain several callbacks
         """
@@ -80,11 +78,11 @@ class Command(Generic[Ok, Err]):
     def __repr__(self):
         return f'Command(val={repr(self.val)})'
 
-    def then(self, callback: CallbackT[Ok, U]) -> Deferred[Ok, U, Err]:
+    def then(self, callback: 'CallbackT[Ok, OutOk, Err]') -> Deferred[Ok, OutOk, Err]:
         """
         Chain callback to this command
         """
-        return Deferred(callback, [self])
+        return Deferred(callback, self)
 
     def advance(self, script: 'Script'):
         """
@@ -119,6 +117,8 @@ class Command(Generic[Ok, Err]):
         """
         raise NotImplementedError
 
+CallbackT: TypeAlias = Callable[[InOk], Ok | Command[Ok, Err]]
+
 class DeferredCommand(Command[Ok, Err]):
     """
     A promise of the return value Ok of a callback applied to an input promise
@@ -128,8 +128,7 @@ class DeferredCommand(Command[Ok, Err]):
     def __init__(self, deferred: Deferred[Any, Ok, Err]) -> None:
         super().__init__()
         self._state = deferred
-        for inp in deferred.inputs:
-            inp.outputs.add(self)
+        deferred.arg.outputs.add(self)
 
     def __repr__(self):
         return f'Command(val={repr(self.val)}, state={repr(self._state)})'
@@ -138,26 +137,23 @@ class DeferredCommand(Command[Ok, Err]):
         """
         State-based handling
         """
-        sub_commands = self._state.inputs
+        sub_command = self._state.arg
         new_sub_commands = []
-        # Aggregate value of all sub-commands
-        agg_value = script.value_conj(sub_commands)
-        while not isinstance(agg_value, Pending): # = advance until stuck again
+        value = sub_command.val
+        while not isinstance(value, Pending): # = advance until stuck again
             # Note: this drops new_sub_commands by design since there is no need
             # to inject them into the event loop with the parent failed.
-            if isinstance(agg_value, Failed):
-                self.val = agg_value
+            if isinstance(value, Failed):
+                self.val = value
                 return []
 
             # At this point, aggregate value is Done
-            ret = self._state.callback(*agg_value.result)
+            ret = self._state.callback(value.result)
             match ret:
                 case Deferred():
                     self._state = ret
-                case Gather():
-                    self._state = Deferred(lambda *r: r, ret.commands)
                 case Command():
-                    self._state = Deferred(lambda r: r, [ret])
+                    self._state = Deferred(lambda r: r, ret)
                 case Failed() | Done():
                     self.val = ret
                     return []
@@ -165,30 +161,24 @@ class DeferredCommand(Command[Ok, Err]):
                     self.val = Done(ret)
                     return []
 
-            sub_commands = self._state.inputs
-            new_sub_commands = self._state.inputs
+            sub_command = self._state.arg
+            new_sub_commands = [self._state.arg]
 
             # Re-inspect values of new set of sub-commands and loop
-            agg_value = script.value_conj(sub_commands)
+            value = sub_command.val
 
         # Ensure all remaining sub-commands have downstream links pointing to
         # this command before relinquishing control
-        for sub in sub_commands:
-            sub.outputs.add(self)
+        sub_command.outputs.add(self)
 
         return new_sub_commands
 
     @property
-    def inputs(self):
+    def inputs(self) -> list[Command]:
         """
         Commands we depend on
         """
-        return self._state.inputs
-
-CallbackRet = (
-        tuple[str, list[Command[InOk, Err]] | Command[InOk, Err]] | str
-        | Deferred[InOk, Ok, Err]
-        )
+        return [self._state.arg]
 
 def as_command(thenable: 'Thenable[Ok, Err]') -> Command[Ok, Err]:
     """
@@ -213,11 +203,11 @@ class Gather(Command[list[Ok], Err]):
         for inp in self.commands:
             inp.outputs.add(self)
 
-    def then(self, callback: Callable[[list[Ok]], U]) -> Deferred[Ok, U, Err]:
+    def then(self, callback: CallbackT[list[Ok], OutOk, Err]) -> Deferred[list[Ok], OutOk, Err]:
         """
         Chain callback to this list
         """
-        return Deferred(callback, [self])
+        return Deferred(callback, self)
 
     def _eval(self, script: 'Script'):
         """
@@ -233,7 +223,7 @@ class Gather(Command[list[Ok], Err]):
         """
         return self.commands
 
-Thenable: TypeAlias = Command[Ok, Err] | Deferred[Any, Ok, Err] | Gather[Ok, Err]
+Thenable: TypeAlias = Command[Ok, Err] | Deferred[Any, Ok, Err]
 
 class InertCommand(Command[Ok, Err]):
     """
@@ -569,7 +559,7 @@ def _ssubmit(stat_result: StatResult, dry: bool
     # needed or propagate failures too aggressively.
     return (
             Gather([rsubmit(tin.name,dry) for tin in task_def.dependencies(TaskOp.BASE)])
-            .then(lambda *_: [] if dry else Submit(task_def.name))
+            .then(lambda _: [] if dry else Submit(task_def.name))
             )
 
 def rsubmit(name: TaskName, dry: bool = False):
