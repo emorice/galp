@@ -46,8 +46,6 @@ FinalResult = Done[Ok] | Failed[Err]
 # Commands
 # ========
 
-U = TypeVar('U')
-
 # Helper typevars when a second ok type is needed
 InOk = TypeVar('InOk')
 OutOk = TypeVar('OutOk')
@@ -55,8 +53,8 @@ OutOk = TypeVar('OutOk')
 @dataclass
 class Deferred(Generic[InOk, Ok, Err]):
     """Wraps commands with matching callback"""
-    # Gotcha: the order of typevars differs from CallbackT !
-    callback: 'PlainCallbackT[InOk, Err, Ok]'
+    # Gotcha: the order of typevars differs from Callback !
+    callback: 'PlainCallback[InOk, Err, Ok]'
     arg: 'Command[InOk, Err]'
 
     def __repr__(self):
@@ -73,11 +71,11 @@ class Command(Generic[Ok, Err]):
     def __repr__(self):
         return f'Command(val={repr(self.val)})'
 
-    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> 'Command[OutOk, Err]':
+    def then(self, callback: 'Callback[Ok, OutOk, Err]') -> 'Command[OutOk, Err]':
         """
         Chain callback to this command
         """
-        return DeferredCommand(Deferred(ok_callback(callback_fn), self))
+        return DeferredCommand(Deferred(ok_callback(callback), self))
 
     def advance(self, script: 'Script'):
         """
@@ -115,11 +113,11 @@ class Command(Generic[Ok, Err]):
 CallbackRet: TypeAlias = (
         Ok | Done[Ok] | Failed[Err] | Command[Ok, Err]
         )
-CallbackT: TypeAlias = Callable[[InOk], CallbackRet[Ok, Err]]
-PlainCallbackT: TypeAlias = Callable[[Done[InOk] | Failed[Err]], CallbackRet[Ok, Err]]
+Callback: TypeAlias = Callable[[InOk], CallbackRet[Ok, Err]]
+PlainCallback: TypeAlias = Callable[[Done[InOk] | Failed[Err]], CallbackRet[Ok, Err]]
 
-def ok_callback(callback_fn: CallbackT[InOk, Ok, Err]
-        ) -> PlainCallbackT[InOk, Err, Ok]:
+def ok_callback(callback: Callback[InOk, Ok, Err]
+        ) -> PlainCallback[InOk, Err, Ok]:
     """
     Wrap a callback from Ok values to accept and propagate Done/Failed
     accordingly
@@ -128,7 +126,7 @@ def ok_callback(callback_fn: CallbackT[InOk, Ok, Err]
         match val:
             case Done():
                 # No need to wrap into Done since that's the default behavior
-                return callback_fn(val.result)
+                return callback(val.result)
             case Failed():
                 return val
             case _:
@@ -326,13 +324,13 @@ class Script:
         return Gather(commands)
 
     def callback(self, command: Command[InOk, Err],
-            callback_fn: PlainCallbackT[InOk, Err, Ok]) -> Command[Ok, Err]:
+            callback: PlainCallback[InOk, Err, Ok]) -> Command[Ok, Err]:
         """
         Adds an arbitrary callback to an existing command. This triggers
         execution of the command as far as possible, and of the callback if
         ready.
         """
-        cb_command = callback(command, callback_fn)
+        cb_command = DeferredCommand(Deferred(callback, command))
         self.pending.add(cb_command)
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
@@ -489,13 +487,6 @@ def rget(name: TaskName) -> Command[list, str]:
         Get(name)
         .then(lambda children: Gather(map(rget, children)))
         )
-
-def callback(command: Command[InOk, Err],
-        callback_fn: PlainCallbackT[InOk, Err, Ok]) -> Command[Ok, Err]:
-    """
-    Glue for old Callback command
-    """
-    return DeferredCommand(Deferred(callback_fn, command))
 
 def ssubmit(name: TaskName, dry: bool = False
             ) -> Command[list[TaskName], str]:
