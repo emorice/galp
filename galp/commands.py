@@ -55,26 +55,11 @@ OutOk = TypeVar('OutOk')
 @dataclass
 class Deferred(Generic[InOk, Ok, Err]):
     """Wraps commands with matching callback"""
-    callback: 'CallbackT[InOk, Ok, Err]'
-    arg: 'Command[InOk, Err]'
-
-    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> 'PlainDeferred[Ok, OutOk, Err]':
-        """
-        Chain several callbacks
-        """
-        return DeferredCommand(self).then(callback_fn)
-
-    def __repr__(self):
-        return f'Deferred({self.callback.__qualname__})'
-
-@dataclass
-class PlainDeferred(Generic[InOk, Ok, Err]):
-    """Wraps commands with matching callback"""
     # Gotcha: the order of typevars differs from CallbackT !
     callback: 'PlainCallbackT[InOk, Err, Ok]'
     arg: 'Command[InOk, Err]'
 
-    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> 'PlainDeferred[Ok, OutOk, Err]':
+    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> 'Deferred[Ok, OutOk, Err]':
         """
         Chain several callbacks
         """
@@ -94,11 +79,11 @@ class Command(Generic[Ok, Err]):
     def __repr__(self):
         return f'Command(val={repr(self.val)})'
 
-    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> PlainDeferred[Ok, OutOk, Err]:
+    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> Deferred[Ok, OutOk, Err]:
         """
         Chain callback to this command
         """
-        return PlainDeferred(ok_callback(callback_fn), self)
+        return Deferred(ok_callback(callback_fn), self)
 
     def advance(self, script: 'Script'):
         """
@@ -135,7 +120,7 @@ class Command(Generic[Ok, Err]):
 
 CallbackRet: TypeAlias = (
         Ok | Done[Ok] | Failed[Err] | Command[Ok, Err]
-        | PlainDeferred[Any, Err, Ok]
+        | Deferred[Any, Err, Ok]
         )
 CallbackT: TypeAlias = Callable[[InOk], CallbackRet[Ok, Err]]
 PlainCallbackT: TypeAlias = Callable[[Done[InOk] | Failed[Err]], CallbackRet[Ok, Err]]
@@ -163,7 +148,7 @@ class DeferredCommand(Command[Ok, Err]):
     InOk
     """
 
-    def __init__(self, deferred: Deferred[Any, Ok, Err] | PlainDeferred[Any, Ok, Err]) -> None:
+    def __init__(self, deferred: Deferred[Any, Ok, Err]) -> None:
         super().__init__()
         self._state = deferred
         deferred.arg.outputs.add(self)
@@ -183,17 +168,12 @@ class DeferredCommand(Command[Ok, Err]):
             # At this point, aggregate value is Done or Failed
             match self._state:
                 case Deferred():
-                    if isinstance(value, Failed):
-                        self.val = value
-                        return []
-                    ret = self._state.callback(value.result)
-                case PlainDeferred():
                     ret = self._state.callback(value)
             match ret:
-                case Deferred() | PlainDeferred():
+                case Deferred():
                     self._state = ret
                 case Command():
-                    self._state = PlainDeferred(lambda r: r, ret)
+                    self._state = Deferred(lambda r: r, ret)
                 case Failed() | Done():
                     self.val = ret
                     return []
@@ -227,7 +207,7 @@ def as_command(thenable: 'Thenable[Ok, Err]') -> Command[Ok, Err]:
     match thenable:
         case Command():
             return thenable
-        case Deferred() | PlainDeferred():
+        case Deferred():
             return DeferredCommand(thenable)
         case _:
             raise TypeError(thenable)
@@ -259,7 +239,7 @@ class Gather(Command[list[Ok], Err]):
         """
         return self.commands
 
-Thenable: TypeAlias = Command[Ok, Err] | PlainDeferred[Any, Ok, Err]
+Thenable: TypeAlias = Command[Ok, Err] | Deferred[Any, Ok, Err]
 
 class InertCommand(Command[Ok, Err]):
     """
@@ -528,7 +508,7 @@ class Stat(InertCommand[StatResult, str]):
     Get a task's metadata
     """
 
-def rget(name: TaskName) -> PlainDeferred[Any, Any, str]:
+def rget(name: TaskName) -> Deferred[Any, Any, str]:
     """
     Get a task result, then rescursively get all the sub-parts of it
     """
@@ -542,10 +522,10 @@ def callback(command: Command[InOk, Err],
     """
     Glue for old Callback command
     """
-    return DeferredCommand(PlainDeferred(callback_fn, command))
+    return DeferredCommand(Deferred(callback_fn, command))
 
 def ssubmit(name: TaskName, dry: bool = False
-            ) -> PlainDeferred[Any, list[TaskName], str]:
+            ) -> Deferred[Any, list[TaskName], str]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
@@ -553,7 +533,7 @@ def ssubmit(name: TaskName, dry: bool = False
     return Stat(name).then(lambda statr: _ssubmit(statr, dry))
 
 def _ssubmit(stat_result: StatResult, dry: bool
-             ) -> list[TaskName] | PlainDeferred[Any, list[TaskName], str]:
+             ) -> list[TaskName] | Deferred[Any, list[TaskName], str]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
