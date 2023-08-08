@@ -67,6 +67,22 @@ class Deferred(Generic[InOk, Ok, Err]):
     def __repr__(self):
         return f'Deferred({self.callback.__qualname__})'
 
+@dataclass
+class PlainDeferred(Generic[InOk, Ok, Err]):
+    """Wraps commands with matching callback"""
+    # Gotcha: the order of typevars differs from CallbackT !
+    callback: 'PlainCallbackT[InOk, Err, Ok]'
+    arg: 'Command[InOk, Err]'
+
+    def then(self, callback: 'CallbackT[Ok, OutOk, Err]') -> 'Deferred[Ok, OutOk, Err]':
+        """
+        Chain several callbacks
+        """
+        return DeferredCommand(self).then(callback)
+
+    def __repr__(self):
+        return f'Deferred({self.callback.__qualname__})'
+
 class Command(Generic[Ok, Err]):
     """
     Base class for commands
@@ -118,6 +134,7 @@ class Command(Generic[Ok, Err]):
         raise NotImplementedError
 
 CallbackT: TypeAlias = Callable[[InOk], Ok | Command[Ok, Err]]
+PlainCallbackT: TypeAlias = Callable[[Done[InOk] | Failed[Err]], Ok | Command[Ok, Err]]
 
 class DeferredCommand(Command[Ok, Err]):
     """
@@ -125,7 +142,7 @@ class DeferredCommand(Command[Ok, Err]):
     InOk
     """
 
-    def __init__(self, deferred: Deferred[Any, Ok, Err]) -> None:
+    def __init__(self, deferred: Deferred[Any, Ok, Err] | PlainDeferred[Any, Ok, Err]) -> None:
         super().__init__()
         self._state = deferred
         deferred.arg.outputs.add(self)
@@ -141,14 +158,16 @@ class DeferredCommand(Command[Ok, Err]):
         new_sub_commands = []
         value = sub_command.val
         while not isinstance(value, Pending): # = advance until stuck again
-            # Note: this drops new_sub_commands by design since there is no need
-            # to inject them into the event loop with the parent failed.
-            if isinstance(value, Failed):
-                self.val = value
-                return []
 
-            # At this point, aggregate value is Done
-            ret = self._state.callback(value.result)
+            # At this point, aggregate value is Done or Failed
+            match self._state:
+                case Deferred():
+                    if isinstance(value, Failed):
+                        self.val = value
+                        return []
+                    ret = self._state.callback(value.result)
+                case PlainDeferred():
+                    ret = self._state.callback(value)
             match ret:
                 case Deferred():
                     self._state = ret
@@ -333,16 +352,16 @@ class Script:
         """
         Creates a command representing a collection of other commands
         """
-        return as_command(Collect(commands))
+        return Gather(commands)
 
-    def callback(self, thenable: Thenable, callback: Callable[[FinalResult], Any]):
+    def callback(self, thenable: Thenable, callback_fn: Callable[[FinalResult], Any]):
         """
         Adds an arbitrary callback to an existing command. This triggers
         execution of the command as far as possible, and of the callback if
         ready.
         """
         command = as_command(thenable)
-        cb_command = Callback(command, callback)
+        cb_command = callback(command, callback_fn)
         self.pending.add(cb_command)
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
@@ -500,31 +519,12 @@ def rget(name: TaskName) -> Deferred[Any, Any, str]:
         .then(lambda children: Gather(map(rget, children)))
         )
 
-Collect = Gather
-
-# Cannot be replaced yet, as Deferred lack the option to pass Failed
-class Callback(Command):
+def callback(command: Command[InOk, Err],
+        callback_fn: PlainCallbackT[InOk, Err, Ok]) -> Command[Ok, Err]:
     """
-    An arbitrary callback function, used to tie in other code
-
-    It is important that a callback command is attached to a script, else it can
-    be collected before having a chance to fire since downstream links are
-    weakrefs.
+    Glue for old Callback command
     """
-    def __init__(self, command: Command, callback: Callable[[FinalResult], Any]):
-        self._callback = callback
-        self._in = command
-        self._in.outputs.add(self)
-        super().__init__()
-
-    def __str__(self):
-        return f'callback {self._callback.__name__}'
-
-    def _eval(self, script: 'Script'):
-        in_val = self._in.val
-        if not isinstance(in_val, Pending):
-            self._callback(in_val)
-        return []
+    return DeferredCommand(PlainDeferred(callback_fn, command))
 
 def ssubmit(name: TaskName, dry: bool = False
             ) -> Deferred[Any, list[TaskName], str]:
