@@ -59,7 +59,7 @@ class Deferred(Generic[InOk, Ok, Err]):
     callback: 'PlainCallbackT[InOk, Err, Ok]'
     arg: 'Command[InOk, Err]'
 
-    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> 'Deferred[Ok, OutOk, Err]':
+    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> 'Command[OutOk, Err]':
         """
         Chain several callbacks
         """
@@ -79,11 +79,11 @@ class Command(Generic[Ok, Err]):
     def __repr__(self):
         return f'Command(val={repr(self.val)})'
 
-    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> Deferred[Ok, OutOk, Err]:
+    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> 'Command[OutOk, Err]':
         """
         Chain callback to this command
         """
-        return Deferred(ok_callback(callback_fn), self)
+        return DeferredCommand(Deferred(ok_callback(callback_fn), self))
 
     def advance(self, script: 'Script'):
         """
@@ -508,7 +508,7 @@ class Stat(InertCommand[StatResult, str]):
     Get a task's metadata
     """
 
-def rget(name: TaskName) -> Deferred[Any, Any, str]:
+def rget(name: TaskName) -> Command[list, str]:
     """
     Get a task result, then rescursively get all the sub-parts of it
     """
@@ -525,7 +525,7 @@ def callback(command: Command[InOk, Err],
     return DeferredCommand(Deferred(callback_fn, command))
 
 def ssubmit(name: TaskName, dry: bool = False
-            ) -> Deferred[Any, list[TaskName], str]:
+            ) -> Command[list[TaskName], str]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
