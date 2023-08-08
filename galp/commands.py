@@ -233,7 +233,8 @@ class InertCommand(Command[Ok, Err]):
         return f'{self.__class__.__name__.lower()} {self.name}'
 
     def _eval(self, *_):
-        raise NotImplementedError
+        # Never changes by itself
+        return []
 
     @property
     def key(self) -> tuple[str, TaskName]:
