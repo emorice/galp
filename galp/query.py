@@ -40,7 +40,7 @@ def query(script: cm.Script, subject: TaskName, _query):
         raise NotImplementedError(_query)
 
     if operator.requires is None:
-        required: cm.Thenable = cm.Gather([])
+        required: cm.Command = cm.Gather([])
     else:
         required = operator.requires(subject)
 
@@ -103,7 +103,7 @@ class Operator:
         self.subject = query.subject
         self._req_cmd = None
 
-    requires : Callable[..., cm.Thenable] | None = None
+    requires : Callable[..., cm.Command] | None = None
 
     _ops = {}
     def __init_subclass__(cls, /, named=True, **kwargs):

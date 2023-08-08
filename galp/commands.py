@@ -59,12 +59,6 @@ class Deferred(Generic[InOk, Ok, Err]):
     callback: 'PlainCallbackT[InOk, Err, Ok]'
     arg: 'Command[InOk, Err]'
 
-    def then(self, callback_fn: 'CallbackT[Ok, OutOk, Err]') -> 'Command[OutOk, Err]':
-        """
-        Chain several callbacks
-        """
-        return DeferredCommand(self).then(callback_fn)
-
     def __repr__(self):
         return f'Deferred({self.callback.__qualname__})'
 
@@ -120,7 +114,6 @@ class Command(Generic[Ok, Err]):
 
 CallbackRet: TypeAlias = (
         Ok | Done[Ok] | Failed[Err] | Command[Ok, Err]
-        | Deferred[Any, Err, Ok]
         )
 CallbackT: TypeAlias = Callable[[InOk], CallbackRet[Ok, Err]]
 PlainCallbackT: TypeAlias = Callable[[Done[InOk] | Failed[Err]], CallbackRet[Ok, Err]]
@@ -166,12 +159,8 @@ class DeferredCommand(Command[Ok, Err]):
         while not isinstance(value, Pending): # = advance until stuck again
 
             # At this point, aggregate value is Done or Failed
-            match self._state:
-                case Deferred():
-                    ret = self._state.callback(value)
+            ret = self._state.callback(value)
             match ret:
-                case Deferred():
-                    self._state = ret
                 case Command():
                     self._state = Deferred(lambda r: r, ret)
                 case Failed() | Done():
@@ -200,28 +189,15 @@ class DeferredCommand(Command[Ok, Err]):
         """
         return [self._state.arg]
 
-def as_command(thenable: 'Thenable[Ok, Err]') -> Command[Ok, Err]:
-    """
-    Wrap object in command if necessary
-    """
-    match thenable:
-        case Command():
-            return thenable
-        case Deferred():
-            return DeferredCommand(thenable)
-        case _:
-            raise TypeError(thenable)
-
 class Gather(Command[list[Ok], Err]):
     """
     Then-able list
     """
     commands: list[Command[Ok, Err]]
 
-    def __init__(self, commands: 'Thenable[Ok, Err]' | Iterable['Thenable[Ok, Err]']):
+    def __init__(self, commands: 'Command[Ok, Err]' | Iterable['Command[Ok, Err]']):
         super().__init__()
-        thenables = commands if isinstance(commands, Iterable) else [commands]
-        self.commands = list(map(as_command, thenables))
+        self.commands = list(commands) if isinstance(commands, Iterable) else [commands]
         for inp in self.commands:
             inp.outputs.add(self)
 
@@ -238,8 +214,6 @@ class Gather(Command[list[Ok], Err]):
         Commands we depend on
         """
         return self.commands
-
-Thenable: TypeAlias = Command[Ok, Err] | Deferred[Any, Ok, Err]
 
 class InertCommand(Command[Ok, Err]):
     """
@@ -351,14 +325,13 @@ class Script:
         """
         return Gather(commands)
 
-    def callback(self, thenable: Thenable[InOk, Err],
+    def callback(self, command: Command[InOk, Err],
             callback_fn: PlainCallbackT[InOk, Err, Ok]) -> Command[Ok, Err]:
         """
         Adds an arbitrary callback to an existing command. This triggers
         execution of the command as far as possible, and of the callback if
         ready.
         """
-        command = as_command(thenable)
         cb_command = callback(command, callback_fn)
         self.pending.add(cb_command)
         # The callback is set as a downstream link to the command, but it still
@@ -533,7 +506,7 @@ def ssubmit(name: TaskName, dry: bool = False
     return Stat(name).then(lambda statr: _ssubmit(statr, dry))
 
 def _ssubmit(stat_result: StatResult, dry: bool
-             ) -> list[TaskName] | Deferred[Any, list[TaskName], str]:
+             ) -> list[TaskName] | Command[list[TaskName], str]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
