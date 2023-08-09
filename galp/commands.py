@@ -4,11 +4,11 @@ Lists of internal commands
 
 import sys
 import time
-from collections import deque
 from weakref import WeakSet, WeakValueDictionary
 from typing import TypeVar, Generic, Callable, Any, Iterable, TypeAlias
 from dataclasses import dataclass
 from itertools import chain
+from functools import wraps
 
 from .task_types import (
         TaskName, LiteralTaskDef, QueryTaskDef, TaskDef, TaskOp, CoreTaskDef
@@ -122,6 +122,7 @@ def ok_callback(callback: Callback[InOk, Ok, Err]
     Wrap a callback from Ok values to accept and propagate Done/Failed
     accordingly
     """
+    @wraps(callback)
     def _ok_callback(val: Done[InOk] | Failed[Err]):
         match val:
             case Done():
@@ -331,24 +332,26 @@ class Script:
         execution of the command as far as possible, and of the callback if
         ready.
         """
-        cb_command = DeferredCommand(Deferred(callback, command))
+
+        # Add the command to a strong list and dereference it at the end. This
+        # ensures the callback object won't be deleted before getting triggered,
+        # but will once it has
+        @wraps(callback)
+        def _dereference(value: Done[InOk] | Failed[Err]) -> CallbackRet[Ok, Err]:
+            ret = callback(value)
+            self.pending.remove(cb_command)
+            return ret
+        cb_command = DeferredCommand(Deferred(_dereference, command))
         self.pending.add(cb_command)
+
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
-        # FIXME: this breaks if I advance cb_command, why !?
-        return cb_command, advance_all(self, [command])
+        return cb_command, advance_all(self, [cb_command])
 
     def notify_change(self, command: Command, old_value: Result, new_value: Result):
         """
         Hook called when the graph status changes
         """
-        # Dereference non-pending commands, thus allowing deletion if nobody else
-        # keeps a strong reference to the command.
-        # This is intended so that commands triggering a callback stay in memory
-        # until they're final, then get collected once the callback has fired.
-        if command in self.pending and not isinstance(self, Pending):
-            self.pending.remove(command)
-
         if not self.verbose:
             return
         del old_value
