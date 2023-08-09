@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import zmq
 
 import galp.messages as gm
-from galp.protocol import IllegalRequestError, Route, RoutedMessage
+from galp.protocol import Route, RoutedMessage
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
@@ -67,9 +67,6 @@ class CommonProtocol(ReplyProtocol):
 
         # Tasks currently running on a worker
         self.alloc_from_wroute: dict[Any, Allocation] = {}
-
-    def on_invalid(self, route, reason):
-        raise IllegalRequestError(route, reason)
 
     def on_routed_ready(self, rmsg: RoutedMessage, gmsg: gm.Ready):
         """

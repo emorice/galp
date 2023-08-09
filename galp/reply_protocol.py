@@ -3,7 +3,8 @@ Galp protocol for leaf peers
 """
 
 import galp.messages as gm
-from galp.protocol import Protocol, IllegalRequestError, Route, RoutedMessage
+from galp.lower_protocol import IllegalRequestError
+from galp.protocol import Protocol, Route, RoutedMessage
 
 class ReplyProtocol(Protocol):
     """

@@ -2,7 +2,7 @@
 Implementation of the lower level of GALP, handles routing.
 """
 
-from typing import NoReturn
+from typing import NoReturn, Iterable
 
 Route = list[bytes]
 """
@@ -101,7 +101,7 @@ class LowerProtocol:
 
         return msg, route
 
-    def on_verb(self, route: tuple[Route, Route], msg_body: list[bytes]) -> list:
+    def on_verb(self, route: tuple[Route, Route], msg_body: list[bytes]) -> Iterable:
         """
         Higher level interface to implement by subclassing.
         """

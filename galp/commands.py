@@ -325,7 +325,8 @@ class Script:
         return Gather(commands)
 
     def callback(self, command: Command[InOk, Err],
-            callback: PlainCallback[InOk, Err, Ok]) -> Command[Ok, Err]:
+            callback: PlainCallback[InOk, Err, Ok]) -> tuple[Command[Ok, Err],
+                    list[InertCommand]]:
         """
         Adds an arbitrary callback to an existing command. This triggers
         execution of the command as far as possible, and of the callback if
@@ -335,8 +336,8 @@ class Script:
         self.pending.add(cb_command)
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
-        advance_all(self, [command])
-        return cb_command
+        # FIXME: this breaks if I advance cb_command, why !?
+        return cb_command, advance_all(self, [command])
 
     def notify_change(self, command: Command, old_value: Result, new_value: Result):
         """

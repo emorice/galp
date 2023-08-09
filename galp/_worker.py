@@ -27,10 +27,10 @@ import galp.messages as gm
 import galp.commands as cm
 
 
-from galp import commands
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
-from galp.protocol import (ProtocolEndException, IllegalRequestError,
+from galp.lower_protocol import IllegalRequestError
+from galp.protocol import (ProtocolEndException,
     RoutedMessage, Replies)
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
@@ -157,6 +157,7 @@ class WorkerProtocol(ReplyProtocol):
         """
         Terminate
         """
+        del msg
         logging.info('Received EXIT, terminating')
         raise ProtocolEndException('Incoming EXIT')
 
@@ -207,31 +208,38 @@ class WorkerProtocol(ReplyProtocol):
             return gm.Done(task_def=task_def, children=[])
 
         # If not in cache, resolve metadata and run the task
-        replies = [gm.Doing(name=name)]
+        replies : list[gm.Message] = [gm.Doing(name=name)]
 
-        # Schedule the task first. It won't actually start until its inputs are
-        # marked as available, and will return the list of GETs that are needed
-        self.worker.schedule_task(request, msg)
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        more_replies = self.new_commands_to_replies()
-
-        return replies + more_replies
+        replies.extend(self.new_commands_to_replies(
+            # Schedule the task first. It won't actually start until its inputs are
+            # marked as available, and will return the list of GETs that are needed
+            self.worker.schedule_task(request, msg)
+            ))
+        return replies
 
     def on_put(self, msg: gm.Put):
         """
         Put object in store, and mark the command as done
         """
         self.store.put_serial(msg.name, (msg.data, msg.children))
-        self.script.commands['GET', msg.name].done(msg.children)
-        return self.new_commands_to_replies()
+        return self.new_commands_to_replies(
+            self.script.commands['GET', msg.name].done(msg.children)
+            )
 
     def on_not_found(self, msg: gm.NotFound):
-        self.script.commands['GET', msg.name].failed('NOTFOUND')
-        assert not self.script.new_commands
+        """
+        Propagate not found
+        """
+        reps = self.script.commands['GET', msg.name].failed('NOTFOUND')
+        assert not reps
 
     def on_stat(self, msg: gm.Stat):
+        """
+        Wrapper around unsafe handler
+        """
         try:
             return self._on_stat_io_unsafe(msg)
         except StoreReadError:
@@ -276,30 +284,36 @@ class WorkerProtocol(ReplyProtocol):
         logging.info('STAT: NOT FOUND %s', msg.name)
         return gm.NotFound(name=msg.name)
 
-    def new_commands_to_replies(self) -> list[gm.Message]:
+    def new_commands_to_replies(self, commands: list[cm.InertCommand]) -> list[gm.Message]:
         """
         Generate galp messages from a command reply list
         """
         messages: list[gm.Message] = []
 
-        while self.script.new_commands:
-            command = self.script.new_commands.popleft()
+        while commands:
+            command = commands.pop()
             name = command.name
             if not isinstance(command, cm.Get):
                 raise NotImplementedError(command)
             try:
                 children = self.store.get_children(name)
-                self.script.commands[command.key].done(children)
+                commands.extend(
+                    self.script.commands[command.key].done(children)
+                    )
                 continue
             except StoreReadError:
                 logging.exception('In %s %s:', *command.key)
-                self.script.commands[command.key].failed('StoreReadError')
+                commands.extend(
+                    self.script.commands[command.key].failed('StoreReadError')
+                    )
                 continue
             except KeyError:
                 pass
             messages.append(
                 gm.Get(name=name)
                 )
+        while self.script.new_commands:
+            self.script.new_commands.pop()
         return messages
 
 @dataclass
@@ -362,7 +376,7 @@ class Worker:
                     self.protocol.route_message(job.request, reply)
                     )
 
-    def schedule_task(self, request: RoutedMessage, msg: gm.Submit):
+    def schedule_task(self, request: RoutedMessage, msg: gm.Submit) -> list[cm.InertCommand]:
         """
         Callback to schedule a task for execution.
         """
@@ -381,7 +395,8 @@ class Worker:
                     *task_def.kwargs.values()
                     ]
                 ])
-        script.callback(collect, _start_task)
+        _, primitives = script.callback(collect, _start_task)
+        return primitives
 
     async def listen(self):
         """

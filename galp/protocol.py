@@ -4,11 +4,11 @@ GALP protocol implementation
 
 import logging
 
-from typing import TypeAlias
+from typing import TypeAlias, Iterable
 from dataclasses import dataclass
 
 import galp.messages as gm
-from galp.lower_protocol import LowerProtocol, Route, IllegalRequestError
+from galp.lower_protocol import LowerProtocol, Route
 from galp.serializer import dump_model, load_model, DeserializeError
 
 # Errors and exceptions
@@ -40,7 +40,7 @@ class RoutedMessage:
         """
         return type(self)(incoming=self.forward, forward=self.incoming, body=new)
 
-Replies: TypeAlias = gm.Message | RoutedMessage | list[gm.Message | RoutedMessage] | None
+Replies: TypeAlias = gm.Message | RoutedMessage | Iterable[gm.Message | RoutedMessage] | None
 """
 Allowed returned type of message handers
 """
@@ -127,7 +127,7 @@ class Protocol(LowerProtocol):
 
     @staticmethod
     def as_message_list(messages: Replies
-            ) -> list[gm.Message | RoutedMessage]:
+            ) -> Iterable[gm.Message | RoutedMessage]:
         """
         Canonicallize a list of messages
         """
@@ -138,7 +138,7 @@ class Protocol(LowerProtocol):
                 return [messages]
         return messages
 
-    def on_verb(self, route, msg_body: list[bytes]) -> list[RoutedMessage]:
+    def on_verb(self, route, msg_body: list[bytes]) -> Iterable[RoutedMessage]:
         """Parse given message, calling callbacks as needed.
 
         Returns:
