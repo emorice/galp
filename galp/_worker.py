@@ -312,8 +312,6 @@ class WorkerProtocol(ReplyProtocol):
             messages.append(
                 gm.Get(name=name)
                 )
-        while self.script.new_commands:
-            self.script.new_commands.pop()
         return messages
 
 @dataclass

@@ -11,7 +11,7 @@ import time
 
 from enum import IntEnum, auto
 from collections import defaultdict
-from typing import Callable
+from typing import Callable, Iterable
 
 import zmq
 import zmq.asyncio
@@ -235,10 +235,8 @@ class Client:
                 )
 
         try:
-            script.callback(
-                collect, _end
-                )
-            self.protocol.schedule_new()
+            _, cmds = script.callback(collect, _end)
+            self.protocol.schedule_new(cmds)
 
             await async_utils.run(
                 self.process_scheduled(),
@@ -395,9 +393,9 @@ class BrokerProtocol(ReplyProtocol):
             return gm.Get(name=name)
 
         # Found, mark command as done and pass on children
-        self.script.commands['GET', name].done(children)
-        # Schedule downstream
-        self.schedule_new()
+        self.schedule_new(
+            self.script.commands['GET', name].done(children)
+            )
         # Supress normal output, removing task from queue
         return None
 
@@ -436,9 +434,9 @@ class BrokerProtocol(ReplyProtocol):
         self.store.put_serial(msg.name, (msg.data, msg.children))
 
         # Mark as done and sets result
-        self.script.commands['GET', msg.name].done(msg.children)
-        # Schedule for sub-GETs to be sent in the future
-        self.schedule_new()
+        self.schedule_new(
+            self.script.commands['GET', msg.name].done(msg.children)
+            )
 
     def on_done(self, msg: gm.Done) -> None:
         """Given that done_task just finished, mark it as done, letting the
@@ -456,14 +454,16 @@ class BrokerProtocol(ReplyProtocol):
         # trigger downstream commands
         command = self.script.commands.get(('SUBMIT', name))
         if command:
-            command.done(msg.children)
-            self.schedule_new()
+            self.schedule_new(
+                command.done(msg.children)
+                )
 
         command = self.script.commands.get(('STAT', name))
         if command:
             # Triplet (is_done, dict, children?)
-            command.done((True, task_def, msg.children))
-            self.schedule_new()
+            self.schedule_new(
+                command.done((True, task_def, msg.children))
+                )
 
         return None
 
@@ -486,8 +486,8 @@ class BrokerProtocol(ReplyProtocol):
         logging.error('TASK FAILED: %s', err_msg)
 
         # Mark fetch command as failed if pending
-        self.script.commands['SUBMIT', task_def.name].failed(err_msg)
-        assert not self.script.new_commands
+        reps = self.script.commands['SUBMIT', task_def.name].failed(err_msg)
+        assert not reps
 
         # This is not a fatal error to the client, by default processing of
         # messages for other ongoing tasks is still permitted.
@@ -504,8 +504,8 @@ class BrokerProtocol(ReplyProtocol):
         command = self.script.commands.get(('GET', name))
         if command:
             logging.error('TASK RESULT FETCH FAILED: %s', name)
-            command.failed('NOTFOUND')
-            assert not self.script.new_commands
+            reps = command.failed('NOTFOUND')
+            assert not reps
 
         # Mark STAT command as done or failed
         command = self.script.commands.get(('STAT', name))
@@ -513,12 +513,13 @@ class BrokerProtocol(ReplyProtocol):
             task_dict = self._tasks.get(name)
             if task_dict:
                 # Not found remotely, but still found locally
-                command.done((False, task_dict, None))
-                self.schedule_new()
+                self.schedule_new(
+                    command.done((False, task_dict, None))
+                    )
             else:
                 # Found neither remotely not locally, hard error
-                command.failed('NOTFOUND')
-                assert not self.script.new_commands
+                reps = command.failed('NOTFOUND')
+                assert not reps
 
     def on_found(self, msg: gm.Found):
         """
@@ -528,16 +529,17 @@ class BrokerProtocol(ReplyProtocol):
         name = task_def.name
         self._tasks[name] = task_def
         # Triplet (is_done, dict, children?)
-        self.script.commands['STAT', name].done((False, task_def, None))
-        self.schedule_new()
+        self.schedule_new(
+            self.script.commands['STAT', name].done((False, task_def, None))
+            )
 
     def on_illegal(self, msg: gm.Illegal):
         """Should never happen"""
         raise RuntimeError(f'ILLEGAL recevived: {msg.reason}')
 
-    def schedule_new(self) -> None:
+    def schedule_new(self, commands: Iterable[cm.InertCommand]) -> None:
         """
         Transfer the command queue to the scheduler
         """
-        while self.script.new_commands:
-            self.schedule(self.script.new_commands.popleft())
+        for command in commands:
+            self.schedule(command)

@@ -88,8 +88,9 @@ def create_app(config):
                     serialized = store.get_serial(name)
                     proto.store.put_serial(name, serialized)
                 _, children = proto.store.get_serial(name)
-                proto.script.commands[command.key].done(children)
-                proto.schedule_new()
+                proto.schedule_new(
+                    proto.script.commands[command.key].done(children)
+                    )
 
             proto = BrokerProtocol('CL', False, _schedule)
             proto.add([task])
@@ -101,8 +102,9 @@ def create_app(config):
             for keyword, tin in tdef.kwargs.items():
                 # You need to hold a reference, because advance_all won't !
                 cmd = cm.rget(tin.name)
-                cm.advance_all(proto.script, [cmd])
-                proto.schedule_new()
+                proto.schedule_new(
+                    cm.advance_all(proto.script, [cmd])
+                    )
                 kwargs[keyword] = proto.store.get_native(tin.name)
 
             # Run the step
