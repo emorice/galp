@@ -9,7 +9,7 @@ from importlib import import_module
 from flask import Flask, render_template, abort
 
 import galp.config
-import galp.commands
+import galp.commands as cm
 from galp._client import BrokerProtocol
 
 def render_object(obj):
@@ -80,15 +80,15 @@ def create_app(config):
 
             ## Define how to fetch missing pieces (direct read from store)
             proto = None # fwd decl
-            def _schedule(key):
-                verb, name = key
-                if verb != 'GET':
+            def _schedule(command: cm.InertCommand):
+                name = command.name
+                if not isinstance(command, cm.Get):
                     raise NotImplementedError
                 if name not in proto.store:
                     serialized = store.get_serial(name)
                     proto.store.put_serial(name, serialized)
                 _, children = proto.store.get_serial(name)
-                proto.script.commands[key].done(children)
+                proto.script.commands[command.key].done(children)
                 proto.schedule_new()
 
             proto = BrokerProtocol('CL', False, _schedule)
@@ -100,8 +100,8 @@ def create_app(config):
             kwargs = {}
             for keyword, tin in tdef.kwargs.items():
                 # You need to hold a reference, because advance_all won't !
-                cmd = galp.commands.rget(tin.name)
-                galp.commands.advance_all(proto.script, [cmd])
+                cmd = cm.rget(tin.name)
+                cm.advance_all(proto.script, [cmd])
                 proto.schedule_new()
                 kwargs[keyword] = proto.store.get_native(tin.name)
 

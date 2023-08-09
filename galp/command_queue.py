@@ -5,16 +5,18 @@ Queue of active commands
 import time
 from collections import deque
 
+import galp.commands as cm
+
 class CommandQueue:
     """
     A queue of active commands that need periodic re-issuing
     """
-    def __init__(self, retry_interval=0.2):
-        self.asap_queue = deque()
-        self.retry_queue = deque()
+    def __init__(self, retry_interval: float=0.2):
+        self.asap_queue : deque[cm.InertCommand] = deque()
+        self.retry_queue : deque[tuple[cm.InertCommand, float]] = deque()
         self.retry_interval = retry_interval
 
-    def pop(self):
+    def pop(self) -> tuple[cm.InertCommand | None, float | None]:
         """
         Returns the next command to send, if any, or the timepoint at which to
         try again
@@ -34,13 +36,13 @@ class CommandQueue:
         # Everything's empty
         return None, None
 
-    def enqueue(self, command):
+    def enqueue(self, command: cm.InertCommand):
         """
         Adds a command to the end of the ASAP queue
         """
         self.asap_queue.append(command)
 
-    def requeue(self, command):
+    def requeue(self, command: cm.InertCommand):
         """
         Adds a command to the end of the retry queue, with a delay
         """

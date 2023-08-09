@@ -276,26 +276,24 @@ class WorkerProtocol(ReplyProtocol):
         logging.info('STAT: NOT FOUND %s', msg.name)
         return gm.NotFound(name=msg.name)
 
-    def new_commands_to_replies(self):
+    def new_commands_to_replies(self) -> list[gm.Message]:
         """
         Generate galp messages from a command reply list
         """
-        messages = []
+        messages: list[gm.Message] = []
+
         while self.script.new_commands:
-            verb, name = self.script.new_commands.popleft()
-            if verb != 'GET':
-                if verb in ('STAT', 'SUBMIT'):
-                    # Avoid hanging if a higher layer mistakenly try to use a
-                    # client-side command
-                    raise NotImplementedError(verb)
-                continue
+            command = self.script.new_commands.popleft()
+            name = command.name
+            if not isinstance(command, cm.Get):
+                raise NotImplementedError(command)
             try:
                 children = self.store.get_children(name)
-                self.script.commands[verb, name].done(children)
+                self.script.commands[command.key].done(children)
                 continue
             except StoreReadError:
-                logging.exception('In %s %s:', verb, name)
-                self.script.commands[verb, name].failed('StoreReadError')
+                logging.exception('In %s %s:', *command.key)
+                self.script.commands[command.key].failed('StoreReadError')
                 continue
             except KeyError:
                 pass

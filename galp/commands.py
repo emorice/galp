@@ -310,7 +310,7 @@ class Script:
 
         super().__init__()
         self.commands : WeakValueDictionary[CommandKey, PrimitiveProxy] = WeakValueDictionary()
-        self.new_commands : deque[CommandKey] = deque()
+        self.new_commands : deque[InertCommand] = deque()
         self.verbose = verbose
         self.keep_going = keep_going
         self.store = store
@@ -447,7 +447,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     commands.extend(command.outputs)
 
     # Compat with previous, non-functional interface
-    script.new_commands.extend(p.key for p in primitives)
+    script.new_commands.extend(primitives)
     return primitives
 
 def get_all_subcommands(commands):

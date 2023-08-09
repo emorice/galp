@@ -65,7 +65,7 @@ class Client:
             its own socket and destroy it in the end, using the global sync context.
     """
 
-    def __init__(self, endpoint):
+    def __init__(self, endpoint: str):
         self.protocol = BrokerProtocol(
             'BK', router=False,
             schedule=self.schedule # callback to add tasks to the scheduling queue
@@ -81,7 +81,7 @@ class Client:
         self.command_queue = CommandQueue()
         self.new_command = asyncio.Event()
 
-    async def process_scheduled(self):
+    async def process_scheduled(self) -> None:
         """
         Send submit/get requests from the queue.
 
@@ -92,14 +92,16 @@ class Client:
             self.new_command.clear()
             next_command, next_time = self.command_queue.pop()
             if next_command:
-                logging.debug('SCHED: Ready command %s %s', *next_command)
+                logging.debug('SCHED: Ready command %s %s', *next_command.key)
                 next_msg = self.protocol.write_next(next_command)
                 if next_msg:
                     await self.transport.send_message(next_msg)
                     self.command_queue.requeue(next_command)
-                    logging.debug('SCHED: Sent message, requeuing %s %s', *next_command)
+                    logging.debug('SCHED: Sent message, requeuing %s %s',
+                            *next_command.key)
                 else:
-                    logging.debug('SCHED: No message, dropping %s %s', *next_command)
+                    logging.debug('SCHED: No message, dropping %s %s',
+                            *next_command.key)
 
             elif next_time:
                 # Wait for either a new command or the end of timeout
@@ -115,7 +117,7 @@ class Client:
                 logging.debug('SCHED: No ready command, waiting forever')
                 await self.new_command.wait()
 
-    def schedule(self, command_key):
+    def schedule(self, command: cm.InertCommand) -> None:
         """
         Add a task to the scheduling queue.
 
@@ -123,8 +125,8 @@ class Client:
         submit or collect it depending on its state.
         """
 
-        logging.debug("Scheduling %s %s", *command_key)
-        self.command_queue.enqueue(command_key)
+        logging.debug("Scheduling %s %s", *command.key)
+        self.command_queue.enqueue(command)
         self.new_command.set()
 
     async def gather(self, *tasks, return_exceptions: bool = False, timeout=None,
@@ -250,7 +252,8 @@ class BrokerProtocol(ReplyProtocol):
     """
     Main logic of the interaction of a client with a broker
     """
-    def __init__(self, name: str, router: bool, schedule: Callable):
+    def __init__(self, name: str, router: bool,
+            schedule: Callable[[cm.InertCommand], None]):
         super().__init__(name, router)
 
         self.schedule = schedule
@@ -319,7 +322,7 @@ class BrokerProtocol(ReplyProtocol):
             # Save the task_definition
             self._tasks[name] = task_node.task_def
 
-    def write_next(self, command_key) -> RoutedMessage | None:
+    def write_next(self, command: cm.InertCommand) -> RoutedMessage | None:
         """
         Returns the next nessage to be sent for a task given the information we
         have about it
@@ -327,26 +330,28 @@ class BrokerProtocol(ReplyProtocol):
         (Sorry for the None disjunction, this is in the middle of the part where
         we supress messages whose result is already known)
         """
-        verb, name = command_key
-
-        command = self.script.commands.get(command_key)
-        if command is None or not command.is_pending():
+        if not command.is_pending():
+            # Promise has been fulfilled since before reaching here
             return None
 
-        match verb:
-            case 'SUBMIT':
+        name = command.name
+
+        match command:
+            case cm.Submit():
                 if self._status[name] < TaskStatus.RUNNING:
                     sub = self.submit_task_by_name(name)
                     if sub is not None:
                         return self.route_message(None, sub)
-            case 'GET':
+            case cm.Get():
                 get = self.get(name)
                 if get is not None:
                     return self.route_message(None, get)
-            case 'STAT':
+            case cm.Stat():
                 return self.route_message(None, gm.Stat(name=name))
             case _:
-                raise NotImplementedError(verb)
+                raise NotImplementedError(command)
+
+        return None
 
     # Custom protocol sender
     # ======================
@@ -530,13 +535,9 @@ class BrokerProtocol(ReplyProtocol):
         """Should never happen"""
         raise RuntimeError(f'ILLEGAL recevived: {msg.reason}')
 
-    def schedule_new(self):
+    def schedule_new(self) -> None:
         """
         Transfer the command queue to the scheduler
         """
         while self.script.new_commands:
-            command_key = self.script.new_commands.popleft()
-            verb, _ = command_key
-            if verb not in ('GET', 'SUBMIT', 'STAT'):
-                continue
-            self.schedule(command_key)
+            self.schedule(self.script.new_commands.popleft())
