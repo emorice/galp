@@ -103,7 +103,7 @@ def create_app(config):
                 # You need to hold a reference, because advance_all won't !
                 cmd = cm.rget(tin.name)
                 proto.schedule_new(
-                    cm.advance_all(proto.script, [cmd])
+                    cm.advance_all(proto.script, cm.get_leaves([cmd]))
                     )
                 kwargs[keyword] = proto.store.get_native(tin.name)
 

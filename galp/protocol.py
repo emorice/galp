@@ -187,10 +187,17 @@ class Protocol(LowerProtocol):
         else:
             addr, extra_addr = msg.forward, msg.incoming
 
+        verb = msg.body.verb.upper()
+        match msg.body:
+            case gm.Submit():
+                arg = str(msg.body.task_def.name)
+            case _:
+                arg = getattr(msg.body, 'name', '')
+
         msg_log_str = (
             f"{self.proto_name +' ' if self.proto_name else ''}"
             f"[{addr[0].hex() if addr else ''}]"
-            f" {msg.body.verb.upper()}"
+            f" {verb} {arg}"
             )
         meta_log_str = f"hops {len(addr + extra_addr)}"
 

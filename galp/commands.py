@@ -4,6 +4,7 @@ Lists of internal commands
 
 import sys
 import time
+import logging
 from weakref import WeakSet, WeakValueDictionary
 from typing import TypeVar, Generic, Callable, Any, Iterable, TypeAlias
 from dataclasses import dataclass
@@ -67,9 +68,6 @@ class Command(Generic[Ok, Err]):
     def __init__(self) -> None:
         self.val: Result[Ok, Err] = Pending()
         self.outputs : WeakSet[Command] = WeakSet()
-
-    def __repr__(self):
-        return f'Command(val={repr(self.val)})'
 
     def then(self, callback: 'Callback[Ok, OutOk, Err]') -> 'Command[OutOk, Err]':
         """
@@ -207,6 +205,9 @@ class Gather(Command[list[Ok], Err]):
         self.val = script.value_conj(self.commands)
         return []
 
+    def __repr__(self):
+        return f'Gather({repr(self.commands)} = {repr(self.val)})'
+
     @property
     def inputs(self):
         """
@@ -230,7 +231,7 @@ class InertCommand(Command[Ok, Err]):
         self.name = name
         super().__init__()
 
-    def __str__(self):
+    def __repr__(self):
         return f'{self.__class__.__name__.lower()} {self.name}'
 
     def _eval(self, *_):
@@ -270,6 +271,9 @@ class PrimitiveProxy(Generic[Ok, Err]):
         """
         self.val = Done(result)
         return self._advance_all()
+
+    def __repr__(self):
+        return f'PrimitiveProxy({repr(set(self.instances))} = {self.val})'
 
     def failed(self, error: Err) -> list[InertCommand]:
         """
@@ -346,7 +350,7 @@ class Script:
 
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
-        return cb_command, advance_all(self, [cb_command])
+        return cb_command, advance_all(self, get_leaves([cb_command]))
 
     def notify_change(self, command: Command, old_value: Result, new_value: Result):
         """
@@ -410,7 +414,6 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     Try to advance all given commands, and all downstream depending on them the
     case being
     """
-    commands = get_all_subcommands(commands)
     primitives : list[InertCommand] = []
 
     while commands:
@@ -442,7 +445,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                 # For now, subcommands need to be recursively initialized
                 sub_commands = command.advance(script)
                 if sub_commands:
-                    sub_commands = get_all_subcommands(sub_commands)
+                    sub_commands = get_leaves(sub_commands)
                     commands.extend(sub_commands)
                 # Maybe this caused the command to advance to a terminal state (DONE or
                 # FAILED). In that case downstream commands must be checked too.
@@ -451,16 +454,20 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
 
     return primitives
 
-def get_all_subcommands(commands):
+def get_leaves(commands):
     """
-    Collect all the nodes of a command tree
+    Collect all the leaves of a command tree
+
+    Leaves can be InertCommands, but also empty Gather([]) commands.
     """
     all_commands = []
     commands = list(commands)
     while commands:
         cmd = commands.pop()
-        all_commands.append(cmd)
-        commands.extend(cmd.inputs)
+        if not cmd.inputs:
+            all_commands.append(cmd)
+        else:
+            commands.extend(cmd.inputs)
     return all_commands
 
 class Get(InertCommand[list[TaskName], str]):
