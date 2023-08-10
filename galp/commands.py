@@ -418,6 +418,11 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
 
     while commands:
         command = commands.pop()
+        if not command.is_pending():
+            # This should not happen, but can normally be safely ignored
+            # when it actually does
+            logging.warning('Settled command %s given for updating, skipping', command)
+            continue
         match command:
             case InertCommand():
                 # Check if we already have instances of that command
@@ -439,9 +444,6 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                         command.val = master.val
                         commands.extend(command.outputs)
             case _:
-                if not command.is_pending():
-                    # FIXME: Why does that even happen ?
-                    continue
                 # For now, subcommands need to be recursively initialized
                 sub_commands = command.advance(script)
                 if sub_commands:
