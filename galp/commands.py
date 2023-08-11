@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from itertools import chain
 from functools import wraps
 
+import galp.messages as gm
 from .task_types import (
         TaskName, LiteralTaskDef, QueryTaskDef, TaskDef, TaskOp, CoreTaskDef
         )
@@ -482,10 +483,8 @@ class Submit(InertCommand[list[TaskName], str]):
     Remotely execute a single step
     """
 
-# done, def, children
-StatResult = tuple[bool, TaskDef, list[TaskName]]
 
-class Stat(InertCommand[StatResult, str]):
+class Stat(InertCommand[gm.Found | gm.Done, str]):
     """
     Get a task's metadata
     """
@@ -507,19 +506,21 @@ def ssubmit(name: TaskName, dry: bool = False
     """
     return Stat(name).then(lambda statr: _ssubmit(statr, dry))
 
-def _ssubmit(stat_result: StatResult, dry: bool
+def _ssubmit(stat_result: gm.Found | gm.Done, dry: bool
              ) -> list[TaskName] | Command[list[TaskName], str]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
-    _task_done, task_def, children = stat_result
+    # Short circuit for tasks already processed
+    if isinstance(stat_result, gm.Done):
+        return stat_result.children
 
-    # Short circuit for tasks already processed and literals
+    # gm.Found()
+    task_def = stat_result.task_def
+
+    # Short circuit for literals
     if isinstance(task_def, LiteralTaskDef):
-        children = task_def.children
-
-    if children is not None:
-        return children
+        return task_def.children
 
     # Query, should never have reached this layer as queries have custom run
     # mechanics

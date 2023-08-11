@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import commands as cm
+from . import messages as gm
 from .task_types import TaskNode, QueryTaskDef, TaskName, Task, CoreTaskDef
 from .cache import StoreReadError
 from .serializer import DeserializeError
@@ -216,9 +217,8 @@ class Done(Operator):
     """
     requires = cm.Stat
 
-    def _result(self, stat_result, _subs):
-        task_done, *_ = stat_result
-        return task_done
+    def _result(self, stat_result: gm.Done | gm.Found, _subs):
+        return isinstance(stat_result, gm.Done)
 
 class Def(Operator):
     """
@@ -226,9 +226,8 @@ class Def(Operator):
     """
     requires = cm.Stat
 
-    def _result(self, stat_result, _subs):
-        _done, task_dict, _children = stat_result
-        return task_dict
+    def _result(self, stat_result: gm.Done | gm.Found, _subs):
+        return stat_result.task_def
 
 class Args(Operator):
     """
@@ -236,12 +235,12 @@ class Args(Operator):
     """
     requires = cm.Stat
 
-    def _recurse(self, stat_result):
+    def _recurse(self, stat_result: gm.Done | gm.Found):
         """
         Build list of sub-queries for arguments of subject task from the
         definition obtained from STAT
         """
-        _task_done, task_def, _children = stat_result
+        task_def = stat_result.task_def
 
         # FIXME: this should delegate handling of the sub-query
         is_compound, arg_subqueries = parse_query(self.sub_query)
