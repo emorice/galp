@@ -214,6 +214,8 @@ class Gather(Command[list[Ok], Err]):
         """
         return self.commands
 
+CommandKey = tuple[str, gtt.TaskName]
+
 class InertCommand(Command[Ok, Err]):
     """
     Command tied to an external event
@@ -226,23 +228,16 @@ class InertCommand(Command[Ok, Err]):
     # purpose
     master: 'PrimitiveProxy'
 
-    def __init__(self, name: gtt.TaskName):
-        self.name = name
-        super().__init__()
-
-    def __repr__(self):
-        return f'{self.__class__.__name__.lower()} {self.name}'
-
     def _eval(self, *_):
         # Never changes by itself
         return []
 
     @property
-    def key(self) -> tuple[str, gtt.TaskName]:
+    def key(self) -> CommandKey:
         """
         Unique key
         """
-        return (self.__class__.__name__.upper(), self.name)
+        raise NotImplementedError
 
     @property
     def inputs(self):
@@ -250,6 +245,21 @@ class InertCommand(Command[Ok, Err]):
         Commands we depend on
         """
         return []
+
+class NamedPrimitive(InertCommand[Ok, Err]):
+    """
+    Primitive made of just a task name
+    """
+    def __init__(self, name: gtt.TaskName):
+        self.name = name
+        super().__init__()
+
+    @property
+    def key(self) -> CommandKey:
+        """
+        Unique key
+        """
+        return (self.__class__.__name__.upper(), self.name)
 
 class PrimitiveProxy(Generic[Ok, Err]):
     """
@@ -294,8 +304,6 @@ class PrimitiveProxy(Generic[Ok, Err]):
         """
         return isinstance(self.val, Pending)
 
-CommandKey = tuple[str, gtt.TaskName]
-
 class Script:
     """
     A collection of maker methods for Commands
@@ -317,9 +325,6 @@ class Script:
         self.verbose = verbose
         self.keep_going = keep_going
         self.store = store
-
-        # For logging
-        self._task_defs: dict[gtt.TaskName, gtt.CoreTaskDef] = {}
 
     def collect(self, commands: list[Command[Ok, Err]]) -> Command[list[Ok], Err]:
         """
@@ -368,23 +373,22 @@ class Script:
             if isinstance(new_value, Done):
                 task_done, task_def, _children = new_value.result
                 if not task_done and isinstance(self, gtt.CoreTaskDef):
-                    self._task_defs[command.name] = task_def
                     print_status('PLAN', command.name, task_def.step)
 
         if isinstance(command, Submit):
-            if command.name in self._task_defs:
-                step_name_s = self._task_defs[command.name].step
+            step_name_s = command.task_def.step
+            name = command.task_def.name
 
-                # We log 'SUB' every time a submit command's status "changes" to
-                # PENDING. Currently this only happens when the command is
-                # created.
-                match new_value:
-                    case Pending():
-                        print_status('SUB', command.name, step_name_s)
-                    case Done():
-                        print_status('DONE', command.name, step_name_s)
-                    case Failed():
-                        print_status('FAIL', command.name, step_name_s)
+            # We log 'SUB' every time a submit command's status "changes" to
+            # PENDING. Currently this only happens when the command is
+            # created.
+            match new_value:
+                case Pending():
+                    print_status('SUB', name, step_name_s)
+                case Done():
+                    print_status('DONE', name, step_name_s)
+                case Failed():
+                    print_status('FAIL', name, step_name_s)
 
     def value_conj(self, commands: list[Command[Ok, Err]]
                     ) -> Result[list[Ok], Err]:
@@ -471,7 +475,7 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
-class Get(InertCommand[list[gtt.TaskName], str]):
+class Get(NamedPrimitive[list[gtt.TaskName], str]):
     """
     Get a single resource part
     """
@@ -480,10 +484,17 @@ class Submit(InertCommand[list[gtt.TaskReference], str]):
     """
     Remotely execute a single step
     """
+    def __init__(self, task_def: gtt.CoreTaskDef):
+        self.task_def = task_def
+        super().__init__()
+
+    @property
+    def key(self):
+        return (self.__class__.__name__.upper(), self.task_def.name)
 
 StatResult: TypeAlias = gm.Found | gm.Done | gm.NotFound
 
-class Stat(InertCommand[StatResult, str]):
+class Stat(NamedPrimitive[StatResult, str]):
     """
     Get a task's metadata
     """
@@ -547,7 +558,7 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
     if isinstance(task_def, gtt.QueryTaskDef):
         raise NotImplementedError
 
-    # Finally, regular job, process dependencies first
+    # Finally, Core or Child, process dependencies/parent first
 
     # Collect dependencies
     deps: list[gtt.Task]
@@ -562,10 +573,13 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
     # Issue 79: optimize type of command based on type of link
     # Always doing a RSUB will work, but it will run things more eagerly that
     # needed or propagate failures too aggressively.
-    return (
-            Gather([rsubmit(dep, dry) for dep in deps])
-            .then(lambda _: [] if dry else Submit(task_def.name))
-            )
+    gather_deps = Gather([rsubmit(dep, dry) for dep in deps])
+
+    # Issue final command
+    if dry or isinstance(task_def, gtt.ChildTaskDef):
+        return gather_deps.then(lambda _: [])
+
+    return gather_deps.then(lambda _: Submit(task_def)) # type: ignore[arg-type] # False positive
 
 def rsubmit(task: gtt.Task, dry: bool = False):
     """

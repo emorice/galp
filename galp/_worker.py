@@ -291,9 +291,9 @@ class WorkerProtocol(ReplyProtocol):
 
         while commands:
             command = commands.pop()
-            name = command.name
             if not isinstance(command, cm.Get):
                 raise NotImplementedError(command)
+            name = command.name
             try:
                 children = self.store.get_children(name)
                 commands.extend(
@@ -449,7 +449,8 @@ class Worker:
         try:
             if isinstance(inputs, cm.Failed):
                 logging.error('Could not gather task inputs'
-                        ' for step %s (%s)', name, step_name)
+                              ' for step %s (%s): %s', name, step_name,
+                              inputs.error)
                 raise NonFatalTaskError(inputs.error)
 
             logging.info('Executing step %s (%s)', name, step_name)

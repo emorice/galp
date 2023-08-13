@@ -29,7 +29,7 @@ from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, TaskDef,
-        QueryTaskDef, CoreTaskDef)
+        QueryTaskDef)
 
 class TaskStatus(IntEnum):
     """
@@ -271,7 +271,7 @@ class BrokerProtocol(ReplyProtocol):
         # prevent re-sending a submit after receiving a DOING notification
         self._status : defaultdict[TaskName, TaskStatus] = defaultdict(lambda: TaskStatus.UNKNOWN)
 
-        # Task definitions, either given to add() or collected through STAT/FOUND
+        # Task definitions given to add()
         self._tasks : dict[TaskName, TaskDef] = {}
 
         # Public attributes: counters for the number of SUBMITs sent and DOING
@@ -335,20 +335,19 @@ class BrokerProtocol(ReplyProtocol):
             # Promise has been fulfilled since before reaching here
             return None
 
-        name = command.name
-
         match command:
             case cm.Submit():
+                name = command.task_def.name
                 if self._status[name] < TaskStatus.RUNNING:
-                    sub = self.submit_task_by_name(name)
-                    if sub is not None:
-                        return self.route_message(None, sub)
+                    self.submitted_count[name] += 1
+                    sub = gm.Submit(task_def=command.task_def)
+                    return self.route_message(None, sub)
             case cm.Get():
-                get = self.get(name)
+                get = self.get(command.name)
                 if get is not None:
                     return self.route_message(None, get)
             case cm.Stat():
-                return self.route_message(None, gm.Stat(name=name))
+                return self.route_message(None, gm.Stat(name=command.name))
             case _:
                 raise NotImplementedError(command)
 
@@ -368,21 +367,6 @@ class BrokerProtocol(ReplyProtocol):
             assert orig is not None
             return orig.reply(new)
         return super().route_message(orig, new)
-
-    def submit_task_by_name(self, task_name: TaskName) -> gm.Submit | None:
-        """Loads task dicts, handles literals and subtasks, and manage stats"""
-
-        # Task dict was added by a stat call
-        task_def = self._tasks.get(task_name)
-        if task_def is None:
-            raise ValueError(f"Task {task_name.hex()} is unknown")
-        if isinstance(task_def, CoreTaskDef):
-            self.submitted_count[task_name] += 1
-            return gm.Submit(task_def=task_def)
-        # Literals and SubTasks are always satisfied, and never have
-        # recursive children
-        self.on_done(gm.Done(task_def=task_def, children=[]))
-        return None
 
     def get(self, name: TaskName) -> gm.Get | None:
         """
@@ -450,10 +434,6 @@ class BrokerProtocol(ReplyProtocol):
         name = task_def.name
         self._status[name] = TaskStatus.COMPLETED
 
-        # If it was a remotely defined task, store its definition too
-        if name not in self._tasks:
-            self._tasks[name] = task_def
-
         # trigger downstream commands
         command = self.script.commands.get(('SUBMIT', name))
         if command:
@@ -507,7 +487,7 @@ class BrokerProtocol(ReplyProtocol):
             reps = command.failed('NOTFOUND')
             assert not reps
 
-        # Mark STAT command as done or failed
+        # Mark STAT command as done
         command = self.script.commands.get(('STAT', name))
         if command:
             task_def = self._tasks.get(name)
@@ -517,9 +497,9 @@ class BrokerProtocol(ReplyProtocol):
                     command.done(gm.Found(task_def=task_def))
                     )
             else:
-                # Found neither remotely not locally, hard error
-                reps = command.failed('NOTFOUND')
-                assert not reps
+                self.schedule_new(
+                    command.done(msg)
+                    )
 
     def on_found(self, msg: gm.Found):
         """
@@ -527,7 +507,6 @@ class BrokerProtocol(ReplyProtocol):
         """
         task_def = msg.task_def
         name = task_def.name
-        self._tasks[name] = task_def
         self.schedule_new(
             self.script.commands['STAT', name].done(msg)
             )
