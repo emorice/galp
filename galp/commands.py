@@ -12,9 +12,7 @@ from itertools import chain
 from functools import wraps
 
 import galp.messages as gm
-from .task_types import (
-        TaskName, LiteralTaskDef, QueryTaskDef, TaskDef, TaskOp, CoreTaskDef
-        )
+import galp.task_types as gtt
 
 # Result types
 # ============
@@ -228,7 +226,7 @@ class InertCommand(Command[Ok, Err]):
     # purpose
     master: 'PrimitiveProxy'
 
-    def __init__(self, name: TaskName):
+    def __init__(self, name: gtt.TaskName):
         self.name = name
         super().__init__()
 
@@ -240,7 +238,7 @@ class InertCommand(Command[Ok, Err]):
         return []
 
     @property
-    def key(self) -> tuple[str, TaskName]:
+    def key(self) -> tuple[str, gtt.TaskName]:
         """
         Unique key
         """
@@ -296,7 +294,7 @@ class PrimitiveProxy(Generic[Ok, Err]):
         """
         return isinstance(self.val, Pending)
 
-CommandKey = tuple[str, TaskName]
+CommandKey = tuple[str, gtt.TaskName]
 
 class Script:
     """
@@ -321,7 +319,7 @@ class Script:
         self.store = store
 
         # For logging
-        self._task_defs: dict[TaskName, CoreTaskDef] = {}
+        self._task_defs: dict[gtt.TaskName, gtt.CoreTaskDef] = {}
 
     def collect(self, commands: list[Command[Ok, Err]]) -> Command[list[Ok], Err]:
         """
@@ -369,7 +367,7 @@ class Script:
         if isinstance(command, Stat):
             if isinstance(new_value, Done):
                 task_done, task_def, _children = new_value.result
-                if not task_done and isinstance(self, CoreTaskDef):
+                if not task_done and isinstance(self, gtt.CoreTaskDef):
                     self._task_defs[command.name] = task_def
                     print_status('PLAN', command.name, task_def.step)
 
@@ -473,23 +471,24 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
-class Get(InertCommand[list[TaskName], str]):
+class Get(InertCommand[list[gtt.TaskName], str]):
     """
     Get a single resource part
     """
 
-class Submit(InertCommand[list[TaskName], str]):
+class Submit(InertCommand[list[gtt.TaskReference], str]):
     """
     Remotely execute a single step
     """
 
+StatResult: TypeAlias = gm.Found | gm.Done | gm.NotFound
 
-class Stat(InertCommand[gm.Found | gm.Done, str]):
+class Stat(InertCommand[StatResult, str]):
     """
     Get a task's metadata
     """
 
-def rget(name: TaskName) -> Command[list, str]:
+def rget(name: gtt.TaskName) -> Command[list, str]:
     """
     Get a task result, then rescursively get all the sub-parts of it
     """
@@ -498,16 +497,35 @@ def rget(name: TaskName) -> Command[list, str]:
         .then(lambda children: Gather(map(rget, children)))
         )
 
-def ssubmit(name: TaskName, dry: bool = False
-            ) -> Command[list[TaskName], str]:
+def no_not_found(stat_result: StatResult, task: gtt.Task
+                 ) -> gm.Found | gm.Done | Failed[str]:
+    """
+    Transform NotFound in Found if the task is a real object, and fails
+    otherwise.
+    """
+    if not isinstance(stat_result, gm.NotFound):
+        return stat_result
+
+    if isinstance(task, gtt.TaskNode):
+        return gm.Found(task_def=task.task_def)
+
+    return Failed(f'The task reference {task.name} could not be resolved to a'
+        ' definition')
+
+def ssubmit(task: gtt.Task, dry: bool = False
+            ) -> Command[list[gtt.TaskReference], str]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
     """
-    return Stat(name).then(lambda statr: _ssubmit(statr, dry))
+    safe_statr: Command[gm.Found | gm.Done, str] = (
+            Stat(task.name)
+            .then(lambda statr: no_not_found(statr, task))
+          )
+    return safe_statr.then(lambda statr: _ssubmit(task, statr, dry))
 
-def _ssubmit(stat_result: gm.Found | gm.Done, dry: bool
-             ) -> list[TaskName] | Command[list[TaskName], str]:
+def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
+             ) -> list[gtt.TaskReference] | Command[list[gtt.TaskReference], str]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
@@ -519,24 +537,37 @@ def _ssubmit(stat_result: gm.Found | gm.Done, dry: bool
     task_def = stat_result.task_def
 
     # Short circuit for literals
-    if isinstance(task_def, LiteralTaskDef):
-        return task_def.children
+    if isinstance(task_def, gtt.LiteralTaskDef):
+        # Issue #78: at this point we should be making sure children are saved
+        # before handing back references to them
+        return list(map(gtt.TaskReference, task_def.children))
 
     # Query, should never have reached this layer as queries have custom run
     # mechanics
-    if isinstance(task_def, QueryTaskDef):
+    if isinstance(task_def, gtt.QueryTaskDef):
         raise NotImplementedError
 
-    # Else, regular job, process dependencies first
-    # FIXME: optimize type of command based on type of link
+    # Finally, regular job, process dependencies first
+
+    # Collect dependencies
+    deps: list[gtt.Task]
+    if isinstance(task, gtt.TaskReference):
+        # If a reference, by design the dep defs have been checked in
+        deps = [gtt.TaskReference(tin.name)
+                for tin in task_def.dependencies(gtt.TaskOp.BASE)]
+    else:
+        # If a node, we have the defs and pass them directly
+        deps = task.dependencies
+
+    # Issue 79: optimize type of command based on type of link
     # Always doing a RSUB will work, but it will run things more eagerly that
     # needed or propagate failures too aggressively.
     return (
-            Gather([rsubmit(tin.name,dry) for tin in task_def.dependencies(TaskOp.BASE)])
+            Gather([rsubmit(dep, dry) for dep in deps])
             .then(lambda _: [] if dry else Submit(task_def.name))
             )
 
-def rsubmit(name: TaskName, dry: bool = False):
+def rsubmit(task: gtt.Task, dry: bool = False):
     """
     Recursive submit, with children, i.e a ssubmit plus a rsubmit per child
 
@@ -554,23 +585,23 @@ def rsubmit(name: TaskName, dry: bool = False):
     part of the task graph is unknown before we actually start executing it.
     """
     return (
-            ssubmit(name, dry)
+            ssubmit(task, dry)
             .then(lambda children: Gather([rsubmit(c, dry) for c in children]))
             )
 
-def run(name: TaskName, dry=False):
+def run(task: gtt.Task, dry=False):
     """
     Combined rsubmit + rget
 
     If dry, just a dry rsubmit
     """
     if dry:
-        return rsubmit(name, dry=True)
-    return rsubmit(name).then(lambda _: rget(name))
+        return rsubmit(task, dry=True)
+    return rsubmit(task).then(lambda _: rget(task.name))
 
-def srun(name: TaskName):
+def srun(task: gtt.Task):
     """
     Shallow run: combined ssubmit + get, fetches the raw result of a task but
     not its children
     """
-    return ssubmit(name).then(lambda _: Get(name))
+    return ssubmit(task).then(lambda _: Get(task.name))

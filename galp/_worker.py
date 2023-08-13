@@ -29,15 +29,14 @@ import galp.commands as cm
 
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
-from galp.lower_protocol import IllegalRequestError
 from galp.protocol import (ProtocolEndException,
     RoutedMessage, Replies)
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
+from galp.graph import NoSuchStep, Step
+from galp.task_types import TaskReference, CoreTaskDef
 from galp.profiler import Profiler
-from galp.graph import NoSuchStep, Block
-from galp.task_types import TaskName
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -102,12 +101,7 @@ def make_worker_init(config):
     logging.info("Worker connecting to %s", setup['endpoint'])
 
     def _make_worker():
-        return Worker(
-            setup['endpoint'], setup['store'],
-            setup['steps'],
-            Profiler(setup.get('profile')),
-            mission=setup.get('mission', b'')
-            )
+        return Worker(setup)
     return _make_worker
 
 class WorkerProtocol(ReplyProtocol):
@@ -120,7 +114,8 @@ class WorkerProtocol(ReplyProtocol):
         self.store = store
         self.script = cm.Script(store=self.store)
 
-    def route_message(self, orig: RoutedMessage | None, new: gm.Message):
+    def route_message(self, orig: RoutedMessage | None,
+                      new: gm.Message | RoutedMessage):
         """
         Always reply back to original message, if any.
 
@@ -135,6 +130,8 @@ class WorkerProtocol(ReplyProtocol):
         This makes the broker essentially transparent as far as the worker is
         concerned.
         """
+        if isinstance(new, RoutedMessage):
+            return new
         if orig is None:
             return super().route_message(None, new)
         return orig.reply(new)
@@ -266,7 +263,9 @@ class WorkerProtocol(ReplyProtocol):
         # Case 1: both def and children, DONE
         if task_def is not None and children is not None:
             logging.info('STAT: DONE %s', msg.name)
-            return gm.Done(task_def=task_def, children=children)
+            # Issue 86: don't create References, get them from store
+            return gm.Done(task_def=task_def, children=[TaskReference(c) for c
+                                                        in children])
 
         # Case 2: only def, FOUND
         if task_def is not None:
@@ -322,26 +321,25 @@ class JobResult:
     request: RoutedMessage
     submit: gm.Submit
     success: bool
-    result: list[TaskName]
+    result: list[TaskReference]
 
 class Worker:
     """
     Class representing an an async worker, wrapping transport, protocol and task
     execution logic.
     """
-    def __init__(self, endpoint: str, store: CacheStack, step_dir: Block,
-            profiler: Profiler, mission: bytes):
+    def __init__(self, setup: dict):
         self.protocol = WorkerProtocol(
-            self, store,
+            self, setup['store'],
             'BK', router=False)
+        self.endpoint = setup['endpoint']
         self.transport = ZmqAsyncTransport(
             self.protocol,
-            endpoint, zmq.DEALER # pylint: disable=no-member
+            self.endpoint, zmq.DEALER # pylint: disable=no-member
             )
-        self.endpoint = endpoint
-        self.step_dir = step_dir
-        self.profiler = profiler
-        self.mission = mission
+        self.step_dir = setup['steps']
+        self.profiler = Profiler(setup.get('profile'))
+        self.mission = setup.get('mission', b'')
 
         # Submitted jobs
         self.galp_jobs : asyncio.Queue[Awaitable[JobResult]] = asyncio.Queue()
@@ -359,7 +357,7 @@ class Worker:
 
     async def monitor_jobs(self) -> None:
         """
-        Loops that waits for tasks to finsish to send back done/failed messages
+        Loop that waits for tasks to finish to send back done/failed messages
         """
         reply: gm.Failed | gm.Done
         while True:
@@ -386,8 +384,10 @@ class Worker:
             self.galp_jobs.put_nowait(task)
 
         script = self.protocol.script
+        # References are safe by contract: a submit should only ever be sent
+        # after its inputs are done
         collect = script.collect([
-                query(script, tin.name, tin.op)
+                query(script, TaskReference(tin.name), tin.op)
                 for tin in [
                     *task_def.args,
                     *task_def.kwargs.values()
@@ -414,6 +414,29 @@ class Worker:
     # Task execution logic
     # ====================
 
+    def prepare_submit_arguments(self, step: Step, task_def: CoreTaskDef, inputs: list
+                                     ) -> tuple[list, dict]:
+        """
+        Unflatten collected arguments and inject path makek if requested
+        """
+        r_inputs = list(reversed(inputs))
+        args = []
+        for _tin in task_def.args:
+            args.append(r_inputs.pop())
+        kwargs = {}
+        for keyword in task_def.kwargs:
+            kwargs[keyword] = r_inputs.pop()
+
+        # Inject path maker if requested
+        if '_galp' in step.kw_names:
+            path_maker = PathMaker(
+                self.protocol.store.dirpath,
+                task_def.name.hex()
+                )
+            kwargs['_galp'] = path_maker
+
+        return args, kwargs
+
     async def run_submission(self, request: RoutedMessage, msg: gm.Submit,
                              inputs: cm.FinalResult[list, str]) -> JobResult:
         """
@@ -422,8 +445,6 @@ class Worker:
         task_def = msg.task_def
         name = task_def.name
         step_name = task_def.step
-        arg_tins = task_def.args
-        kwarg_tins = task_def.kwargs
 
         try:
             if isinstance(inputs, cm.Failed):
@@ -439,30 +460,7 @@ class Worker:
                 logging.exception('No such step known to worker: %s', step_name)
                 raise NonFatalTaskError from exc
 
-            # Unpack inputs from flattened input list
-            try:
-                r_inputs = list(reversed(inputs.result))
-                args = []
-                for _tin in arg_tins:
-                    args.append(r_inputs.pop())
-                kwargs = {}
-                for keyword in kwarg_tins:
-                    kwargs[keyword] = r_inputs.pop()
-            except UnicodeDecodeError as exc:
-                # Either you tried to use python's non-ascii keywords feature,
-                # or more likely you messed up the encoding on the caller side.
-                raise IllegalRequestError((request.incoming, request.forward),
-                    f'Cannot decode keyword {exc.object!r}'
-                    f' for step {name} ({step_name})'
-                    ) from exc
-
-            # Inject path maker if requested
-            if '_galp' in step.kw_names:
-                path_maker = PathMaker(
-                    self.protocol.store.dirpath,
-                    name.hex()
-                    )
-                kwargs['_galp'] = path_maker
+            args, kwargs = self.prepare_submit_arguments(step, task_def, inputs.result)
 
             # This may block for a long time, by design
             try:

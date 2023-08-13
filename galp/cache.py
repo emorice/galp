@@ -120,7 +120,8 @@ class CacheStack():
             children
             )
 
-    def put_native(self, name: TaskName, obj: Any, scatter: int | None = None) -> list[TaskName]:
+    def put_native(self, name: TaskName, obj: Any, scatter: int | None = None
+                   ) -> list[TaskReference]:
         """Puts a native object in the cache.
 
         For now this eagerly serializes it and commits it to persistent cache.
@@ -158,14 +159,14 @@ class CacheStack():
             self.put_serial(name, (payload, child_names))
             return []
 
-        data, children = self.serializer.dumps(obj)
+        data, children = self.serializer.dumps(obj, self.put_task)
         child_names = [ c.name for c in children ]
         self.put_serial(name, (data, child_names))
 
         # Recursively store the child task definitions
         for child in children:
             self.put_task(child)
-        return child_names
+        return children
 
     def put_serial(self, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
         """
@@ -190,9 +191,11 @@ class CacheStack():
 
         self.serialcache[key] = dump_model(task_def)
 
-    def put_task(self, task: Task) -> None:
+    def put_task(self, task: Task) -> TaskReference:
         """
-        Recursively store a task definition
+        Recursively store a task definition, and returns a reference that
+        represent a saved task definition. This should normally be the only way
+        to create such a TaskReference.
 
         If the task is a literal, this also stores the included task result as a
         resource.
@@ -201,7 +204,7 @@ class CacheStack():
         if not isinstance(task, TaskNode):
             # Task reference. The definition must have been recorded previously,
             # so there is nothing to do
-            return
+            return task
 
         self.put_task_def(task.task_def)
 
@@ -210,6 +213,8 @@ class CacheStack():
 
         if isinstance(task.task_def, LiteralTaskDef):
             self.put_native(task.name, task.data)
+
+        return TaskReference(task.name)
 
     def get_task_def(self, name: TaskName) -> TaskDef:
         """

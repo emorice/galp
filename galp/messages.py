@@ -8,6 +8,7 @@ from typing import Literal, Annotated, TypeVar, TypeAlias, Union
 from enum import Enum
 from pydantic import BaseModel, Field, PlainSerializer
 
+from . import task_types as tt
 from .task_types import TaskName, TaskDef, CoreTaskDef
 
 class Role(str, Enum):
@@ -48,7 +49,7 @@ class Done(Message):
     verb: Literal['done'] = Field('done', repr=False)
 
     task_def: TaskDef
-    children: list[TaskName]
+    children: list[tt.TaskReference]
 
 class Exit(Message):
     """

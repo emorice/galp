@@ -10,7 +10,9 @@ import dill
 
 from pydantic import BaseModel, ValidationError, TypeAdapter
 
-from galp.task_types import Task, StepType, TaskDef, TaskName
+from galp.task_types import (
+        Task, StepType, TaskDef, TaskNode, TaskReference
+        )
 
 class DeserializeError(ValueError):
     """
@@ -38,7 +40,8 @@ class Serializer:
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj: Any) -> tuple[bytes, list[Task]]:
+    def dumps(self, obj: Any, save: Callable[[TaskNode], TaskReference]
+              ) -> tuple[bytes, list[TaskReference]]:
         """
         Serialize the data.
 
@@ -49,10 +52,15 @@ class Serializer:
 
         Args:
             obj: object to serialize
+            save: callback to handle nested task objects. The callback should
+                return a TaskReference after and only after ensuring that the
+                task information will been made available to the recipient of the
+                serialized objects, in order to never create serialized objects
+                with unresolvable task references.
         """
-        children : list[Task] = []
+        children : list[TaskReference] = []
         # Modifies children in place
-        payload = msgpack.packb(obj, default=_default(children), use_bin_type=True)
+        payload = msgpack.packb(obj, default=_default(children, save), use_bin_type=True)
         return payload, children
 
 def serialize_child(index):
@@ -123,7 +131,9 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
 _CHILD_EXT_CODE = 0
 _DILL_EXT_CODE = 1
 
-def _default(children: list[Task]) -> Callable:
+def _default(children: list[TaskReference],
+             save: Callable[[TaskNode], TaskReference]
+             ) -> Callable[[Any], msgpack.ExtType]:
     """
     Out-of-band sub-tasks and dill fallback
 
@@ -134,7 +144,7 @@ def _default(children: list[Task]) -> Callable:
             obj = obj()
         if isinstance(obj, Task):
             index = len(children)
-            children.append(obj)
+            children.append(save(obj))
             return msgpack.ExtType(
                 _CHILD_EXT_CODE,
                 index.to_bytes(4, 'little')

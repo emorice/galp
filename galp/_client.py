@@ -11,7 +11,7 @@ import time
 
 from enum import IntEnum, auto
 from collections import defaultdict
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Any
 
 import zmq
 import zmq.asyncio
@@ -23,7 +23,7 @@ from galp import async_utils
 from galp.graph import ensure_task_node
 from galp.cache import CacheStack
 from galp.serializer import Serializer, DeserializeError
-from galp.protocol import ProtocolEndException, RoutedMessage, Replies
+from galp.protocol import ProtocolEndException, RoutedMessage
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
@@ -159,7 +159,7 @@ class Client:
         if isinstance(val, cm.Failed):
             if not return_exceptions:
                 raise TaskFailedError(val.error)
-            # Fixme: actually implement this
+            # Issue #83: actually implement this
             cmd_results = [val.error] * len(task_nodes)
         else:
             cmd_results = val.result
@@ -167,7 +167,7 @@ class Client:
         if dry_run:
             return None
 
-        results = []
+        results: list[Any] = []
         failed = None
         for task, cmd_result in zip(task_nodes, cmd_results):
             tdef = task.task_def
@@ -244,6 +244,9 @@ class Client:
                 )
         except ProtocolEndException:
             pass
+        # Issue 84: this work because End is only raised after collect is done,
+        # but that's bad style.
+        assert not isinstance(collect.val, cm.Pending)
         return collect.val
 
 class BrokerProtocol(ReplyProtocol):
@@ -463,8 +466,6 @@ class BrokerProtocol(ReplyProtocol):
             self.schedule_new(
                 command.done(msg)
                 )
-
-        return None
 
     def on_doing(self, msg: gm.Doing):
         """

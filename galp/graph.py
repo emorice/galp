@@ -8,11 +8,11 @@ import functools
 
 from typing import Any, Callable, TypeVar
 
-import msgpack
+import msgpack # type: ignore[import] # Issue #85
 
 from galp.task_types import (TaskName, StepType, TaskNode, TaskInput, Task,
         LiteralTaskDef, CoreTaskDef, TaskDef, ChildTaskDef, QueryTaskDef,
-        TaskOp, BaseTaskDef)
+        TaskOp, BaseTaskDef, TaskReference)
 from galp.serializer import Serializer
 
 _serializer = Serializer() # Actually stateless, safe
@@ -84,10 +84,14 @@ def make_literal_task(obj: Any) -> TaskNode:
     """
     Build a Literal TaskNode out of an arbitrary python object
     """
-    # Todo: more robust hashing, but this is enough for most case where
+    dependencies = []
+    def save(task):
+        dependencies.append(task)
+        return TaskReference(task.name)
+    # Nice to have: more robust hashing, but this is enough for most case where
     # literal resources are a good fit (more complex objects would tend to be
     # actual step outputs)
-    obj_bytes, dependencies = _serializer.dumps(obj)
+    obj_bytes, _dependencies_refs = _serializer.dumps(obj, save)
 
     tdef = {'children': [dep.name for dep in dependencies]}
     # Literals are an exception to naming: they are named by value, so the
@@ -99,14 +103,11 @@ def make_literal_task(obj: Any) -> TaskNode:
             data=obj,
             )
 
-def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
-                   vtag: str | None = None, items: int | None = None) -> TaskNode:
+def raise_if_bad_signature(step: 'Step', args, kwargs) -> None:
     """
-    Build a core task from a function call
+    Check arguments number and names so that we can fail when creating a step
+    and not only when we run it
     """
-    # Before anything else, type check the call. This ensures we don't wait
-    # until actually trying to run the task to realize we're missing
-    # arguments.
     try:
         full_kwargs = dict(kwargs, **{
             kw: WorkerSideInject()
@@ -118,6 +119,16 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
         raise TypeError(
                 f'{step.function.__name__}() {str(exc)}'
                 ) from exc
+
+def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
+                   vtag: str | None = None, items: int | None = None) -> TaskNode:
+    """
+    Build a core task from a function call
+    """
+    # Before anything else, type check the call. This ensures we don't wait
+    # until actually trying to run the task to realize we're missing
+    # arguments.
+    raise_if_bad_signature(step, args, kwargs)
 
     # Collect all arguments as nodes
     arg_inputs = []
@@ -132,13 +143,13 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
         kwarg_inputs[key] = tin
         nodes.append(node)
 
-    tdef = dict(
-        args=arg_inputs,
-        kwargs=kwarg_inputs,
-        step=step.key,
-        vtags=([ascii(vtag) ] if vtag is not None else []),
-        scatter=items
-        )
+    tdef = {
+            'args': arg_inputs,
+            'kwargs': kwarg_inputs,
+            'step': step.key,
+            'vtags': ([ascii(vtag) ] if vtag is not None else []),
+            'scatter':items
+            }
 
     ndef = make_task_def(CoreTaskDef, tdef)
 
@@ -150,7 +161,7 @@ def make_child_task_def(parent: TaskName, index: int) -> TaskDef:
 
     This does not check whether the operation is legal
     """
-    return make_task_def(ChildTaskDef, dict(parent=parent, index=index))
+    return make_task_def(ChildTaskDef, {'parent': parent, 'index': index})
 
 def make_child_task(parent: TaskNode, index: int) -> TaskNode:
     """
@@ -261,7 +272,7 @@ class Step(StepType):
         registering new steps in the scope.
         """
         # Make a copy at call point
-        injectables = dict(self.scope._injectables)
+        injectables = dict(self.scope.injectables)
 
         # Closed set: steps already recursively visited and added to post_order
         cset = set()
@@ -376,7 +387,6 @@ class Step(StepType):
                 tasks[name] = injectable.make_task([], _kwargs)
             else:
                 # This can be a Task or a literal
-                # FIXME: we can't inject through a literal for now
                 tasks[name] = injectable
         return tasks
 
@@ -449,7 +459,7 @@ class Block:
         # Note: if we inherit steps, we don't touch their scope
         self._steps = {} if steps is None else steps
 
-        self._injectables = {
+        self.injectables = {
                 k: WorkerSideInject()
                 for k in _WORKER_INJECTABLES
                 }
@@ -489,7 +499,7 @@ class Block:
                 function,
                 **options,
                 )
-            self._injectables[function.__name__] = step
+            self.injectables[function.__name__] = step
             self._steps[step.key] = step
             return step
 
@@ -522,9 +532,9 @@ class Block:
         Add the given objects to the injectables dictionnary of the scope
         """
         for key, value in kwargs.items():
-            if  key in self._injectables:
+            if  key in self.injectables:
                 raise ValueError(f'Duplicate injection of "{key}"')
-            self._injectables[key] = value
+            self.injectables[key] = value
 
     @property
     def all_steps(self):
@@ -553,12 +563,12 @@ class StepSet(Block):
                 ' future', FutureWarning, stacklevel=2)
         super().__init__(*args, **kwargs)
 
-def query(subject: Any, query: Any) -> TaskNode:
+def query(subject: Any, query_doc: Any) -> TaskNode:
     """
     Build a Query task node
     """
     subj_node = ensure_task_node(subject)
-    tdef = dict(query=query, subject=subj_node.name)
+    tdef = {'query': query_doc, 'subject': subj_node.name}
     return TaskNode(
             task_def=make_task_def(
                 QueryTaskDef, tdef

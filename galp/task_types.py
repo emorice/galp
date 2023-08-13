@@ -3,7 +3,7 @@ Abstract task types defintions
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Literal, Union, TypeGuard, Annotated
+from typing import Any, Literal, Union, Annotated, TypeAlias
 from enum import Enum
 from dataclasses import dataclass
 from functools import total_ordering
@@ -92,7 +92,8 @@ class BaseTaskDef(BaseModel):
         """
         raise NotImplementedError
 
-class CoreTaskDef(BaseTaskDef):
+# False positive https://github.com/pydantic/pydantic/issues/3125
+class CoreTaskDef(BaseTaskDef): # type: ignore[no-redef]
     """
     Information defining a core Task, i.e. bound to the remote execution of a
     function
@@ -160,36 +161,18 @@ TaskDef = Annotated[
         Field(discriminator='task_type')
         ]
 
-class Task(ABC):
-    """
-    Root of task type hierarchy
-    """
-
-    @property
-    def name(self) -> TaskName:
-        """
-        Task name
-        """
-        raise NotImplementedError
-
-class TaskReference(Task):
+@dataclass
+class TaskReference:
     """
     A reference to an existing task by name, stripped of all the task definition
     details.
 
     The only valid operation on such a task is to read its name.
     """
-    _name: TaskName
-
-    def __init__(self, name):
-        self._name = name
-
-    @property
-    def name(self) -> TaskName:
-        return self._name
+    name: TaskName
 
 @dataclass
-class TaskNode(Task):
+class TaskNode:
     """
     A task, with links to all its dependencies
 
@@ -202,7 +185,7 @@ class TaskNode(Task):
         data: constant value of the task, for Literal tasks
     """
     task_def: TaskDef
-    dependencies: list[Task]
+    dependencies: 'list[Task]'
     data: Any = None
 
     @property
@@ -235,6 +218,11 @@ class TaskNode(Task):
         # Hard getitem, we actually insert an extra task
         return galp.steps.getitem(self, index)
 
+Task: TypeAlias = TaskNode | TaskReference
+
+# pylint: disable=too-few-public-methods
+# This is a forward declaration of graph.Step
+# Issue #82
 class StepType(ABC):
     """
     Root of step type hierarchy
