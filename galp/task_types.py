@@ -49,6 +49,9 @@ class TaskOp(str, Enum):
     SUB = '$sub'
     BASE = '$base'
 
+    def __repr__(self):
+        return self.value
+
 class TaskInput(BaseModel):
     """
     An object that describes how a task depends on an other task.
@@ -171,6 +174,9 @@ class TaskReference:
     """
     name: TaskName
 
+    def tree_print(self, indent: int = 0) -> str:
+        return repr(self)
+
 @dataclass
 class TaskNode:
     """
@@ -217,6 +223,19 @@ class TaskNode:
             return graph.make_child_task(self, index)
         # Hard getitem, we actually insert an extra task
         return galp.steps.getitem(self, index)
+
+    def tree_print(self, indent: int = 0) -> str:
+        pad = '    ' * indent
+        if not self.dependencies:
+            return pad + repr(self)
+        string = f'{pad}TaskNode(task_def={repr(self.task_def)},'
+        string += ' dependencies=[\n'
+        for dep in self.dependencies:
+            string += dep.tree_print(indent + 1)
+            string += '\n'
+        string += pad + '])'
+        return string
+
 
 Task: TypeAlias = TaskNode | TaskReference
 
