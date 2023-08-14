@@ -17,7 +17,8 @@ import galp.task_types as gtt
 # Result types
 # ============
 
-Ok = TypeVar('Ok')
+# pylint: disable=typevar-name-incorrect-variance
+Ok = TypeVar('Ok', covariant=True)
 Err = TypeVar('Err')
 
 @dataclass(frozen=True)
@@ -261,20 +262,22 @@ class NamedPrimitive(InertCommand[Ok, Err]):
         """
         return (self.__class__.__name__.upper(), self.name)
 
-class PrimitiveProxy(Generic[Ok, Err]):
+Ok_contra = TypeVar('Ok_contra', contravariant=True)
+
+class PrimitiveProxy(Generic[Ok_contra, Err]):
     """
     Helper class to propagate results to several logical instances of the same
     primitive
     """
     instances: WeakSet[InertCommand]
-    val: Result[Ok, Err] = Pending()
+    val: Result[Ok_contra, Err] = Pending()
     script: 'Script'
 
     def __init__(self, script: 'Script', *instances: InertCommand):
         self.instances = WeakSet(instances)
         self.script = script
 
-    def done(self, result: Ok) -> list[InertCommand]:
+    def done(self, result: Ok_contra) -> list[InertCommand]:
         """
         Mark all instances as done
         """
@@ -523,20 +526,25 @@ def no_not_found(stat_result: StatResult, task: gtt.Task
     return Failed(f'The task reference {task.name} could not be resolved to a'
         ' definition')
 
+def safe_stat(task: gtt.Task) -> Command[gm.Done | gm.Found, str]:
+    """
+    Chains no_not_found to a stat
+    """
+    return (
+            Stat(task.name)
+            .then(lambda statr: no_not_found(statr, task))
+          )
+
 def ssubmit(task: gtt.Task, dry: bool = False
-            ) -> Command[list[gtt.TaskReference], str]:
+            ) -> Command[Iterable[gtt.Task], str]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
     """
-    safe_statr: Command[gm.Found | gm.Done, str] = (
-            Stat(task.name)
-            .then(lambda statr: no_not_found(statr, task))
-          )
-    return safe_statr.then(lambda statr: _ssubmit(task, statr, dry))
+    return safe_stat(task).then(lambda statr: _ssubmit(task, statr, dry))
 
 def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
-             ) -> list[gtt.TaskReference] | Command[list[gtt.TaskReference], str]:
+             ) -> Iterable[gtt.Task] | Command[Iterable[gtt.Task], str]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
@@ -551,7 +559,15 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
     if isinstance(task_def, gtt.LiteralTaskDef):
         # Issue #78: at this point we should be making sure children are saved
         # before handing back references to them
-        return list(map(gtt.TaskReference, task_def.children))
+        match task:
+            case gtt.TaskReference():
+                # If we have a reference to a literal, we assume the children
+                # definitions have been saved and we can refer to them
+                return list(map(gtt.TaskReference, task_def.children))
+            case gtt.TaskNode():
+                # Else, we can't hand out references but we have the true tasks
+                # instead
+                return task.dependencies
 
     # Query, should never have reached this layer as queries have custom run
     # mechanics

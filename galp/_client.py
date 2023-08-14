@@ -271,9 +271,6 @@ class BrokerProtocol(ReplyProtocol):
         # prevent re-sending a submit after receiving a DOING notification
         self._status : defaultdict[TaskName, TaskStatus] = defaultdict(lambda: TaskStatus.UNKNOWN)
 
-        # Task definitions given to add()
-        self._tasks : dict[TaskName, TaskDef] = {}
-
         # Public attributes: counters for the number of SUBMITs sent and DOING
         # received for each task
         # Used for reporting and testing cache behavior
@@ -303,10 +300,6 @@ class BrokerProtocol(ReplyProtocol):
             name, task_node = oset.popitem()
             cset.add(name)
 
-            # Check if already added by a previous call to `add`
-            if name in self._tasks:
-                continue
-
             # Add the deps to the open set
             for dep_node in task_node.dependencies:
                 dep_name = dep_node.name
@@ -320,8 +313,6 @@ class BrokerProtocol(ReplyProtocol):
             if isinstance(task_node.task_def, LiteralTaskDef):
                 self.store.put_native(name, task_node.data)
 
-            # Save the task_definition
-            self._tasks[name] = task_node.task_def
 
     def write_next(self, command: cm.InertCommand) -> RoutedMessage | None:
         """
@@ -490,16 +481,9 @@ class BrokerProtocol(ReplyProtocol):
         # Mark STAT command as done
         command = self.script.commands.get(('STAT', name))
         if command:
-            task_def = self._tasks.get(name)
-            if task_def:
-                # Not found remotely, but still found locally
-                self.schedule_new(
-                    command.done(gm.Found(task_def=task_def))
-                    )
-            else:
-                self.schedule_new(
-                    command.done(msg)
-                    )
+            self.schedule_new(
+                command.done(msg)
+                )
 
     def on_found(self, msg: gm.Found):
         """

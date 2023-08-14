@@ -21,8 +21,9 @@ def run_task(script: cm.Script, task: TaskNode, dry: bool = False) -> cm.Command
     if isinstance(task_def, QueryTaskDef):
         if dry:
             raise NotImplementedError('Cannot dry-run queries yet')
+        subject, = task.dependencies
         # Issue #81 unsafe reference
-        return query(script, gtt.TaskReference(task_def.subject), task_def.query)
+        return query(script, subject, task_def.query)
 
     return cm.run(task, dry)
 
@@ -231,7 +232,7 @@ class Def(Operator):
     """
     @staticmethod
     def requires(task: gtt.Task):
-        return cm.Stat(task.name)
+        return cm.safe_stat(task)
 
     def _result(self, stat_result: gm.Done | gm.Found, _subs):
         return stat_result.task_def
@@ -242,7 +243,7 @@ class Args(Operator):
     """
     @staticmethod
     def requires(task: gtt.Task):
-        return cm.Stat(task.name)
+        return cm.safe_stat(task)
 
     def _recurse(self, stat_result: gm.Done | gm.Found):
         """
@@ -413,13 +414,22 @@ class Iterate(Operator, named=False):
         sub_query = self.sub_query
         sub_query_commands = []
 
+        # Try to extract the subtask definitions from the node object if
+        # possible
+        if isinstance(self.subject, gtt.TaskNode):
+            task_nodes = {t.name: t for t in self.subject.dependencies}
+        else:
+            task_nodes = {}
+
         for task in shallow_obj:
             if not isinstance(task, gtt.Task):
                 raise TypeError('Object is not a collection of tasks, cannot'
                     ' use a "*" query here')
             # Issue # 81
             sub_query_commands.append(
-                    query(self.script, gtt.TaskReference(task.name), sub_query)
+                    query(self.script,
+                        task_nodes.get(task.name, gtt.TaskReference(task.name)),
+                        sub_query)
                     )
 
         return sub_query_commands
