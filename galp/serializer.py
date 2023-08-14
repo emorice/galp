@@ -5,14 +5,12 @@ Serialization utils
 from typing import Any, List, Callable, TypeVar
 import logging
 
-import msgpack
-import dill
+import msgpack # type: ignore[import] # Issue 85
+import dill # type: ignore[import] # Issue 85
 
 from pydantic import BaseModel, ValidationError, TypeAdapter
 
-from galp.task_types import (
-        Task, StepType, TaskDef, TaskNode, TaskReference
-        )
+from galp.task_types import Task, StepType, TaskNode, TaskReference
 
 class DeserializeError(ValueError):
     """
@@ -142,7 +140,7 @@ def _default(children: list[TaskReference],
     def _children_default(obj):
         if isinstance(obj, StepType):
             obj = obj()
-        if isinstance(obj, Task):
+        if isinstance(obj, Task): # type: ignore[misc] # False positive
             index = len(children)
             children.append(save(obj))
             return msgpack.ExtType(

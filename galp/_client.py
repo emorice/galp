@@ -28,8 +28,7 @@ from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
-from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, TaskDef,
-        QueryTaskDef)
+from galp.task_types import TaskName, TaskNode, LiteralTaskDef, QueryTaskDef
 
 class TaskStatus(IntEnum):
     """
@@ -403,10 +402,10 @@ class BrokerProtocol(ReplyProtocol):
         # Schedule sub-gets if necessary
         # To be moved to the script engine eventually
         # Also we should get rid of the handle
-        for child_name in msg.children:
+        for child in msg.children:
             # We do not send explicit DONEs for subtasks, so we mark them as
             # done when we receive the parent data.
-            self._status[child_name] = TaskStatus.COMPLETED
+            self._status[child.name] = TaskStatus.COMPLETED
 
         # Put the parent part
         self.store.put_serial(msg.name, (msg.data, msg.children))

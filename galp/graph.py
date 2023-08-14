@@ -11,7 +11,7 @@ from typing import Any, Callable, TypeVar
 import msgpack # type: ignore[import] # Issue #85
 
 from galp.task_types import (TaskName, StepType, TaskNode, TaskInput, Task,
-        LiteralTaskDef, CoreTaskDef, TaskDef, ChildTaskDef, QueryTaskDef,
+        LiteralTaskDef, CoreTaskDef, ChildTaskDef, QueryTaskDef,
         TaskOp, BaseTaskDef, TaskReference)
 from galp.serializer import Serializer
 
@@ -155,7 +155,7 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
 
     return TaskNode(task_def=ndef, dependencies=nodes)
 
-def make_child_task_def(parent: TaskName, index: int) -> TaskDef:
+def make_child_task_def(parent: TaskName, index: int) -> ChildTaskDef:
     """
     Derive a Child TaskDef from a given parent name
 

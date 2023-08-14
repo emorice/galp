@@ -4,9 +4,10 @@ Caching utils
 
 from typing import Any
 
-import diskcache
-import msgpack
+import diskcache # type: ignore[import] # Issue 85
+import msgpack # type: ignore[import] # Issue 85
 
+import galp.task_types as gtt
 from galp.task_types import (TaskName, TaskReference, Task, TaskDef,
         TaskNode, LiteralTaskDef)
 from galp.graph import make_child_task_def
@@ -70,26 +71,25 @@ class CacheStack():
         data, children = self.get_serial(name)
 
         if shallow:
-            native_children = [ TaskReference(child_name)
-                    for child_name in children ]
+            native_children = children
         else:
-            native_children = [
-                self.get_native(
-                    child_name
-                    )
-                for child_name in children
-                ]
+            native_children = [self.get_native(child.name)
+                    for child in children]
 
         native = self.serializer.loads(data, native_children)
         return native
 
-    def get_children(self, name: TaskName) -> list[TaskName]:
+    def get_children(self, name: TaskName) -> list[TaskReference]:
         """
         Gets the list of sub-resources of a resource in store
+
+        Since the only way to get them there is `put_serial` that requires task
+        refs, it is safe to get them out as task refs too ; meaning that the
+        corresponding task definition is guaranteed to be in the store as well.
         """
         try:
             children = [
-                TaskName(child_name)
+                gtt.TaskReference(gtt.TaskName(child_name))
                 for child_name in msgpack.unpackb(
                     self.serialcache[name + b'.children']
                     )
@@ -101,7 +101,7 @@ class CacheStack():
 
         return children
 
-    def get_serial(self, name: TaskName) -> tuple[bytes, list[TaskName]]:
+    def get_serial(self, name: TaskName) -> tuple[bytes, list[TaskReference]]:
         """
         Get a serialized object form the cache.
 
@@ -115,10 +115,7 @@ class CacheStack():
             data = self.serialcache[name + b'.data']
         except KeyError:
             data = None
-        return (
-            data,
-            children
-            )
+        return data, children
 
     def put_native(self, name: TaskName, obj: Any, scatter: int | None = None
                    ) -> list[TaskReference]:
@@ -142,13 +139,12 @@ class CacheStack():
         if scatter is not None:
             # Logical composite handle
             ## Recursively store the children
-            child_names = []
+            child_refs = []
             struct = []
             _len = 0
             for i, sub_obj in enumerate(obj):
                 sub_ndef = make_child_task_def(name, i)
-                child_names.append(sub_ndef.name)
-                self.put_task_def(sub_ndef)
+                child_refs.append(self.put_child_task_def(sub_ndef))
                 # Recursive scatter is nor a thing yet, though we easily could
                 self.put_native(sub_ndef.name, sub_obj, scatter=None)
                 struct.append(serialize_child(i))
@@ -156,30 +152,32 @@ class CacheStack():
             assert _len == scatter
 
             payload = msgpack.packb(struct)
-            self.put_serial(name, (payload, child_names))
+            self.put_serial(name, (payload, child_refs))
             return []
 
         data, children = self.serializer.dumps(obj, self.put_task)
-        child_names = [ c.name for c in children ]
-        self.put_serial(name, (data, child_names))
 
-        # Recursively store the child task definitions
-        for child in children:
-            self.put_task(child)
+        self.put_serial(name, (data, children))
+
         return children
 
-    def put_serial(self, name: TaskName, serialized: tuple[bytes, list[TaskName]]):
+    def put_serial(self, name: TaskName,
+            serialized: tuple[bytes, list[TaskReference]]):
         """
         Simply pass the underlying object to the underlying cold cache.
 
-        No serialization involved, except for the children
+        No serialization involved, except for the children. The children must be
+        legal references ; that is, it is not permitted to store a task before
+        its children definitions have been stored
         """
         data, children = serialized
 
         assert not isinstance(children, bytes) # guard against legacy code
 
         self.serialcache[name + b'.data'] = data
-        self.serialcache[name + b'.children'] = msgpack.packb(children)
+        self.serialcache[name + b'.children'] = msgpack.packb(
+                [c.name for c in children]
+                )
 
     def put_task_def(self, task_def: TaskDef) -> None:
         """
@@ -190,6 +188,17 @@ class CacheStack():
             return
 
         self.serialcache[key] = dump_model(task_def)
+
+    def put_child_task_def(self, task_def: gtt.ChildTaskDef) -> TaskReference:
+        """
+        Put a child task def.
+
+        Since these never themselves have children (as opposed to core or
+        literal tasks, e.g., this is enough to generate a reference to the child
+        task
+        """
+        self.put_task_def(task_def)
+        return gtt.TaskReference(task_def.name)
 
     def put_task(self, task: Task) -> TaskReference:
         """
@@ -220,7 +229,8 @@ class CacheStack():
         """
         Loads a task definition, non-recursively
         """
-        return load_model(TaskDef, self.serialcache[name + b'.task'])
+        # Load with a union, I don't know any way to type this
+        return load_model(TaskDef, self.serialcache[name + b'.task']) # type: ignore[arg-type]
 
 def add_store_argument(parser, optional=False):
     """

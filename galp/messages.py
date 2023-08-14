@@ -4,12 +4,12 @@ Models for Galp messages
 Not in actual use yet
 """
 
-from typing import Literal, Annotated, TypeVar, TypeAlias, Union
+from typing import Literal, Annotated, TypeVar
 from enum import Enum
 from pydantic import BaseModel, Field, PlainSerializer
 
 from . import task_types as tt
-from .task_types import TaskName, TaskDef, CoreTaskDef
+from .task_types import TaskName, TaskDef, CoreTaskDef, TaskReference
 
 class Role(str, Enum):
     """
@@ -138,7 +138,7 @@ class Put(Message):
     Atrributes:
         name: the task name whose result is sent
         data: the serialized result data
-        children: the subordinate task names that are linked from within the
+        children: the subordinate task references that are linked from within the
             serialized data
     """
 
@@ -146,7 +146,7 @@ class Put(Message):
 
     name: TaskName
     data: bytes
-    children: list[TaskName]
+    children: list[TaskReference]
 
 class Ready(Message):
     """

@@ -175,6 +175,10 @@ class TaskReference:
     name: TaskName
 
     def tree_print(self, indent: int = 0) -> str:
+        """
+        Debug-friendly printing
+        """
+        _ = indent
         return repr(self)
 
 @dataclass
@@ -225,6 +229,9 @@ class TaskNode:
         return galp.steps.getitem(self, index)
 
     def tree_print(self, indent: int = 0) -> str:
+        """
+        Debug-friendly printing
+        """
         pad = '    ' * indent
         if not self.dependencies:
             return pad + repr(self)

@@ -263,9 +263,7 @@ class WorkerProtocol(ReplyProtocol):
         # Case 1: both def and children, DONE
         if task_def is not None and children is not None:
             logging.info('STAT: DONE %s', msg.name)
-            # Issue 86: don't create References, get them from store
-            return gm.Done(task_def=task_def, children=[TaskReference(c) for c
-                                                        in children])
+            return gm.Done(task_def=task_def, children=children)
 
         # Case 2: only def, FOUND
         if task_def is not None:
