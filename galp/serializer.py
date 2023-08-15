@@ -8,7 +8,7 @@ import logging
 import msgpack # type: ignore[import] # Issue 85
 import dill # type: ignore[import] # Issue 85
 
-from pydantic import BaseModel, ValidationError, TypeAdapter
+from pydantic import BaseModel, ValidationError, TypeAdapter, RootModel
 
 from galp.task_types import Task, StepType, TaskNode, TaskReference
 
@@ -75,13 +75,21 @@ def serialize_child(index):
 
 def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
     """
-    Serialize pydantic model with msgpack
+    Serialize pydantic model or dataclass with msgpack
 
     Args:
         model: the pydantic model to dump
         exclude: set of fields to exclude from the serialization
     """
-    return msgpack.dumps(model.model_dump(exclude=exclude))
+    if hasattr(model, 'model_dump'):
+        dump = model.model_dump(exclude=exclude)
+    else:
+        dump = (
+                RootModel[type(model)] # type: ignore[misc] # pydantic magic
+                (model).model_dump(exclude=exclude)
+                )
+    return msgpack.dumps(dump)
+
 
 T = TypeVar('T', bound=BaseModel)
 

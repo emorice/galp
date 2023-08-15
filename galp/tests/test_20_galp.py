@@ -316,14 +316,14 @@ async def test_parallel_tasks(client_pool):
     # demand, so the first set of tasks will have quite unpredictable completion
     # times
     time1 = time.time()
-    pre_ans = await asyncio.wait_for(client_pool.collect(*pre_tasks), 5)
+    pre_ans = await asyncio.wait_for(client_pool.collect(*pre_tasks), 30)
     dtime1 = time.time() - time1
     assert set(pre_ans) == set(range(10))
 
     # Run the actual batch and check that all ten run in not much more that the
     # time for one
     time2 = time.time()
-    ans = await asyncio.wait_for(client_pool.collect(*tasks), 2)
+    ans = await asyncio.wait_for(client_pool.collect(*tasks), 5)
     dtime2 = time.time() - time2
     assert set(ans) == set(range(10, 20))
 

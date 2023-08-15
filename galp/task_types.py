@@ -167,10 +167,14 @@ TaskDef = Annotated[
 @dataclass
 class TaskReference:
     """
-    A reference to an existing task by name, stripped of all the task definition
-    details.
+    A reference to a defined task by name.
 
-    The only valid operation on such a task is to read its name.
+    This is intended to be created when a task definition is commited to
+    storage, so that a task reference exists if and only if a task definition
+    has been stored succesfully.
+
+    This contract is recursive, in the sense that a TaskReference should be
+    issued only when all the inputs of a task have themselves been registered.
     """
     name: TaskName
 
@@ -245,6 +249,22 @@ class TaskNode:
 
 
 Task: TypeAlias = TaskNode | TaskReference
+
+@dataclass
+class ResultReference:
+    """
+    A reference to the sucessful result of task execution.
+
+    Not recursive, the task can have child tasks still to be executed. On the
+    other hand, child tasks must be at least registered, as shown by the
+    children field being typed as TaskReference.
+
+    This is intended to be created when a task result is commited to storage, so
+    that a result reference exists if and only if a task has been run and the
+    result stored succesfully.
+    """
+    name: TaskName
+    children: list[TaskReference]
 
 # pylint: disable=too-few-public-methods
 # This is a forward declaration of graph.Step

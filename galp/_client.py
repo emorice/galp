@@ -362,16 +362,15 @@ class BrokerProtocol(ReplyProtocol):
         """
         Send GET for task if not locally available
         """
-        children = None
         try:
-            children = self.store.get_children(name)
+            result_ref = self.store.get_children(name)
         except KeyError:
             # Not found, send a normal GET
             return gm.Get(name=name)
 
         # Found, mark command as done and pass on children
         self.schedule_new(
-            self.script.commands['GET', name].done(children)
+            self.script.commands['GET', name].done(result_ref.children)
             )
         # Supress normal output, removing task from queue
         return None
@@ -428,7 +427,7 @@ class BrokerProtocol(ReplyProtocol):
         command = self.script.commands.get(('SUBMIT', name))
         if command:
             self.schedule_new(
-                command.done(msg.children)
+                command.done(msg.result)
                 )
 
         command = self.script.commands.get(('STAT', name))

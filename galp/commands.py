@@ -483,7 +483,7 @@ class Get(NamedPrimitive[list[gtt.TaskReference], str]):
     Get a single resource part
     """
 
-class Submit(InertCommand[list[gtt.TaskReference], str]):
+class Submit(InertCommand[gtt.ResultReference, str]):
     """
     Remotely execute a single step
     """
@@ -550,7 +550,7 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
     """
     # Short circuit for tasks already processed
     if isinstance(stat_result, gm.Done):
-        return stat_result.children
+        return stat_result.result.children
 
     # gm.Found()
     task_def = stat_result.task_def
@@ -595,7 +595,12 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
     if dry or isinstance(task_def, gtt.ChildTaskDef):
         return gather_deps.then(lambda _: [])
 
-    return gather_deps.then(lambda _: Submit(task_def)) # type: ignore[arg-type] # False positive
+    return (
+            gather_deps
+            .then(lambda _: Submit(task_def) # type: ignore[arg-type] # False positive
+                .then(lambda result: result.children)
+                )
+            )
 
 def rsubmit(task: gtt.Task, dry: bool = False):
     """

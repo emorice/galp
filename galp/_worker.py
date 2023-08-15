@@ -25,6 +25,7 @@ import galp.steps
 import galp.cli
 import galp.messages as gm
 import galp.commands as cm
+import galp.task_types as gtt
 
 
 from galp.config import load_config
@@ -201,8 +202,13 @@ class WorkerProtocol(ReplyProtocol):
         # central locking mechanism
         # NOTE: that's probably not correct for multi-output tasks !
         if self.store.contains(name):
-            logging.info('SUBMIT: Cache HIT: %s', name)
-            return gm.Done(task_def=task_def, children=[])
+            try:
+                result_ref = self.store.get_children(name)
+                logging.info('SUBMIT: Cache HIT: %s', name)
+                return gm.Done(task_def=task_def, result=result_ref)
+            except StoreReadError:
+                logging.exception('SUBMIT: Failed cache hit: %s', name)
+                return gm.Failed(task_def=task_def)
 
         # If not in cache, resolve metadata and run the task
         replies : list[gm.Message] = [gm.Doing(name=name)]
@@ -254,16 +260,16 @@ class WorkerProtocol(ReplyProtocol):
         except KeyError:
             pass
 
-        children = None
+        result_ref = None
         try:
-            children = self.store.get_children(msg.name)
+            result_ref = self.store.get_children(msg.name)
         except KeyError:
             pass
 
         # Case 1: both def and children, DONE
-        if task_def is not None and children is not None:
+        if task_def is not None and result_ref is not None:
             logging.info('STAT: DONE %s', msg.name)
-            return gm.Done(task_def=task_def, children=children)
+            return gm.Done(task_def=task_def, result=result_ref)
 
         # Case 2: only def, FOUND
         if task_def is not None:
@@ -293,9 +299,9 @@ class WorkerProtocol(ReplyProtocol):
                 raise NotImplementedError(command)
             name = command.name
             try:
-                children = self.store.get_children(name)
+                result_ref = self.store.get_children(name)
                 commands.extend(
-                    self.script.commands[command.key].done(children)
+                    self.script.commands[command.key].done(result_ref.children)
                     )
                 continue
             except StoreReadError:
@@ -315,11 +321,14 @@ class WorkerProtocol(ReplyProtocol):
 class JobResult:
     """
     Result of executing a step
+
+    Attributes:
+        result: None iff the task has failed, other wise a reference to the
+            stored result.
     """
     request: RoutedMessage
     submit: gm.Submit
-    success: bool
-    result: list[TaskReference]
+    result: gtt.ResultReference | None
 
 class Worker:
     """
@@ -362,8 +371,8 @@ class Worker:
             task = await self.galp_jobs.get()
             job = await task
             task_def = job.submit.task_def
-            if job.success:
-                reply = gm.Done(task_def=task_def, children=job.result)
+            if job.result is not None:
+                reply = gm.Done(task_def=task_def, result=job.result)
             else:
                 reply = gm.Failed(task_def=task_def)
             await self.transport.send_message(
@@ -471,14 +480,14 @@ class Worker:
 
             # Store the result back, along with the task definition
             self.protocol.store.put_task_def(task_def)
-            children = self.protocol.store.put_native(name, result, task_def.scatter)
+            result_ref = self.protocol.store.put_native(name, result, task_def.scatter)
 
-            return JobResult(request, msg, True, children)
+            return JobResult(request, msg, result_ref)
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return JobResult(request, msg, False, [])
+            return JobResult(request, msg, None)
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.

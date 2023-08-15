@@ -79,7 +79,7 @@ class CacheStack():
         native = self.serializer.loads(data, native_children)
         return native
 
-    def get_children(self, name: TaskName) -> list[TaskReference]:
+    def get_children(self, name: TaskName) -> gtt.ResultReference:
         """
         Gets the list of sub-resources of a resource in store
 
@@ -99,7 +99,7 @@ class CacheStack():
         except Exception as exc:
             raise StoreReadError from exc
 
-        return children
+        return gtt.ResultReference(name, children)
 
     def get_serial(self, name: TaskName) -> tuple[bytes, list[TaskReference]]:
         """
@@ -109,16 +109,16 @@ class CacheStack():
             a tuple of one bytes object and one list of taskname (data, children).
             If there is no data, None is returned instead.
         """
-        children = self.get_children(name)
+        children_ref = self.get_children(name)
 
         try:
             data = self.serialcache[name + b'.data']
         except KeyError:
             data = None
-        return data, children
+        return data, children_ref.children
 
     def put_native(self, name: TaskName, obj: Any, scatter: int | None = None
-                   ) -> list[TaskReference]:
+                   ) -> gtt.ResultReference:
         """Puts a native object in the cache.
 
         For now this eagerly serializes it and commits it to persistent cache.
@@ -153,13 +153,13 @@ class CacheStack():
 
             payload = msgpack.packb(struct)
             self.put_serial(name, (payload, child_refs))
-            return []
+            return gtt.ResultReference(name, children=[])
 
         data, children = self.serializer.dumps(obj, self.put_task)
 
         self.put_serial(name, (data, children))
 
-        return children
+        return gtt.ResultReference(name, children)
 
     def put_serial(self, name: TaskName,
             serialized: tuple[bytes, list[TaskReference]]):
