@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from functools import total_ordering
 
 from pydantic_core import CoreSchema, core_schema
-from pydantic import GetCoreSchemaHandler, BaseModel, Field, PlainSerializer
+from pydantic import (GetCoreSchemaHandler, BaseModel, Field, PlainSerializer,
+        model_validator)
 
 import galp
 from . import graph
@@ -265,6 +266,27 @@ class ResultReference:
     """
     name: TaskName
     children: list[TaskReference]
+
+class ReadyCoreTaskDef(BaseModel):
+    """
+    A core task def, along with a ResultReference for each input.
+
+    Typical of a task that is ready to be excuted since all its dependencies are
+    fulfilled
+    """
+    task_def: CoreTaskDef
+    inputs: dict[TaskName, ResultReference]
+
+    @model_validator(mode='after')
+    def check_inputs(self) -> 'ReadyCoreTaskDef':
+        """
+        Checks that the provided inputs match the expected inputs
+        """
+        if ({tin.name for tin in self.task_def.dependencies(TaskOp.BASE)}
+                != self.inputs.keys):
+            raise ValueError('Wrong inputs')
+        return self
+
 
 # pylint: disable=too-few-public-methods
 # This is a forward declaration of graph.Step
