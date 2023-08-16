@@ -10,7 +10,6 @@ import msgpack # type: ignore[import] # Issue 85
 import galp.task_types as gtt
 from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
         TaskNode, LiteralTaskDef)
-from galp.graph import make_child_task_def
 from galp.serializer import Serializer, serialize_child, dump_model, load_model
 
 class StoreReadError(Exception):
@@ -142,7 +141,7 @@ class CacheStack():
             struct = []
             _len = 0
             for i, sub_obj in enumerate(obj):
-                sub_ndef = make_child_task_def(name, i)
+                sub_ndef = gtt.make_child_task_def(name, i)
                 child_refs.append(self.put_child_task_def(sub_ndef))
                 # Recursive scatter is nor a thing yet, though we easily could
                 self.put_native(sub_ndef.name, sub_obj, scatter=None)

@@ -20,7 +20,6 @@ import galp.messages as gm
 import galp.commands as cm
 
 from galp import async_utils
-from galp.graph import ensure_task_node
 from galp.cache import CacheStack
 from galp.serializer import Serializer, DeserializeError
 from galp.protocol import ProtocolEndException, RoutedMessage
@@ -28,7 +27,8 @@ from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
-from galp.task_types import TaskName, TaskNode, LiteralTaskDef, QueryTaskDef
+from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, QueryTaskDef,
+    ensure_task_node)
 
 class TaskStatus(IntEnum):
     """

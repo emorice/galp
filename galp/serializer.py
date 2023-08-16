@@ -2,6 +2,8 @@
 Serialization utils
 """
 
+from __future__ import annotations
+
 from typing import Any, List, Callable, TypeVar
 import logging
 
@@ -10,8 +12,8 @@ import dill # type: ignore[import] # Issue 85
 
 from pydantic import BaseModel, ValidationError, TypeAdapter, RootModel
 
-from galp.task_types import Task, StepType, TaskNode, TaskRef
-from galp.messages import BaseMessage
+from galp import task_types as gtt
+#import galp.messages as gm # fixme: cyclic dep
 
 class DeserializeError(ValueError):
     """
@@ -39,8 +41,8 @@ class Serializer:
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj: Any, save: Callable[[TaskNode], TaskRef]
-              ) -> tuple[bytes, list[TaskRef]]:
+    def dumps(self, obj: Any, save: Callable[[gtt.TaskNode], gtt.TaskRef]
+              ) -> tuple[bytes, list[gtt.TaskRef]]:
         """
         Serialize the data.
 
@@ -57,7 +59,7 @@ class Serializer:
                 serialized objects, in order to never create serialized objects
                 with unresolvable task references.
         """
-        children : list[TaskRef] = []
+        children : list[gtt.TaskRef] = []
         # Modifies children in place
         payload = msgpack.packb(obj, default=_default(children, save), use_bin_type=True)
         return payload, children
@@ -74,7 +76,7 @@ def serialize_child(index):
         index.to_bytes(4, 'little')
         )
 
-def dump_model(model: BaseModel | BaseMessage, exclude: set[str] | None = None) -> bytes:
+def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
     """
     Serialize pydantic model or dataclass with msgpack
 
@@ -136,8 +138,8 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
 _CHILD_EXT_CODE = 0
 _DILL_EXT_CODE = 1
 
-def _default(children: list[TaskRef],
-             save: Callable[[TaskNode], TaskRef]
+def _default(children: list[gtt.TaskRef],
+             save: Callable[[gtt.TaskNode], gtt.TaskRef]
              ) -> Callable[[Any], msgpack.ExtType]:
     """
     Out-of-band sub-tasks and dill fallback
@@ -145,9 +147,9 @@ def _default(children: list[TaskRef],
     Modifies children in-place
     """
     def _children_default(obj):
-        if isinstance(obj, StepType):
+        if isinstance(obj, gtt.StepType):
             obj = obj()
-        if isinstance(obj, Task): # type: ignore[misc] # False positive
+        if isinstance(obj, gtt.Task): # type: ignore[misc] # False positive
             index = len(children)
             children.append(save(obj))
             return msgpack.ExtType(

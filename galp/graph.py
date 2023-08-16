@@ -1,107 +1,14 @@
 """
 General routines to build and operate on graphs of tasks.
 """
-import hashlib
 import inspect
 import warnings
 import functools
 
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable
 
-import msgpack # type: ignore[import] # Issue #85
-
-from galp.task_types import (TaskName, StepType, TaskNode, TaskInput, Task,
-        LiteralTaskDef, CoreTaskDef, ChildTaskDef, QueryTaskDef,
-        TaskOp, BaseTaskDef, TaskRef)
-from galp.serializer import Serializer
-
-_serializer = Serializer() # Actually stateless, safe
-
-def hash_one(payload: bytes) -> bytes:
-    """
-    Hash argument with sha256
-    """
-    return hashlib.sha256(payload).digest()
-
-def obj_to_name(canon_rep: Any) -> TaskName:
-    """
-    Generate a task name from a canonical representation of task made from basic
-    types.
-
-    (Current implememtation may not be canonical yet, this is an aspirational
-    docstring)
-    """
-    payload = msgpack.packb(canon_rep)
-    name = TaskName(hash_one(payload))
-    return name
-
-def ensure_task_node(obj: Any) -> TaskNode:
-    """Makes object into a task in some way.
-
-    If it's a step, try to call it to get a task.
-    Else, wrap into a Literal task
-    """
-    if isinstance(obj, TaskNode):
-        return obj
-    if isinstance(obj, StepType):
-        return obj()
-    return make_literal_task(obj)
-
-def ensure_task_input(obj: Any) -> tuple[TaskInput, Task]:
-    """
-    Makes object a task or a simple query
-
-    Returns: a tuple (tin, node) where tin is a task input suitable for
-        referencing the task while node is the full task object
-    """
-    if isinstance(obj, TaskNode) and isinstance(obj.task_def, QueryTaskDef):
-        # Only allowed query for now, will be extended in the future
-        dep, = obj.dependencies
-        if obj.task_def.query in ['$base']:
-            return (
-                    TaskInput(op=TaskOp.BASE, name=obj.task_def.subject),
-                    dep
-                    )
-    # Everything else is treated as task to be recursively run and loaded
-    node = ensure_task_node(obj)
-    return (
-            TaskInput(op=TaskOp.SUB, name=node.name),
-            node
-            )
-
-T = TypeVar('T', bound=BaseTaskDef)
-
-def make_task_def(cls: type[T], attrs, extra=None) -> T:
-    """
-    Generate a name from attribute and extra and create a named task def of the
-    wanted type
-    """
-    name = obj_to_name(msgpack.dumps((attrs, extra),
-        default=lambda m: m.model_dump()))
-    return cls(name=name, **attrs)
-
-def make_literal_task(obj: Any) -> TaskNode:
-    """
-    Build a Literal TaskNode out of an arbitrary python object
-    """
-    dependencies = []
-    def save(task):
-        dependencies.append(task)
-        return TaskRef(task.name)
-    # Nice to have: more robust hashing, but this is enough for most case where
-    # literal resources are a good fit (more complex objects would tend to be
-    # actual step outputs)
-    obj_bytes, _dependencies_refs = _serializer.dumps(obj, save)
-
-    tdef = {'children': [dep.name for dep in dependencies]}
-    # Literals are an exception to naming: they are named by value, so the
-    # name is *not* derived purely from the definition object
-
-    return TaskNode(
-            task_def=make_task_def(LiteralTaskDef, tdef, obj_bytes),
-            dependencies=dependencies,
-            data=obj,
-            )
+import galp.task_types as gtt
+from galp.task_types import (StepType, TaskNode, CoreTaskDef, QueryTaskDef)
 
 def raise_if_bad_signature(step: 'Step', args, kwargs) -> None:
     """
@@ -135,11 +42,11 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
     kwarg_inputs = {}
     nodes = []
     for arg in args:
-        tin, node = ensure_task_input(arg)
+        tin, node = gtt.ensure_task_input(arg)
         arg_inputs.append(tin)
         nodes.append(node)
     for key, arg in kwargs.items():
-        tin, node = ensure_task_input(arg)
+        tin, node = gtt.ensure_task_input(arg)
         kwarg_inputs[key] = tin
         nodes.append(node)
 
@@ -151,31 +58,9 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
             'scatter':items
             }
 
-    ndef = make_task_def(CoreTaskDef, tdef)
+    ndef = gtt.make_task_def(CoreTaskDef, tdef)
 
     return TaskNode(task_def=ndef, dependencies=nodes)
-
-def make_child_task_def(parent: TaskName, index: int) -> ChildTaskDef:
-    """
-    Derive a Child TaskDef from a given parent name
-
-    This does not check whether the operation is legal
-    """
-    return make_task_def(ChildTaskDef, {'parent': parent, 'index': index})
-
-def make_child_task(parent: TaskNode, index: int) -> TaskNode:
-    """
-    Derive a Child TaskNode from a given task node
-
-    This does not check whether the operation is legal
-    """
-    assert parent.task_def.scatter is not None
-    assert index <= parent.task_def.scatter
-
-    return TaskNode(
-            task_def=make_child_task_def(parent.name, index),
-            dependencies=[parent]
-            )
 
 class Step(StepType):
     """Object wrapping a function that can be called as a pipeline step
@@ -567,10 +452,10 @@ def query(subject: Any, query_doc: Any) -> TaskNode:
     """
     Build a Query task node
     """
-    subj_node = ensure_task_node(subject)
+    subj_node = gtt.ensure_task_node(subject)
     tdef = {'query': query_doc, 'subject': subj_node.name}
     return TaskNode(
-            task_def=make_task_def(
+            task_def=gtt.make_task_def(
                 QueryTaskDef, tdef
                 ),
             dependencies=[subj_node]

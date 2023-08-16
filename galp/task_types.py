@@ -3,18 +3,19 @@ Abstract task types defintions
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+from functools import total_ordering
+import hashlib
 from typing import (Any, Literal, Union, Annotated, TypeAlias, TypeVar, Generic,
         Iterable)
-from enum import Enum
-from dataclasses import dataclass
-from functools import total_ordering
 
+import msgpack # type: ignore[import] # Issue #85
 from pydantic_core import CoreSchema, core_schema
 from pydantic import (GetCoreSchemaHandler, BaseModel, Field, PlainSerializer,
         model_validator)
 
 import galp
-from . import graph
 
 class TaskName(bytes):
     """
@@ -224,13 +225,13 @@ class TaskNode:
         returns a generator yielding sub-task objects allowing to refer to
         individual members of the result independently.
         """
-        return (graph.make_child_task(self, i) for i in
+        return (make_child_task(self, i) for i in
                 range(self.scatter))
 
     def __getitem__(self, index):
         if self.scatter is not None:
             assert index <= self.scatter, 'Indexing past declared scatter'
-            return graph.make_child_task(self, index)
+            return make_child_task(self, index)
         # Hard getitem, we actually insert an extra task
         return galp.steps.getitem(self, index)
 
@@ -251,6 +252,114 @@ class TaskNode:
 
 Task: TypeAlias = TaskNode | TaskRef
 
+def hash_one(payload: bytes) -> bytes:
+    """
+    Hash argument with sha256
+    """
+    return hashlib.sha256(payload).digest()
+
+def obj_to_name(canon_rep: Any) -> TaskName:
+    """
+    Generate a task name from a canonical representation of task made from basic
+    types.
+
+    (Current implememtation may not be canonical yet, this is an aspirational
+    docstring)
+    """
+    payload = msgpack.packb(canon_rep)
+    name = TaskName(hash_one(payload))
+    return name
+
+def ensure_task_node(obj: Any) -> 'TaskNode':
+    """Makes object into a task in some way.
+
+    If it's a step, try to call it to get a task.
+    Else, wrap into a Literal task
+    """
+    if isinstance(obj, TaskNode):
+        return obj
+    if isinstance(obj, StepType):
+        return obj()
+    return make_literal_task(obj)
+
+def ensure_task_input(obj: Any) -> tuple[TaskInput, Task]:
+    """
+    Makes object a task or a simple query
+
+    Returns: a tuple (tin, node) where tin is a task input suitable for
+        referencing the task while node is the full task object
+    """
+    if isinstance(obj, TaskNode) and isinstance(obj.task_def, QueryTaskDef):
+        # Only allowed query for now, will be extended in the future
+        dep, = obj.dependencies
+        if obj.task_def.query in ['$base']:
+            return (
+                    TaskInput(op=TaskOp.BASE, name=obj.task_def.subject),
+                    dep
+                    )
+    # Everything else is treated as task to be recursively run and loaded
+    node = ensure_task_node(obj)
+    return (
+            TaskInput(op=TaskOp.SUB, name=node.name),
+            node
+            )
+
+T = TypeVar('T', bound=BaseTaskDef)
+
+def make_task_def(cls: type[T], attrs, extra=None) -> T:
+    """
+    Generate a name from attribute and extra and create a named task def of the
+    wanted type
+    """
+    name = obj_to_name(msgpack.dumps((attrs, extra),
+        default=lambda m: m.model_dump()))
+    return cls(name=name, **attrs)
+
+def make_literal_task(obj: Any) -> TaskNode:
+    """
+    Build a Literal TaskNode out of an arbitrary python object
+    """
+    dependencies = []
+    def save(task):
+        dependencies.append(task)
+        return TaskRef(task.name)
+    # Nice to have: more robust hashing, but this is enough for most case where
+    # literal resources are a good fit (more complex objects would tend to be
+    # actual step outputs)
+    serializer = galp.serializer.Serializer()
+    obj_bytes, _dependencies_refs = serializer.dumps(obj, save)
+
+    tdef = {'children': [dep.name for dep in dependencies]}
+    # Literals are an exception to naming: they are named by value, so the
+    # name is *not* derived purely from the definition object
+
+    return TaskNode(
+            task_def=make_task_def(LiteralTaskDef, tdef, obj_bytes),
+            dependencies=dependencies,
+            data=obj,
+            )
+
+def make_child_task_def(parent: TaskName, index: int) -> ChildTaskDef:
+    """
+    Derive a Child TaskDef from a given parent name
+
+    This does not check whether the operation is legal
+    """
+    return make_task_def(ChildTaskDef, {'parent': parent, 'index': index})
+
+def make_child_task(parent: TaskNode, index: int) -> TaskNode:
+    """
+    Derive a Child TaskNode from a given task node
+
+    This does not check whether the operation is legal
+    """
+    assert parent.task_def.scatter is not None
+    assert index <= parent.task_def.scatter
+
+    return TaskNode(
+            task_def=make_child_task_def(parent.name, index),
+            dependencies=[parent]
+            )
 TaskT_co = TypeVar('TaskT_co', TaskRef, Task, covariant=True)
 
 @dataclass
