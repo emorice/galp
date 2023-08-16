@@ -61,7 +61,6 @@ def test_cli_jobs(tmpdir):
 
     assert out == str(galp.steps.galp_hello.function())
 
-
 def test_cli_keep_going(tmpdir):
     """
     Start a failing job

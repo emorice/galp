@@ -23,7 +23,6 @@ class SynClient(Protocol):
         self.socket.connect(endpoint)
         self.serializer = Serializer()
 
-
     def __del__(self):
         self.socket.close(linger=1)
 

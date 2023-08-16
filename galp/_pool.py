@@ -134,7 +134,6 @@ class Pool:
                 await self.notify_exit(rpid)
                 self.pids.remove(rpid)
 
-
     def kill_all(self, sig=signal.SIGTERM):
         """
         Kill all children and wait for them

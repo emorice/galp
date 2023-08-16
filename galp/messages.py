@@ -10,7 +10,7 @@ from dataclasses import field, dataclass
 from pydantic import Field, PlainSerializer
 
 from . import task_types as gtt
-from .task_types import TaskName, TaskDef, CoreTaskDef, TaskReference
+from .task_types import TaskName, TaskDef, CoreTaskDef, TaskRef
 
 class Role(str, Enum):
     """
@@ -19,16 +19,16 @@ class Role(str, Enum):
     POOL = 'pool'
     WORKER = 'worker'
 
-M = TypeVar('M', bound='Message')
+M = TypeVar('M', bound='BaseMessage')
 
 @dataclass
-class Message:
+class BaseMessage:
     """
     Base class for messages
     """
 
 @dataclass
-class Doing(Message):
+class Doing(BaseMessage):
     """
     A message signaling that a task has been allocated or started
 
@@ -40,7 +40,7 @@ class Doing(Message):
     verb: Literal['doing'] = field(default='doing', repr=False)
 
 @dataclass
-class Done(Message):
+class Done(BaseMessage):
     """
     A message signaling that a task has been succesful run
 
@@ -50,19 +50,19 @@ class Done(Message):
             execution
     """
     task_def: TaskDef
-    result: gtt.ResultReference
+    result: gtt.FlatResultRef
 
     verb: Literal['done'] = field(default='done', repr=False)
 
 @dataclass
-class Exit(Message):
+class Exit(BaseMessage):
     """
     A message asking a peer to leave the system
     """
     verb: Literal['exit'] = field(default='exit', repr=False)
 
 @dataclass
-class Exited(Message):
+class Exited(BaseMessage):
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
     other peer that detected the kill event
@@ -75,7 +75,7 @@ class Exited(Message):
     verb: Literal['exited'] = field(default='exited', repr=False)
 
 @dataclass
-class Failed(Message):
+class Failed(BaseMessage):
     """
     Signals that the execution of task has failed
 
@@ -87,7 +87,7 @@ class Failed(Message):
     verb: Literal['failed'] = field(default='failed', repr=False)
 
 @dataclass
-class Found(Message):
+class Found(BaseMessage):
     """
     A message notifying that a task was registered, but not yet executed
 
@@ -99,7 +99,7 @@ class Found(Message):
     verb: Literal['found'] = field(default='found', repr=False)
 
 @dataclass
-class Get(Message):
+class Get(BaseMessage):
     """
     A message asking for an already computed resource
 
@@ -118,7 +118,7 @@ class Get(Message):
         return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
 @dataclass
-class Illegal(Message):
+class Illegal(BaseMessage):
     """
     A message notifying that a previously sent message was malformed
 
@@ -130,7 +130,7 @@ class Illegal(Message):
     verb: Literal['illegal'] = field(default='illegal', repr=False)
 
 @dataclass
-class NotFound(Message):
+class NotFound(BaseMessage):
     """
     A message indicating that no trace of a task was found
 
@@ -142,7 +142,7 @@ class NotFound(Message):
     verb: Literal['not_found'] = field(default='not_found', repr=False)
 
 @dataclass
-class Put(Message):
+class Put(BaseMessage):
     """
     A message sending a serialized task result
 
@@ -154,12 +154,12 @@ class Put(Message):
     """
     name: TaskName
     data: bytes
-    children: list[TaskReference]
+    children: list[TaskRef]
 
     verb: Literal['put'] = field(default='put', repr=False)
 
 @dataclass
-class Ready(Message):
+class Ready(BaseMessage):
     """
     A message advertising a peer joining the system
 
@@ -174,7 +174,7 @@ class Ready(Message):
     verb: Literal['ready'] = field(default='ready', repr=False)
 
 @dataclass
-class Stat(Message):
+class Stat(BaseMessage):
     """
     A message asking if a task is defined or executed
 
@@ -193,7 +193,7 @@ class Stat(Message):
         return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
 @dataclass
-class Submit(Message):
+class Submit(BaseMessage):
     """
     A message asking for a task to be executed
 
@@ -211,7 +211,7 @@ class Submit(Message):
         """
         return f'{self.verb}:{self.task_def.name.hex()}'.encode('ascii')
 
-AnyMessage = Annotated[
+Message = Annotated[
         Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
         | Put | Ready | Stat | Submit,
         Field(discriminator='verb')

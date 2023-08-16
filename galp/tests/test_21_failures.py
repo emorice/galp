@@ -97,7 +97,6 @@ async def test_signals_busyloop(client, galp_set_one, sig):
 
     bg = asyncio.create_task(client.collect(task))
 
-
     #FIXME: we should wait for the DOING message instead
     await asyncio.sleep(1)
 
@@ -200,7 +199,6 @@ async def test_refcount(client):
         for i in range(2)
         ]
     ok_task = gts.refcount(0, fail=False)
-
 
     fails = await asyncio.wait_for(
         client.collect(*fail_tasks, return_exceptions=True),

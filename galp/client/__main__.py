@@ -40,7 +40,6 @@ galp.cli.setup('client', args.log_level)
 module = import_module(args.module)
 _target = getattr(module, args.target)
 
-
 async def run(target):
     """
     Create a client and run the pipeline

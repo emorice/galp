@@ -4,7 +4,7 @@ query system
 import galp
 import galp.tests.steps as gts
 
-from galp.task_types import TaskReference
+from galp.task_types import TaskRef
 
 def test_query_status(tmpdir):
     """
@@ -74,7 +74,7 @@ def test_query_base(tmpdir):
             store=tmpdir, steps=['galp.tests.steps'])
 
     assert len(ans) == 2
-    assert all(isinstance(t, TaskReference) for t in ans)
+    assert all(isinstance(t, TaskRef) for t in ans)
 
 def test_query_index(tmpdir):
     """
@@ -109,4 +109,4 @@ def test_base_task(tmpdir):
 
     ans = galp.run(graph, store=tmpdir, steps=['galp.tests.steps'])
 
-    assert ans == str(TaskReference)
+    assert ans == str(TaskRef)

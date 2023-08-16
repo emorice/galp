@@ -191,7 +191,6 @@ def query_to_op(cmd: _Query, query_doc) -> Operator:
 
     raise NotImplementedError(cmd.query)
 
-
 class Base(Operator):
     """
     Base operator, returns shallow object itself with the linked tasks left as
@@ -273,7 +272,7 @@ class Args(Operator):
             except ValueError: # keyword argument
                 target = task_def.kwargs[index].name
             sub_commands.append(
-                query(self.script, gtt.TaskReference(target), sub_query)
+                query(self.script, gtt.TaskRef(target), sub_query)
                 )
         return sub_commands
 
@@ -304,7 +303,7 @@ class Children(Operator):
     """
     requires = staticmethod(cm.ssubmit)
 
-    def _recurse(self, children: list[gtt.TaskReference]):
+    def _recurse(self, result: gtt.ResultRef):
         """
         Build a list of sub-queries for children of subject task
         from the children list obtained from SRUN
@@ -322,12 +321,12 @@ class Children(Operator):
                 raise NotImplementedError('Only one sub_query supported when '
                         'using universal children queries at the moment')
             child_subqueries = { i: child_subqueries['*']
-                    for i in range(len(children))
+                    for i in range(len(result.children))
                     }
         for index, sub_query in child_subqueries.items():
             try:
                 num_index = int(index)
-                target = children[num_index]
+                target = result.children[num_index]
             except ValueError: # key-indexed child
                 raise NotImplementedError(index) from None
             sub_commands.append(
@@ -372,7 +371,7 @@ class GetItem(Operator, named=False):
                 f'task, cannot apply sub_query "{sub_query}" to it'
                 )
 
-        return query(self.script, gtt.TaskReference(task.name), sub_query)
+        return query(self.script, gtt.TaskRef(task.name), sub_query)
 
     def _result(self, _srun_cmd, subs):
         """
@@ -428,7 +427,7 @@ class Iterate(Operator, named=False):
             # Issue # 81
             sub_query_commands.append(
                     query(self.script,
-                        task_nodes.get(task.name, gtt.TaskReference(task.name)),
+                        task_nodes.get(task.name, gtt.TaskRef(task.name)),
                         sub_query)
                     )
 

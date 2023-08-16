@@ -69,7 +69,6 @@ def create_app(config):
         step = steps[step_name]
         task = step()
 
-
         if step.is_view:
             # inject deps and check for missing args
             task = step()
@@ -81,9 +80,9 @@ def create_app(config):
             ## Define how to fetch missing pieces (direct read from store)
             proto = None # fwd decl
             def _schedule(command: cm.InertCommand):
-                name = command.name
                 if not isinstance(command, cm.Get):
                     raise NotImplementedError
+                name = command.name
                 if name not in proto.store:
                     serialized = store.get_serial(name)
                     proto.store.put_serial(name, serialized)

@@ -6,7 +6,7 @@ import os
 import signal
 import psutil
 import zmq
-import msgpack
+import msgpack # type: ignore[import]
 
 import pytest
 from async_timeout import timeout
@@ -42,10 +42,10 @@ def load_message(msg: list[bytes]) -> gm.Message:
     Deserialize message body
     """
     assert len(msg) == 2 # null, payload
-    return TypeAdapter(gm.AnyMessage).validate_python({
+    return TypeAdapter(gm.Message).validate_python({
         'forward': [], 'incoming': [],
         **msgpack.loads(msg[-1])
-        })
+        }) # type: ignore[return-value] # magic
 
 def zmq_recv_message(socket) -> gm.Message:
     """
@@ -109,7 +109,6 @@ def test_illegals(worker_socket, msg_body):
 
     msg = zmq_recv_message(socket)
     assert isinstance(msg, gm.Illegal)
-
 
 async def test_fork_worker(tmpdir):
     """

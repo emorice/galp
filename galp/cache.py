@@ -8,7 +8,7 @@ import diskcache # type: ignore[import] # Issue 85
 import msgpack # type: ignore[import] # Issue 85
 
 import galp.task_types as gtt
-from galp.task_types import (TaskName, TaskReference, Task, TaskDef,
+from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
         TaskNode, LiteralTaskDef)
 from galp.graph import make_child_task_def
 from galp.serializer import Serializer, serialize_child, dump_model, load_model
@@ -39,7 +39,6 @@ class CacheStack():
 
         self.serializer = serializer
 
-
     def contains(self, name: TaskName) -> bool:
         """
         Whether the store contains a named resource
@@ -66,7 +65,7 @@ class CacheStack():
                 cache first, and this method will extract them and inject them
                 at the correct location in the returned object. If True, only
                 the root object is returned with any linked task replaced by a
-                TaskReference.
+                TaskRef.
         """
         data, children = self.get_serial(name)
 
@@ -79,7 +78,7 @@ class CacheStack():
         native = self.serializer.loads(data, native_children)
         return native
 
-    def get_children(self, name: TaskName) -> gtt.ResultReference:
+    def get_children(self, name: TaskName) -> gtt.FlatResultRef:
         """
         Gets the list of sub-resources of a resource in store
 
@@ -89,7 +88,7 @@ class CacheStack():
         """
         try:
             children = [
-                gtt.TaskReference(gtt.TaskName(child_name))
+                gtt.TaskRef(gtt.TaskName(child_name))
                 for child_name in msgpack.unpackb(
                     self.serialcache[name + b'.children']
                     )
@@ -99,9 +98,9 @@ class CacheStack():
         except Exception as exc:
             raise StoreReadError from exc
 
-        return gtt.ResultReference(name, children)
+        return gtt.FlatResultRef(name, children)
 
-    def get_serial(self, name: TaskName) -> tuple[bytes, list[TaskReference]]:
+    def get_serial(self, name: TaskName) -> tuple[bytes, list[TaskRef]]:
         """
         Get a serialized object form the cache.
 
@@ -118,7 +117,7 @@ class CacheStack():
         return data, children_ref.children
 
     def put_native(self, name: TaskName, obj: Any, scatter: int | None = None
-                   ) -> gtt.ResultReference:
+                   ) -> gtt.FlatResultRef:
         """Puts a native object in the cache.
 
         For now this eagerly serializes it and commits it to persistent cache.
@@ -153,16 +152,16 @@ class CacheStack():
 
             payload = msgpack.packb(struct)
             self.put_serial(name, (payload, child_refs))
-            return gtt.ResultReference(name, children=[])
+            return gtt.FlatResultRef(name, children=[])
 
         data, children = self.serializer.dumps(obj, self.put_task)
 
         self.put_serial(name, (data, children))
 
-        return gtt.ResultReference(name, children)
+        return gtt.FlatResultRef(name, children)
 
     def put_serial(self, name: TaskName,
-            serialized: tuple[bytes, list[TaskReference]]):
+            serialized: tuple[bytes, list[TaskRef]]):
         """
         Simply pass the underlying object to the underlying cold cache.
 
@@ -189,7 +188,7 @@ class CacheStack():
 
         self.serialcache[key] = dump_model(task_def)
 
-    def put_child_task_def(self, task_def: gtt.ChildTaskDef) -> TaskReference:
+    def put_child_task_def(self, task_def: gtt.ChildTaskDef) -> TaskRef:
         """
         Put a child task def.
 
@@ -198,13 +197,13 @@ class CacheStack():
         task
         """
         self.put_task_def(task_def)
-        return gtt.TaskReference(task_def.name)
+        return gtt.TaskRef(task_def.name)
 
-    def put_task(self, task: Task) -> TaskReference:
+    def put_task(self, task: Task) -> TaskRef:
         """
         Recursively store a task definition, and returns a reference that
         represent a saved task definition. This should normally be the only way
-        to create such a TaskReference.
+        to create such a TaskRef.
 
         If the task is a literal, this also stores the included task result as a
         resource.
@@ -223,7 +222,7 @@ class CacheStack():
         if isinstance(task.task_def, LiteralTaskDef):
             self.put_native(task.name, task.data)
 
-        return TaskReference(task.name)
+        return TaskRef(task.name)
 
     def get_task_def(self, name: TaskName) -> TaskDef:
         """

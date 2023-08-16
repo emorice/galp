@@ -3,7 +3,7 @@ Abstract task types defintions
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Literal, Union, Annotated, TypeAlias
+from typing import Any, Literal, Union, Annotated, TypeAlias, TypeVar, Generic
 from enum import Enum
 from dataclasses import dataclass
 from functools import total_ordering
@@ -166,7 +166,7 @@ TaskDef = Annotated[
         ]
 
 @dataclass
-class TaskReference:
+class TaskRef:
     """
     A reference to a defined task by name.
 
@@ -174,7 +174,7 @@ class TaskReference:
     storage, so that a task reference exists if and only if a task definition
     has been stored succesfully.
 
-    This contract is recursive, in the sense that a TaskReference should be
+    This contract is recursive, in the sense that a TaskRef should be
     issued only when all the inputs of a task have themselves been registered.
     """
     name: TaskName
@@ -248,34 +248,43 @@ class TaskNode:
         string += pad + '])'
         return string
 
+Task: TypeAlias = TaskNode | TaskRef
 
-Task: TypeAlias = TaskNode | TaskReference
+TaskT_co = TypeVar('TaskT_co', TaskRef, Task, covariant=True)
 
 @dataclass
-class ResultReference:
+class GenericResultRef(Generic[TaskT_co]):
     """
     A reference to the sucessful result of task execution.
 
     Not recursive, the task can have child tasks still to be executed. On the
     other hand, child tasks must be at least registered, as shown by the
-    children field being typed as TaskReference.
+    children field being typed as TaskRef.
 
     This is intended to be created when a task result is commited to storage, so
     that a result reference exists if and only if a task has been run and the
     result stored succesfully.
+
+    We have two instances of this template: with a TaskRef, it is serializable
+    and can be included in messages. With an arbitary Task object (i.e., with
+    TaskNodes too), it is intended only for local use since we never want to
+    automatically serialize a whole task graph.
     """
     name: TaskName
-    children: list[TaskReference]
+    children: list[TaskT_co]
+
+ResultRef: TypeAlias = GenericResultRef[Task]
+FlatResultRef: TypeAlias = GenericResultRef[TaskRef]
 
 class ReadyCoreTaskDef(BaseModel):
     """
-    A core task def, along with a ResultReference for each input.
+    A core task def, along with a ResultRef for each input.
 
     Typical of a task that is ready to be excuted since all its dependencies are
     fulfilled
     """
     task_def: CoreTaskDef
-    inputs: dict[TaskName, ResultReference]
+    inputs: dict[TaskName, ResultRef]
 
     @model_validator(mode='after')
     def check_inputs(self) -> 'ReadyCoreTaskDef':
@@ -286,7 +295,6 @@ class ReadyCoreTaskDef(BaseModel):
                 != self.inputs.keys):
             raise ValueError('Wrong inputs')
         return self
-
 
 # pylint: disable=too-few-public-methods
 # This is a forward declaration of graph.Step

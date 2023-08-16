@@ -2,7 +2,7 @@
 Dashboard specific steps, aka views
 """
 
-import plotly.graph_objects as go
+import plotly.graph_objects as go # type: ignore[import]
 
 import galp
 

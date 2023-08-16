@@ -12,7 +12,7 @@ import msgpack # type: ignore[import] # Issue #85
 
 from galp.task_types import (TaskName, StepType, TaskNode, TaskInput, Task,
         LiteralTaskDef, CoreTaskDef, ChildTaskDef, QueryTaskDef,
-        TaskOp, BaseTaskDef, TaskReference)
+        TaskOp, BaseTaskDef, TaskRef)
 from galp.serializer import Serializer
 
 _serializer = Serializer() # Actually stateless, safe
@@ -87,7 +87,7 @@ def make_literal_task(obj: Any) -> TaskNode:
     dependencies = []
     def save(task):
         dependencies.append(task)
-        return TaskReference(task.name)
+        return TaskRef(task.name)
     # Nice to have: more robust hashing, but this is enough for most case where
     # literal resources are a good fit (more complex objects would tend to be
     # actual step outputs)

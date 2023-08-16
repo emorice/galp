@@ -330,7 +330,6 @@ async def test_parallel_tasks(client_pool):
     print(f'Warmup: {dtime1}s')
     print(f'Run   : {dtime2}s')
 
-
 async def test_variadic(client):
     """
     Run a task accepting variadic positional arguments

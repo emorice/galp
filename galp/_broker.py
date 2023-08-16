@@ -126,7 +126,6 @@ class CommonProtocol(ReplyProtocol):
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
-
     def on_exited(self, msg: gm.Exited):
         """
         Propagate failuer messages and free resources when worker is killed

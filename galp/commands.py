@@ -478,12 +478,12 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
-class Get(NamedPrimitive[list[gtt.TaskReference], str]):
+class Get(NamedPrimitive[list[gtt.TaskRef], str]):
     """
     Get a single resource part
     """
 
-class Submit(InertCommand[gtt.ResultReference, str]):
+class Submit(InertCommand[gtt.ResultRef, str]):
     """
     Remotely execute a single step
     """
@@ -536,7 +536,7 @@ def safe_stat(task: gtt.Task) -> Command[gm.Done | gm.Found, str]:
           )
 
 def ssubmit(task: gtt.Task, dry: bool = False
-            ) -> Command[Iterable[gtt.Task], str]:
+            ) -> Command[gtt.ResultRef, str]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
@@ -544,13 +544,13 @@ def ssubmit(task: gtt.Task, dry: bool = False
     return safe_stat(task).then(lambda statr: _ssubmit(task, statr, dry))
 
 def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
-             ) -> Iterable[gtt.Task] | Command[Iterable[gtt.Task], str]:
+             ) -> gtt.ResultRef | Command[gtt.ResultRef, str]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
     # Short circuit for tasks already processed
     if isinstance(stat_result, gm.Done):
-        return stat_result.result.children
+        return stat_result.result
 
     # gm.Found()
     task_def = stat_result.task_def
@@ -560,14 +560,16 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
         # Issue #78: at this point we should be making sure children are saved
         # before handing back references to them
         match task:
-            case gtt.TaskReference():
+            case gtt.TaskRef():
                 # If we have a reference to a literal, we assume the children
                 # definitions have been saved and we can refer to them
-                return list(map(gtt.TaskReference, task_def.children))
+                return gtt.ResultRef(task.name,
+                        list(map(gtt.TaskRef, task_def.children))
+                        )
             case gtt.TaskNode():
                 # Else, we can't hand out references but we have the true tasks
                 # instead
-                return task.dependencies
+                return gtt.ResultRef(task.name, task.dependencies)
 
     # Query, should never have reached this layer as queries have custom run
     # mechanics
@@ -578,9 +580,9 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
 
     # Collect dependencies
     deps: list[gtt.Task]
-    if isinstance(task, gtt.TaskReference):
+    if isinstance(task, gtt.TaskRef):
         # If a reference, by design the dep defs have been checked in
-        deps = [gtt.TaskReference(tin.name)
+        deps = [gtt.TaskRef(tin.name)
                 for tin in task_def.dependencies(gtt.TaskOp.BASE)]
     else:
         # If a node, we have the defs and pass them directly
@@ -593,13 +595,11 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
 
     # Issue final command
     if dry or isinstance(task_def, gtt.ChildTaskDef):
-        return gather_deps.then(lambda _: [])
+        return gather_deps.then(lambda _: gtt.ResultRef(task.name, []))
 
     return (
             gather_deps
-            .then(lambda _: Submit(task_def) # type: ignore[arg-type] # False positive
-                .then(lambda result: result.children)
-                )
+            .then(lambda _: Submit(task_def)) # type: ignore[arg-type] # False positive
             )
 
 def rsubmit(task: gtt.Task, dry: bool = False):
@@ -621,7 +621,8 @@ def rsubmit(task: gtt.Task, dry: bool = False):
     """
     return (
             ssubmit(task, dry)
-            .then(lambda children: Gather([rsubmit(c, dry) for c in children]))
+            .then(lambda result: Gather([rsubmit(c, dry)
+                for c in result.children]))
             )
 
 def run(task: gtt.Task, dry=False):

@@ -10,7 +10,8 @@ import dill # type: ignore[import] # Issue 85
 
 from pydantic import BaseModel, ValidationError, TypeAdapter, RootModel
 
-from galp.task_types import Task, StepType, TaskNode, TaskReference
+from galp.task_types import Task, StepType, TaskNode, TaskRef
+from galp.messages import BaseMessage
 
 class DeserializeError(ValueError):
     """
@@ -38,8 +39,8 @@ class Serializer:
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj: Any, save: Callable[[TaskNode], TaskReference]
-              ) -> tuple[bytes, list[TaskReference]]:
+    def dumps(self, obj: Any, save: Callable[[TaskNode], TaskRef]
+              ) -> tuple[bytes, list[TaskRef]]:
         """
         Serialize the data.
 
@@ -51,12 +52,12 @@ class Serializer:
         Args:
             obj: object to serialize
             save: callback to handle nested task objects. The callback should
-                return a TaskReference after and only after ensuring that the
+                return a TaskRef after and only after ensuring that the
                 task information will been made available to the recipient of the
                 serialized objects, in order to never create serialized objects
                 with unresolvable task references.
         """
-        children : list[TaskReference] = []
+        children : list[TaskRef] = []
         # Modifies children in place
         payload = msgpack.packb(obj, default=_default(children, save), use_bin_type=True)
         return payload, children
@@ -73,7 +74,7 @@ def serialize_child(index):
         index.to_bytes(4, 'little')
         )
 
-def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
+def dump_model(model: BaseModel | BaseMessage, exclude: set[str] | None = None) -> bytes:
     """
     Serialize pydantic model or dataclass with msgpack
 
@@ -89,7 +90,6 @@ def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
                 (model).model_dump(exclude=exclude)
                 )
     return msgpack.dumps(dump)
-
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -129,7 +129,6 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
         logging.exception(err)
         raise DeserializeError(err) from exc
 
-
 # Private serializer helpers
 # ==========================
 # This should not be exposed to the serializer consumers
@@ -137,8 +136,8 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
 _CHILD_EXT_CODE = 0
 _DILL_EXT_CODE = 1
 
-def _default(children: list[TaskReference],
-             save: Callable[[TaskNode], TaskReference]
+def _default(children: list[TaskRef],
+             save: Callable[[TaskNode], TaskRef]
              ) -> Callable[[Any], msgpack.ExtType]:
     """
     Out-of-band sub-tasks and dill fallback

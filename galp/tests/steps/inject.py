@@ -120,7 +120,6 @@ def co_cyclic(cyclic):
     """
     del cyclic
 
-
 @export
 def has_free_arg(free_arg):
     """

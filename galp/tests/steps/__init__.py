@@ -8,7 +8,7 @@ import signal
 
 import psutil
 import numpy as np
-import pyarrow as pa
+import pyarrow as pa # type: ignore[import]
 
 import galp
 
@@ -218,7 +218,7 @@ def sum_dict(some_dict):
     return tot
 
 # Trivial empty target for CLI galp.client
-empty = []
+empty: list = []
 
 @export
 def meta(values):

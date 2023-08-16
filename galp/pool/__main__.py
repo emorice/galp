@@ -8,7 +8,6 @@ import galp.cli
 import galp.worker
 from .._pool import main
 
-
 def add_parser_arguments(parser):
     """
     Pool-specific arguments, plus all arguments to pass on to workers

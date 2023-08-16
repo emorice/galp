@@ -134,7 +134,7 @@ class Protocol(LowerProtocol):
         match messages:
             case None:
                 return []
-            case gm.Message() | RoutedMessage():
+            case gm.BaseMessage() | RoutedMessage():
                 return [messages]
         return messages
 
@@ -145,13 +145,16 @@ class Protocol(LowerProtocol):
             Whatever the final handler for this message returned.
         """
 
-
+        msg_obj: gm.Message
         try:
             match msg_body:
                 case [payload]:
-                    msg_obj : gm.Message = load_model(gm.AnyMessage, payload)
+                    # pydantic magic, see
+                    # https://github.com/python/mypy/issues/9773 for context
+                    # about why it's hard to type this
+                    msg_obj = load_model(gm.Message, payload) # type: ignore[arg-type]
                 case [payload, data]:
-                    msg_obj = load_model(gm.AnyMessage, payload, data=data)
+                    msg_obj = load_model(gm.Message, payload, data=data) # type: ignore[arg-type]
                 case _:
                     self.on_invalid(route, 'Wrong number of frames')
         except DeserializeError as exc:

@@ -27,7 +27,6 @@ import galp.messages as gm
 import galp.commands as cm
 import galp.task_types as gtt
 
-
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException,
@@ -36,7 +35,7 @@ from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
-from galp.task_types import TaskReference, CoreTaskDef
+from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
 
 class NonFatalTaskError(RuntimeError):
@@ -213,7 +212,6 @@ class WorkerProtocol(ReplyProtocol):
         # If not in cache, resolve metadata and run the task
         replies : list[gm.Message] = [gm.Doing(name=name)]
 
-
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
         replies.extend(self.new_commands_to_replies(
@@ -328,7 +326,7 @@ class JobResult:
     """
     request: RoutedMessage
     submit: gm.Submit
-    result: gtt.ResultReference | None
+    result: gtt.FlatResultRef | None
 
 class Worker:
     """
@@ -394,7 +392,7 @@ class Worker:
         # References are safe by contract: a submit should only ever be sent
         # after its inputs are done
         collect = script.collect([
-                query(script, TaskReference(tin.name), tin.op)
+                query(script, TaskRef(tin.name), tin.op)
                 for tin in [
                     *task_def.args,
                     *task_def.kwargs.values()

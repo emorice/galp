@@ -312,7 +312,6 @@ class BrokerProtocol(ReplyProtocol):
             if isinstance(task_node.task_def, LiteralTaskDef):
                 self.store.put_native(name, task_node.data)
 
-
     def write_next(self, command: cm.InertCommand) -> RoutedMessage | None:
         """
         Returns the next nessage to be sent for a task given the information we
