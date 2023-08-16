@@ -3,7 +3,8 @@ Abstract task types defintions
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Literal, Union, Annotated, TypeAlias, TypeVar, Generic
+from typing import (Any, Literal, Union, Annotated, TypeAlias, TypeVar, Generic,
+        Iterable)
 from enum import Enum
 from dataclasses import dataclass
 from functools import total_ordering
@@ -275,6 +276,24 @@ class GenericResultRef(Generic[TaskT_co]):
 
 ResultRef: TypeAlias = GenericResultRef[Task]
 FlatResultRef: TypeAlias = GenericResultRef[TaskRef]
+
+@dataclass
+class RecResultRef(ResultRef):
+    """
+    A reference to the successful result of a task execution and its child tasks,
+    recursively.
+
+    The object itself does actually not store any more information than the
+    non recursive result ref ; but the constructor requires, and check at run
+    time, references to the child tasks.
+    """
+    def __init__(self, result: ResultRef, children: 'Iterable[RecResultRef]'):
+        expected = {t.name for t in result.children}
+        received = {t.name for t in children}
+        if expected != received:
+            raise ValueError('Wrong child results,'
+                f' expected {expected}, got {received}')
+        super().__init__(result.name, result.children)
 
 class ReadyCoreTaskDef(BaseModel):
     """

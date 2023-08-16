@@ -602,7 +602,7 @@ def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
             .then(lambda _: Submit(task_def)) # type: ignore[arg-type] # False positive
             )
 
-def rsubmit(task: gtt.Task, dry: bool = False):
+def rsubmit(task: gtt.Task, dry: bool = False) -> Command[gtt.RecResultRef, str]:
     """
     Recursive submit, with children, i.e a ssubmit plus a rsubmit per child
 
@@ -621,8 +621,11 @@ def rsubmit(task: gtt.Task, dry: bool = False):
     """
     return (
             ssubmit(task, dry)
-            .then(lambda result: Gather([rsubmit(c, dry)
-                for c in result.children]))
+            .then(lambda res: Gather([rsubmit(c, dry) for c in res.children])
+                .then(
+                    lambda child_results: gtt.RecResultRef(res, child_results)
+                    )
+                )
             )
 
 def run(task: gtt.Task, dry=False):
