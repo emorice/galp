@@ -15,7 +15,7 @@ from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
 
-class Broker:
+class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
     Load-balancing client-to-worker and a worker-to-broker loops
     """
@@ -176,7 +176,7 @@ class CommonProtocol(ReplyProtocol):
         """
         verb = gmsg.verb
 
-        # Todo: include in incoming msg
+        # Issue #88: include in incoming msg
         resources = Resources(cpus=1)
 
         # Drop if we already accepted the same task
@@ -200,7 +200,7 @@ class CommonProtocol(ReplyProtocol):
 
         # Allocate. At this point the message can be considered
         # as accepted and queued
-        # Todo: therefore, we should already reply to the client now that we're
+        # Related to issue #87: therefore, we should already reply to the client now that we're
         # taking the task
         self.resources -= resources
         alloc = Allocation(

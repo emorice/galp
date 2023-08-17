@@ -23,15 +23,21 @@ def getitem(obj, index):
 
 @export.step
 def galp_hello():
+    """
+    Test step, to be removed
+    """
     logging.info('Task "Hello" running')
     return 42
 
 @export.step
-def galp_double(x=1):
+def galp_double(value=1):
+    """
+    Test step, to be removed
+    """
     logging.info('Task "Double" running')
-    return 2*x
+    return 2 * value
 
 @export.step
-def galp_sub(a, b):
+def galp_sub(a, b): # pylint: disable=invalid-name # math like operator.sub
     """Computes a - b, trivial non commutative function"""
     return a - b

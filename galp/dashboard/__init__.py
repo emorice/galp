@@ -72,39 +72,8 @@ def create_app(config):
         if step.is_view:
             # inject deps and check for missing args
             task = step()
-            tdef = task.task_def
 
-            # Re-use client logic to parse the graph and sort out which pieces
-            # need to be fetched from store
-
-            ## Define how to fetch missing pieces (direct read from store)
-            proto = None # fwd decl
-            def _schedule(command: cm.InertCommand):
-                if not isinstance(command, cm.Get):
-                    raise NotImplementedError
-                name = command.name
-                if name not in proto.store:
-                    serialized = store.get_serial(name)
-                    proto.store.put_serial(name, serialized)
-                _, children = proto.store.get_serial(name)
-                proto.schedule_new(
-                    proto.script.commands[command.key].done(children)
-                    )
-
-            proto = BrokerProtocol('CL', False, _schedule)
-            proto.add([task])
-
-            ## Collect args from local and remote store. Since we don't pass any
-            ## argument to the step, all arguments are injected, and therefore keyword arguments
-            assert not tdef.args
-            kwargs = {}
-            for keyword, tin in tdef.kwargs.items():
-                # You need to hold a reference, because advance_all won't !
-                cmd = cm.rget(tin.name)
-                proto.schedule_new(
-                    cm.advance_all(proto.script, cm.get_leaves([cmd]))
-                    )
-                kwargs[keyword] = proto.store.get_native(tin.name)
+            kwargs = collect_kwargs(store, task)
 
             # Run the step
             result = step.function(**kwargs)
@@ -119,3 +88,41 @@ def create_app(config):
 
         return 'Neither a view nor an object in store'
     return app
+
+def collect_kwargs(store, task):
+    """
+    Re-use client logic to parse the graph and sort out which pieces
+    need to be fetched from store
+    """
+    tdef = task.task_def
+
+    ## Define how to fetch missing pieces (direct read from store)
+    proto = None # fwd decl
+    def _schedule(command: cm.InertCommand):
+        if not isinstance(command, cm.Get):
+            raise NotImplementedError
+        name = command.name
+        if name not in proto.store:
+            serialized = store.get_serial(name)
+            proto.store.put_serial(name, serialized)
+        _, children = proto.store.get_serial(name)
+        proto.schedule_new(
+            proto.script.commands[command.key].done(children)
+            )
+
+    proto = BrokerProtocol('CL', False, _schedule)
+    proto.add([task])
+
+    ## Collect args from local and remote store. Since we don't pass any
+    ## argument to the step, all arguments are injected, and therefore keyword arguments
+    assert not tdef.args
+    kwargs = {}
+    for keyword, tin in tdef.kwargs.items():
+        # You need to hold a reference, because advance_all won't !
+        cmd = cm.rget(tin.name)
+        proto.schedule_new(
+            cm.advance_all(proto.script, cm.get_leaves([cmd]))
+            )
+        kwargs[keyword] = proto.store.get_native(tin.name)
+
+    return kwargs
