@@ -15,7 +15,14 @@ from pydantic_core import CoreSchema, core_schema
 from pydantic import (GetCoreSchemaHandler, BaseModel, Field, PlainSerializer,
         model_validator)
 
-import galp
+from galp.serializer import Serializer
+import galp.steps
+
+# Core task type definitions
+# ==========================
+
+# Task defs: flat objects decribing tasks
+# ----------------------------------------
 
 class TaskName(bytes):
     """
@@ -167,6 +174,9 @@ TaskDef = Annotated[
         Field(discriminator='task_type')
         ]
 
+# Tasks: possibly recursive objects representing graphs of tasks
+# --------------------------------------------------------------
+
 @dataclass
 class TaskRef:
     """
@@ -252,6 +262,12 @@ class TaskNode:
 
 Task: TypeAlias = TaskNode | TaskRef
 
+# Task creation routines
+# =======================
+
+# Generic task creation routines
+# -------------------------------
+
 def hash_one(payload: bytes) -> bytes:
     """
     Hash argument with sha256
@@ -315,6 +331,35 @@ def make_task_def(cls: type[T], attrs, extra=None) -> T:
         default=lambda m: m.model_dump()))
     return cls(name=name, **attrs)
 
+# Literal and child tasks
+# ------------------------
+
+# pylint: disable=too-few-public-methods
+# This is a forward declaration of graph.Step
+# Issue #82
+class StepType(ABC):
+    """
+    Root of step type hierarchy
+    """
+
+    @abstractmethod
+    def __call__(self, *args, **kwargs) -> TaskNode:
+        raise NotImplementedError
+
+class TaskSerializer(Serializer[Task, TaskRef]):
+    """
+    Serializer that detects task and step objects
+    """
+    @classmethod
+    def as_nat(cls, obj: Any) -> Task | None:
+        match obj:
+            case StepType():
+                return obj()
+            case TaskNode() | TaskRef():
+                return obj
+            case _:
+                return None
+
 def make_literal_task(obj: Any) -> TaskNode:
     """
     Build a Literal TaskNode out of an arbitrary python object
@@ -326,8 +371,7 @@ def make_literal_task(obj: Any) -> TaskNode:
     # Nice to have: more robust hashing, but this is enough for most case where
     # literal resources are a good fit (more complex objects would tend to be
     # actual step outputs)
-    serializer = galp.serializer.Serializer()
-    obj_bytes, _dependencies_refs = serializer.dumps(obj, save)
+    obj_bytes, _dependencies_refs = TaskSerializer.dumps(obj, save)
 
     tdef = {'children': [dep.name for dep in dependencies]}
     # Literals are an exception to naming: they are named by value, so the
@@ -424,17 +468,6 @@ class ReadyCoreTaskDef(BaseModel):
             raise ValueError('Wrong inputs')
         return self
 
-# pylint: disable=too-few-public-methods
-# This is a forward declaration of graph.Step
-# Issue #82
-class StepType(ABC):
-    """
-    Root of step type hierarchy
-    """
-
-    @abstractmethod
-    def __call__(self, *args, **kwargs) -> TaskNode:
-        raise NotImplementedError
 
 @total_ordering
 class Resources(BaseModel):

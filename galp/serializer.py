@@ -4,16 +4,13 @@ Serialization utils
 
 from __future__ import annotations
 
-from typing import Any, List, Callable, TypeVar
+from typing import Any, List, Callable, TypeVar, Generic
 import logging
 
 import msgpack # type: ignore[import] # Issue 85
 import dill # type: ignore[import] # Issue 85
 
 from pydantic import BaseModel, ValidationError, TypeAdapter, RootModel
-
-from galp import task_types as gtt
-#import galp.messages as gm # fixme: cyclic dep
 
 class DeserializeError(ValueError):
     """
@@ -23,12 +20,21 @@ class DeserializeError(ValueError):
     def __init__(self, msg=None):
         super().__init__(msg or 'Failed to deserialize')
 
-class Serializer:
+Nat = TypeVar('Nat')
+Ref = TypeVar('Ref')
+
+class Serializer(Generic[Nat, Ref]):
     """
     Abstraction for a serialization strategy
+
+    The class has two generics to be defined and handled by subclasses. Nat
+    objects are objects that should be handled out of band in a custom way by
+    the serializer. Ref are objects created as the result of such handling,
+    to be understood as references to out-of-band data.
     """
 
-    def loads(self, data: bytes, native_children: List[Any]) -> Any:
+    @classmethod
+    def loads(cls, data: bytes, native_children: List[Any]) -> Any:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.
@@ -36,13 +42,14 @@ class Serializer:
         Re-raises DeserializeError on any exception.
         """
         try:
-            return msgpack.unpackb(data, ext_hook=_ext_hook(native_children),
+            return msgpack.unpackb(data, ext_hook=cls._ext_hook(native_children),
                     raw=False, use_list=False)
         except Exception as exc:
             raise DeserializeError from exc
 
-    def dumps(self, obj: Any, save: Callable[[gtt.TaskNode], gtt.TaskRef]
-              ) -> tuple[bytes, list[gtt.TaskRef]]:
+    @classmethod
+    def dumps(cls, obj: Any, save: Callable[[Nat], Ref]
+              ) -> tuple[bytes, list[Ref]]:
         """
         Serialize the data.
 
@@ -53,16 +60,69 @@ class Serializer:
 
         Args:
             obj: object to serialize
-            save: callback to handle nested task objects. The callback should
-                return a TaskRef after and only after ensuring that the
+            save: callback to handle nested Nat (task) objects. The callback should
+                return a Ref after and only after ensuring that the
                 task information will been made available to the recipient of the
                 serialized objects, in order to never create serialized objects
                 with unresolvable task references.
         """
-        children : list[gtt.TaskRef] = []
+        children : list[Ref] = []
         # Modifies children in place
-        payload = msgpack.packb(obj, default=_default(children, save), use_bin_type=True)
+        payload = msgpack.packb(obj, default=cls._default(children, save), use_bin_type=True)
         return payload, children
+
+    @classmethod
+    def as_nat(cls, obj: Any) -> Nat | None:
+        """
+        Attempts to cast obj to an object that can be handled out of band.
+
+        This must be implemented by concrete subclasses
+        """
+        raise NotImplementedError
+
+    @classmethod
+    def _default(cls, children: list[Ref], save: Callable[[Nat], Ref]
+            ) -> Callable[[Any], msgpack.ExtType]:
+        """
+        Out-of-band sub-tasks and dill fallback
+
+        Modifies children in-place
+        """
+        def _children_default(obj: Any) -> msgpack.ExtType:
+            nat = cls.as_nat(obj)
+            if nat is not None:
+                index = len(children)
+                children.append(save(nat))
+                return msgpack.ExtType(
+                    _CHILD_EXT_CODE,
+                    index.to_bytes(4, 'little')
+                    )
+
+            return msgpack.ExtType(
+                    _DILL_EXT_CODE,
+                    dill.dumps(obj)
+                    )
+        return _children_default
+
+    @classmethod
+    def _ext_hook(cls, native_children):
+        """
+        ExtType to object for msgpack
+        """
+        def _hook(code, data):
+            if code == _CHILD_EXT_CODE:
+                if not len(data) == 4:
+                    raise DeserializeError(f'Invalid child index {data}')
+                index = int.from_bytes(data, 'little')
+                try:
+                    return native_children[index]
+                except (KeyError, IndexError) as exc:
+                    raise DeserializeError(f'Missing child index {data}') from exc
+            if code == _DILL_EXT_CODE:
+                logging.warning('Unsafe deserialization with dill')
+                return dill.loads(data)
+            raise DeserializeError(f'Unknown ExtType {code}')
+        return _hook
 
 def serialize_child(index):
     """
@@ -76,12 +136,12 @@ def serialize_child(index):
         index.to_bytes(4, 'little')
         )
 
-def dump_model(model: BaseModel, exclude: set[str] | None = None) -> bytes:
+def dump_model(model: Any, exclude: set[str] | None = None) -> bytes:
     """
     Serialize pydantic model or dataclass with msgpack
 
     Args:
-        model: the pydantic model to dump
+        model: the dataclass or pydantic model to dump
         exclude: set of fields to exclude from the serialization
     """
     if hasattr(model, 'model_dump'):
@@ -137,47 +197,3 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
 
 _CHILD_EXT_CODE = 0
 _DILL_EXT_CODE = 1
-
-def _default(children: list[gtt.TaskRef],
-             save: Callable[[gtt.TaskNode], gtt.TaskRef]
-             ) -> Callable[[Any], msgpack.ExtType]:
-    """
-    Out-of-band sub-tasks and dill fallback
-
-    Modifies children in-place
-    """
-    def _children_default(obj):
-        if isinstance(obj, gtt.StepType):
-            obj = obj()
-        if isinstance(obj, gtt.Task): # type: ignore[misc] # False positive
-            index = len(children)
-            children.append(save(obj))
-            return msgpack.ExtType(
-                _CHILD_EXT_CODE,
-                index.to_bytes(4, 'little')
-                )
-
-        return msgpack.ExtType(
-                _DILL_EXT_CODE,
-                dill.dumps(obj)
-                )
-    return _children_default
-
-def _ext_hook(native_children):
-    """
-    ExtType to object for msgpack
-    """
-    def _hook(code, data):
-        if code == _CHILD_EXT_CODE:
-            if not len(data) == 4:
-                raise DeserializeError(f'Invalid child index {data}')
-            index = int.from_bytes(data, 'little')
-            try:
-                return native_children[index]
-            except (KeyError, IndexError) as exc:
-                raise DeserializeError(f'Missing child index {data}') from exc
-        if code == _DILL_EXT_CODE:
-            logging.warning('Unsafe deserialization with dill')
-            return dill.loads(data)
-        raise DeserializeError(f'Unknown ExtType {code}')
-    return _hook

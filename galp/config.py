@@ -10,7 +10,7 @@ import toml
 
 from galp.cache import CacheStack
 from galp.graph import Block
-from galp.serializer import Serializer
+from galp.task_types import TaskSerializer
 
 class ConfigError(Exception):
     """
@@ -54,7 +54,7 @@ def load_config(config=None, mandatory=None):
     setup['steps'] = load_steps(setup.get('steps') or [])
 
     logging.info("Storing in %s", setup['store'])
-    setup['store'] = CacheStack(setup.get('store'), Serializer())
+    setup['store'] = CacheStack(setup.get('store'), TaskSerializer)
 
     return setup
 

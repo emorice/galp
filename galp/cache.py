@@ -9,8 +9,8 @@ import msgpack # type: ignore[import] # Issue 85
 
 import galp.task_types as gtt
 from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
-        TaskNode, LiteralTaskDef)
-from galp.serializer import Serializer, serialize_child, dump_model, load_model
+        TaskNode, LiteralTaskDef, TaskSerializer)
+from galp.serializer import serialize_child, dump_model, load_model
 
 class StoreReadError(Exception):
     """
@@ -28,7 +28,7 @@ class CacheStack():
     If a path is given, the store may hold some elements in memory. The current
     implementation does not, in order to priorize a low memory footprint.
     """
-    def __init__(self, dirpath, serializer: Serializer) -> None:
+    def __init__(self, dirpath, serializer: type[TaskSerializer]) -> None:
         self.dirpath = dirpath
 
         if dirpath is None:
