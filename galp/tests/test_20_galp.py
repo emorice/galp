@@ -12,7 +12,6 @@ from async_timeout import timeout
 
 import galp.steps
 import galp.client
-import galp.synclient
 import galp.tests.steps as gts
 
 # pylint: disable=redefined-outer-name
@@ -228,19 +227,6 @@ async def test_npargserializer(disjoined_client_pair):
     ans2 = (await asyncio.wait_for(client2.collect(task_out), 3))
 
     assert ans2 == [45]
-
-async def test_sync_client(async_sync_client_pair):
-    """
-    Tests the sync client's get functionnality
-    """
-    aclient, sclient = async_sync_client_pair
-    res = galp.steps.galp_hello()
-
-    async_ans = await asyncio.wait_for(aclient.collect(res), 3)
-
-    sync_ans = sclient.get_native(res.name)
-
-    assert async_ans == [sync_ans] == [42]
 
 async def test_serialize_df(client):
     """

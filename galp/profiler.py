@@ -11,6 +11,7 @@ from galp.config import ConfigError
 from galp.task_types import TaskName
 from galp.graph import Step
 
+# pylint: disable=too-few-public-methods
 class Profiler:
     """
     Contains the profiling logic.
@@ -43,6 +44,7 @@ class Profiler:
         """Wrap the function in the necessary call to profiler if needed"""
         if self.is_on and any(pat.search(step.key) for pat in self.patterns):
             logging.warning('Profiling on for %s in %s', step.key, name)
+            # pylint: disable=unused-argument # locals() magic
             def _wrapped(*args, **kwargs):
                 nonlocal step
                 result = [None]

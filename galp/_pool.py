@@ -152,6 +152,9 @@ class Pool:
                 logging.info('Child %s exited with code %d', pid, rexit >> 8)
 
 class BrokerProtocol(ReplyProtocol):
+    """
+    Simple protocol to process spawn request from broker
+    """
     def __init__(self, pool: Pool) -> None:
         super().__init__('BK', router=False)
         self.pool = pool

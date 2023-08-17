@@ -43,13 +43,3 @@ def disjoined_client_pair(make_galp_set, make_client):
     e1, _ = make_galp_set(1)
     e2, _ = make_galp_set(1)
     return make_client(e1), make_client(e2)
-
-@pytest.fixture
-def async_sync_client_pair(make_galp_set):
-    """
-    A sync Client and async Client connected to two sets with one worker in
-    each
-    """
-    e1, _ = make_galp_set(1)
-    e2, _ = make_galp_set(1)
-    yield galp.client.Client(endpoint=e1), galp.synclient.SynClient(endpoint=e2)

@@ -38,11 +38,11 @@ def setup(name, loglevel=None):
         level = int(loglevel)
     except ValueError:
         loglevel = loglevel.lower()
-        level = dict(
-            debug=logging.DEBUG,
-            info=logging.INFO,
-            warning=logging.WARNING
-            ).get(loglevel)
+        level = {
+            'debug': logging.DEBUG,
+            'info': logging.INFO,
+            'warning': logging.WARNING
+            }.get(loglevel)
     # Note the use of force ; this unregisters existing handlers that could have been
     # set by a parent forking process
     logging.basicConfig(level=level, format=log_format, force=True)
@@ -86,7 +86,7 @@ def create_terminate():
     """
     terminate = asyncio.Event()
 
-    # FIXME: graceful termination on signals
+    # Issue #7: graceful termination on signals
 
     #loop = asyncio.get_running_loop()
     #loop.add_signal_handler(signal.SIGINT, terminate.set)
@@ -118,8 +118,7 @@ async def wait(tasks):
     except:
         logging.exception("Aborting")
         raise
-    else:
-        logging.info("Terminating normally")
+    logging.info("Terminating normally")
 
 async def cleanup_tasks(tasks):
     """Cancels all tasks and wait for them"""
