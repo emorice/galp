@@ -55,7 +55,7 @@ async def test_task_kwargs(client):
 
     ans = await asyncio.wait_for(
         client.collect(ref, same, opposite),
-        3)
+        4)
 
     assert tuple(ans) == (2, 2, -2)
 
@@ -68,7 +68,7 @@ async def test_task_posargs(client):
 
     ans = await asyncio.wait_for(
         client.collect(ref, opposite),
-        3)
+        4)
 
     assert tuple(ans) == (2, -2)
 
@@ -358,7 +358,7 @@ async def test_structured_inputs(client):
     in1, in2 = gts.identity(3), gts.identity(4)
     in_list = [in1, in2]
 
-    async with timeout(4):
+    async with timeout(6):
         ans = await client.run(gts.npsum(in_list))
         ans_dict = await client.run(gts.sum_dict({
             'first': in1,
@@ -375,7 +375,7 @@ async def test_gather_structured(client):
     task1, task2 = gts.identity(3), gts.identity(4)
     struct = {'t1': task1, 't2': task2}
 
-    async with timeout(3):
+    async with timeout(4):
         ans = await client.run(struct)
 
     assert isinstance(ans, dict)

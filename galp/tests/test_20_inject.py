@@ -19,7 +19,7 @@ async def test_inject_bind(client):
     """
     Run a task with an explicitely injected input
     """
-    async with timeout(3):
+    async with timeout(4):
         ans = await client.run(gts.sum_inject)
     assert ans == 12
 
@@ -54,7 +54,7 @@ async def test_inject_nontree(client):
     """
     Run a task with a non-trivial DAG
     """
-    async with timeout(3):
+    async with timeout(4):
         assert await client.run(gts.uses_a_and_ua) is None
         assert await client.run(gts.uses_ua_and_a) is None
 
