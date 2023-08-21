@@ -18,6 +18,7 @@ import zmq.asyncio
 
 import galp.messages as gm
 import galp.commands as cm
+import galp.task_types as gtt
 
 from galp import async_utils
 from galp.cache import CacheStack
@@ -276,6 +277,10 @@ class BrokerProtocol(ReplyProtocol):
         self.submitted_count : defaultdict[TaskName, int] = defaultdict(int)
         self.run_count : defaultdict[TaskName, int] = defaultdict(int)
 
+        # Resources
+        self.resources = gtt.Resources(cpus=1)
+
+
     def add(self, tasks: list[TaskNode]) -> None:
         """
         Browse the graph and add it to the tasks we're tracking, in an
@@ -329,7 +334,8 @@ class BrokerProtocol(ReplyProtocol):
                 name = command.task_def.name
                 if self._status[name] < TaskStatus.RUNNING:
                     self.submitted_count[name] += 1
-                    sub = gm.Submit(task_def=command.task_def)
+                    sub = gm.Submit(task_def=command.task_def,
+                                    resources=self.get_resources(command.task_def))
                     return self.route_message(None, sub)
             case cm.Get():
                 get = self.get(command.name)
@@ -341,6 +347,13 @@ class BrokerProtocol(ReplyProtocol):
                 raise NotImplementedError(command)
 
         return None
+
+    def get_resources(self, task_def: gtt.CoreTaskDef) -> gtt.Resources:
+        """
+        Decide how much resources to allocate to a task
+        """
+        _ = task_def # to be used later
+        return self.resources
 
     # Custom protocol sender
     # ======================

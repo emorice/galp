@@ -170,14 +170,21 @@ class CommonProtocol(ReplyProtocol):
             )
         return None
 
+    def calc_resources(self, msg: RoutedMessage) -> Resources:
+        """
+        Determine resources requested by a request
+        """
+        if isinstance(msg.body, gm.Submit):
+            return msg.body.resources
+        return Resources(cpus=1)
+
     def on_request(self, msg: RoutedMessage, gmsg: gm.Stat | gm.Submit | gm.Get):
         """
         Assign a worker
         """
         verb = gmsg.verb
 
-        # Issue #88: include in incoming msg
-        resources = Resources(cpus=1)
+        resources = self.calc_resources(msg)
 
         # Drop if we already accepted the same task
         # This ideally should not happen if the client receives proper feedback

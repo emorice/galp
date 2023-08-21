@@ -199,8 +199,10 @@ class Submit(BaseMessage):
 
     Attributes:
         task_def: the task to execute
+        resources: to be allocated to the task
     """
     task_def: CoreTaskDef
+    resources: gtt.Resources
 
     verb: Literal['submit'] = field(default='submit', repr=False)
 

@@ -11,7 +11,8 @@ from async_timeout import timeout
 
 import galp
 import galp.tests.steps as gts
-from galp.protocol import Protocol, RoutedMessage
+import galp.task_types as gtt
+from galp.protocol import Protocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.messages import Doing, Submit, NotFound
 
@@ -81,7 +82,9 @@ async def test_fill_queue(blocked_client):
         async with timeout(1):
             await client.transport.send_message(
                     client.protocol.route_message(None,
-                        Submit(task_def=task.task_def)
+                        # pylint: disable=no-member
+                        Submit(task_def=task.task_def,
+                               resources=gtt.Resources(cpus=1))
                         )
                     )
 
@@ -91,6 +94,7 @@ async def test_unique_submission(peer_client):
     """
     peer, client = peer_client
     task = gts.sleeps(1, 42)
+    # pylint: disable=no-member
     tdef = task.task_def
 
     submit_counter = [0]
