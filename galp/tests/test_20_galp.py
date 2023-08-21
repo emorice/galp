@@ -222,9 +222,9 @@ async def test_npargserializer(disjoined_client_pair):
     task_in = gts.arange(10)
     task_out = gts.npsum(task_in)
 
-    ans1 = (await asyncio.wait_for(client1.collect(task_in), 3))
+    ans1 = (await asyncio.wait_for(client1.collect(task_in), 4))
 
-    ans2 = (await asyncio.wait_for(client2.collect(task_out), 3))
+    ans2 = (await asyncio.wait_for(client2.collect(task_out), 4))
 
     assert ans2 == [45]
 

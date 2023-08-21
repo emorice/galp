@@ -488,9 +488,13 @@ class BrokerProtocol(ReplyProtocol):
         """
         task_def = msg.task_def
         name = task_def.name
-        self.schedule_new(
-            self.script.commands['STAT', name].done(msg)
-            )
+
+        # Mark STAT command as done
+        command = self.script.commands.get(('STAT', name))
+        if command:
+            self.schedule_new(
+                command.done(msg)
+                )
 
     def on_illegal(self, msg: gm.Illegal):
         """Should never happen"""

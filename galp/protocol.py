@@ -192,7 +192,7 @@ class Protocol(LowerProtocol):
 
         verb = msg.body.verb.upper()
         match msg.body:
-            case gm.Submit():
+            case gm.Submit() | gm.Found():
                 arg = str(msg.body.task_def.name)
             case _:
                 arg = getattr(msg.body, 'name', '')
