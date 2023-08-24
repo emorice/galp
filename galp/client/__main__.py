@@ -24,6 +24,9 @@ parser.add_argument('-n', '--dry-run', action='store_true',
         help='do not actually run the tasks, just print what would be done')
 parser.add_argument('-j', '--jobs', type=int, help='Number of worker processes'
         ' to run in parallel. Ignored with -e.', default=1, dest='pool_size')
+parser.add_argument('--cpus_per_task', type=int, help='Default number of'
+                    ' cores per worker process. Implies pin-workers', default=None,
+                    dest='cpus_per_task')
 parser.add_argument('--pin-workers', action='store_true',
         help='Set cpu affinity to pin each worker to one cpu core')
 parser.add_argument('--steps', action='append',

@@ -6,6 +6,7 @@ import logging
 
 from typing import Any
 from dataclasses import dataclass
+from collections import defaultdict
 
 import zmq
 
@@ -50,8 +51,9 @@ class CommonProtocol(ReplyProtocol):
     def __init__(self, name: str, router: bool, resources: Resources):
         super().__init__(name, router)
 
-        # List of idle workers
-        self.idle_workers: list[Route] = []
+        # List of idle workers, by resources
+        self.idle_workers: defaultdict[Resources, list[Route]]
+        self.idle_workers = defaultdict(lambda : [])
 
         # Internal routing id indexed by self-identifiers
         self.route_from_peer : dict[str, Any] = {}
@@ -93,7 +95,6 @@ class CommonProtocol(ReplyProtocol):
                 pending_alloc = self.alloc_from_task.get(gmsg.mission, None)
                 if pending_alloc is None:
                     logging.error('Worker came with unknown mission %s', gmsg.mission)
-                    self.idle_workers.append(rmsg.incoming)
                     return None
 
                 # Before sending, mark it as affected to this worker so we can
@@ -122,7 +123,7 @@ class CommonProtocol(ReplyProtocol):
                 logging.error('Double free of allocation %s', alloc)
             # Free worker for reuse if marked as such
             if reuse:
-                self.idle_workers.append(worker_route)
+                self.idle_workers[alloc.resources].append(worker_route)
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
@@ -218,8 +219,8 @@ class CommonProtocol(ReplyProtocol):
         self.alloc_from_task[alloc.task_id] = alloc
 
         # If we have idle workers, directly forward to one
-        if self.idle_workers:
-            worker_route = self.idle_workers.pop()
+        if (workers := self.idle_workers[resources]):
+            worker_route = workers.pop()
             logging.debug('Worker available, forwarding %s', verb)
 
             # Save task info
@@ -237,7 +238,7 @@ class CommonProtocol(ReplyProtocol):
         return RoutedMessage(
                 incoming=Route(),
                 forward=self.pool,
-                body=gmsg
+                body=gm.Fork(alloc.task_id, alloc.resources)
                 )
 
     def on_routed_message(self, msg: RoutedMessage):

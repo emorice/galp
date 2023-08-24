@@ -16,7 +16,7 @@ import galp.worker
 import galp.messages as gm
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.reply_protocol import ReplyProtocol
-from galp.protocol import RoutedMessage
+from galp.serializer import dump_model, load_model
 from galp.async_utils import background
 
 class Pool:
@@ -76,11 +76,11 @@ class Pool:
             self.kill_all()
             raise
 
-    def start_worker(self, mission: bytes):
+    def start_worker(self, fork_msg: gm.Fork):
         """
         Starts a worker.
         """
-        self.forkserver_socket.send_multipart([b'FORK', mission])
+        self.forkserver_socket.send(dump_model(fork_msg))
         b_pid = self.forkserver_socket.recv()
         pid = int.from_bytes(b_pid, 'little')
 
@@ -159,16 +159,11 @@ class BrokerProtocol(ReplyProtocol):
         super().__init__('BK', router=False)
         self.pool = pool
 
-    def on_routed_message(self, msg: RoutedMessage):
+    def on_fork(self, msg: gm.Fork):
         """
-        Any incoming message is treated as a request to spawn a worker for said
-        task
+        Request to spawn a worker for a task
         """
-        if isinstance(msg.body, gm.Stat | gm.Get | gm.Submit):
-            task_key = msg.body.task_key
-            self.pool.start_worker(task_key)
-        else:
-            logging.error('Unexpected verb %s', msg.body.verb)
+        self.pool.start_worker(msg)
 
 def forkserver(config):
     """
@@ -185,19 +180,21 @@ def forkserver(config):
         cpu_counter = 0
 
     while True:
-        msg = socket.recv_multipart()
-        if msg[0] == b'FORK':
-            _config = dict(config, mission=msg[1])
-            if _config.get('pin_workers'):
-                cpu = cpus[cpu_counter]
-                cpu_counter = (cpu_counter + 1) % len(cpus)
-                logging.info('Pinning new worker to cpu %d', cpu)
-                pid = galp.worker.fork(dict(_config, pin_cpus=[cpu]))
-            else:
-                pid = galp.worker.fork(_config)
-            socket.send(pid.to_bytes(4, 'little'))
-        else:
-            break
+        msg = load_model(gm.Message, socket.recv())
+        match msg:
+            case gm.Fork():
+                _config = dict(config, mission=msg.mission,
+                               cpus_per_task=msg.resources.cpus)
+                if _config.get('pin_workers'):
+                    cpu = cpus[cpu_counter]
+                    cpu_counter = (cpu_counter + 1) % len(cpus)
+                    logging.info('Pinning new worker to cpu %d', cpu)
+                    pid = galp.worker.fork(dict(_config, pin_cpus=[cpu]))
+                else:
+                    pid = galp.worker.fork(_config)
+                socket.send(pid.to_bytes(4, 'little'))
+            case gm.Exit():
+                break
 
 @asynccontextmanager
 async def run_forkserver(config):
@@ -213,7 +210,7 @@ async def run_forkserver(config):
     try:
         yield socket
     finally:
-        socket.send(b'EXIT')
+        socket.send(dump_model(gm.Exit()))
         thread.join()
 
 def on_signal(sig, pool):

@@ -468,9 +468,9 @@ class ReadyCoreTaskDef(BaseModel):
             raise ValueError('Wrong inputs')
         return self
 
-
 @total_ordering
-class Resources(BaseModel):
+@dataclass(frozen=True)
+class Resources:
     """
     Resources claimed by a task
     """

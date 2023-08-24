@@ -13,3 +13,14 @@ def identity(arg):
     """
     print(arg)
     return arg
+
+@export
+def get_cpus():
+    """
+    Return currently configured number of (openmp) threads
+    """
+    # pylint: disable=import-outside-toplevel
+    import numpy # pylint: disable=unused-import # side effect
+    import threadpoolctl # type: ignore[import]
+    print(threadpoolctl.threadpool_info())
+    return threadpoolctl.threadpool_info()[-1]['num_threads']

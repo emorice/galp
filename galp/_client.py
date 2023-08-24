@@ -63,12 +63,14 @@ class Client:
     Args:
        endpoint: a ZeroMQ endpoint string to the worker. The client will create
             its own socket and destroy it in the end, using the global sync context.
+        n_cpus: number of cpus *per task* to allocate
     """
 
-    def __init__(self, endpoint: str):
+    def __init__(self, endpoint: str, cpus_per_task: int | None = None):
         self.protocol = BrokerProtocol(
             'BK', router=False,
-            schedule=self.schedule # callback to add tasks to the scheduling queue
+            schedule=self.schedule, # callback to add tasks to the scheduling queue
+            cpus_per_task=cpus_per_task or 1
             )
 
         self.transport = ZmqAsyncTransport(
@@ -254,7 +256,7 @@ class BrokerProtocol(ReplyProtocol):
     Main logic of the interaction of a client with a broker
     """
     def __init__(self, name: str, router: bool,
-            schedule: Callable[[cm.InertCommand], None]):
+                 schedule: Callable[[cm.InertCommand], None], cpus_per_task: int):
         super().__init__(name, router)
 
         self.schedule = schedule
@@ -278,8 +280,7 @@ class BrokerProtocol(ReplyProtocol):
         self.run_count : defaultdict[TaskName, int] = defaultdict(int)
 
         # Resources
-        self.resources = gtt.Resources(cpus=1)
-
+        self.resources = gtt.Resources(cpus=cpus_per_task)
 
     def add(self, tasks: list[TaskNode]) -> None:
         """

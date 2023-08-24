@@ -11,7 +11,7 @@ import pytest
 import galp
 import galp.tests.steps as gts
 
-# pylint: disable=no-member
+# pylint: disable=no-member,redefined-outer-name
 
 async def test_standalone():
     """
@@ -56,31 +56,37 @@ async def test_explicit():
 
         assert gls.client is None
 
-def test_oneshot(tmpdir):
+@pytest.fixture
+def run(tmpdir):
+    """
+    Run a task
+    """
+    return lambda task, **kwargs: galp.run(task,
+        store=tmpdir, steps=['galp.tests.steps'], timeout=3,
+        **kwargs)
+
+def test_oneshot(run):
     """
     Run a task through an all-in-one wrapper.
     """
-    assert galp.run(
-        gts.identity(1234),
-        store=tmpdir, steps=['galp.tests.steps'], timeout=3
-        ) == 1234
+    assert run(gts.identity(1234)) == 1234
 
-def test_oneshot_dryrun(tmpdir):
+def test_oneshot_dryrun(run):
     """
     Dry-run a task through an all-in-one wrapper.
     """
-    assert galp.run(
-        gts.identity(1234),
-        store=tmpdir, steps=['galp.tests.steps'], timeout=3,
-        dry_run=True
-        ) is None
+    assert run(gts.identity(1234), dry_run=True) is None
 
-def test_oneshot_suicide(tmpdir):
+def test_oneshot_suicide(run):
     """
     Run a task that will cause worker crash
     """
     with pytest.raises(galp.TaskFailedError):
-        galp.run(
-                gts.suicide(signal.SIGKILL),
-                store=tmpdir, steps=['galp.tests.steps'], timeout=3,
-                )
+        run(gts.suicide(signal.SIGKILL))
+
+@pytest.mark.parametrize('cpus', [1, 2])
+def test_oneshot_cpus(run, cpus):
+    """
+    Run two tasks with a different number of default cpus
+    """
+    assert run(gts.utils.get_cpus(), pool_size=2, cpus_per_task=cpus) == cpus

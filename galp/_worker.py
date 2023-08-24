@@ -44,9 +44,10 @@ class NonFatalTaskError(RuntimeError):
     running.
     """
 
-def limit_resources(vm_limit=None):
+def limit_resources(vm_limit=None, cpus=None):
     """
-    Set resource limits from command line, for now only virtual memory.
+    Set resource limits from command line, for now only virtual memory and numpy
+    backend threads
 
     We use base-10 prefixes: when in doubt, it's safer to
     set a stricter limit.
@@ -69,6 +70,12 @@ def limit_resources(vm_limit=None):
 
         _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         resource.setrlimit(resource.RLIMIT_AS, (size, hard))
+
+    if cpus:
+        # pylint: disable=import-outside-toplevel
+        import numpy # pylint: disable=unused-import # side effect
+        import threadpoolctl # type: ignore[import]
+        threadpoolctl.threadpool_limits(cpus)
 
 def make_worker_init(config):
     """Prepare a worker factory function. Must be called in main thread.
@@ -94,7 +101,8 @@ def make_worker_init(config):
             )
 
     # Late setup
-    limit_resources(setup.get('vm'))
+    print(setup)
+    limit_resources(setup.get('vm'), setup.get('cpus_per_task'))
 
     os.makedirs(os.path.join(setup['store'].dirpath, 'galp'), exist_ok=True)
 

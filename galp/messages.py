@@ -21,13 +21,13 @@ class Role(str, Enum):
 
 M = TypeVar('M', bound='BaseMessage')
 
-@dataclass
+@dataclass(frozen=True)
 class BaseMessage:
     """
     Base class for messages
     """
 
-@dataclass
+@dataclass(frozen=True)
 class Doing(BaseMessage):
     """
     A message signaling that a task has been allocated or started
@@ -39,7 +39,7 @@ class Doing(BaseMessage):
 
     verb: Literal['doing'] = field(default='doing', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class Done(BaseMessage):
     """
     A message signaling that a task has been succesful run
@@ -54,14 +54,14 @@ class Done(BaseMessage):
 
     verb: Literal['done'] = field(default='done', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class Exit(BaseMessage):
     """
     A message asking a peer to leave the system
     """
     verb: Literal['exit'] = field(default='exit', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class Exited(BaseMessage):
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
@@ -74,7 +74,7 @@ class Exited(BaseMessage):
 
     verb: Literal['exited'] = field(default='exited', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class Failed(BaseMessage):
     """
     Signals that the execution of task has failed
@@ -86,7 +86,7 @@ class Failed(BaseMessage):
 
     verb: Literal['failed'] = field(default='failed', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class Found(BaseMessage):
     """
     A message notifying that a task was registered, but not yet executed
@@ -98,7 +98,7 @@ class Found(BaseMessage):
 
     verb: Literal['found'] = field(default='found', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class Get(BaseMessage):
     """
     A message asking for an already computed resource
@@ -117,7 +117,7 @@ class Get(BaseMessage):
         """
         return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
-@dataclass
+@dataclass(frozen=True)
 class Illegal(BaseMessage):
     """
     A message notifying that a previously sent message was malformed
@@ -129,7 +129,7 @@ class Illegal(BaseMessage):
 
     verb: Literal['illegal'] = field(default='illegal', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class NotFound(BaseMessage):
     """
     A message indicating that no trace of a task was found
@@ -141,7 +141,7 @@ class NotFound(BaseMessage):
 
     verb: Literal['not_found'] = field(default='not_found', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class Put(BaseMessage):
     """
     A message sending a serialized task result
@@ -158,7 +158,17 @@ class Put(BaseMessage):
 
     verb: Literal['put'] = field(default='put', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
+class Fork(BaseMessage):
+    """
+    A message asking for a new peer to be created
+    """
+    mission: bytes
+    resources: gtt.Resources
+
+    verb: Literal['fork'] = field(default='fork', repr=False)
+
+@dataclass(frozen=True)
 class Ready(BaseMessage):
     """
     A message advertising a peer joining the system
@@ -173,7 +183,7 @@ class Ready(BaseMessage):
 
     verb: Literal['ready'] = field(default='ready', repr=False)
 
-@dataclass
+@dataclass(frozen=True)
 class Stat(BaseMessage):
     """
     A message asking if a task is defined or executed
@@ -192,7 +202,7 @@ class Stat(BaseMessage):
         """
         return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
-@dataclass
+@dataclass(frozen=True)
 class Submit(BaseMessage):
     """
     A message asking for a task to be executed
@@ -215,6 +225,6 @@ class Submit(BaseMessage):
 
 Message = Annotated[
         Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
-        | Put | Ready | Stat | Submit,
+        | Fork | Put | Ready | Stat | Submit,
         Field(discriminator='verb')
         ]
