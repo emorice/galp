@@ -11,6 +11,8 @@ from collections import defaultdict
 import zmq
 
 import galp.messages as gm
+import galp.task_types as gtt
+
 from galp.protocol import Route, RoutedMessage
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
@@ -21,7 +23,7 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     Load-balancing client-to-worker and a worker-to-broker loops
     """
     def __init__(self, endpoint, n_cpus):
-        self.proto = CommonProtocol('CW', router=True, resources=Resources(cpus=n_cpus))
+        self.proto = CommonProtocol('CW', router=True, max_cpus=n_cpus)
         self.transport = ZmqAsyncTransport(
             self.proto,
             endpoint, zmq.ROUTER, bind=True)
@@ -46,9 +48,9 @@ class Allocation:
 
 class CommonProtocol(ReplyProtocol):
     """
-    Handler for messages received from workers.
+    Handler for messages received from clients, pool and workers.
     """
-    def __init__(self, name: str, router: bool, resources: Resources):
+    def __init__(self, name: str, router: bool, max_cpus: int):
         super().__init__(name, router)
 
         # List of idle workers, by resources
@@ -59,7 +61,8 @@ class CommonProtocol(ReplyProtocol):
         self.route_from_peer : dict[str, Any] = {}
 
         # Total resources
-        self.resources = resources
+        self.max_cpus = max_cpus
+        self.resources = Resources(cpus=[]) # Available cpus
 
         # Route to a worker spawner
         self.pool: Route | None = None
@@ -72,41 +75,42 @@ class CommonProtocol(ReplyProtocol):
 
     def on_routed_ready(self, rmsg: RoutedMessage, gmsg: gm.Ready):
         """
-        Register worker and pool route for later use, and forward initial worker
-        mission
+        Register worker route and forward initial worker mission
         """
         assert not rmsg.forward
 
-        match gmsg.role:
-            case gm.Role.POOL:
-                # When the pool manager joins, record its route so that we can
-                # send spawn requests later
-                if self.pool is None:
-                    self.pool = rmsg.incoming
-                else:
-                    assert self.pool == rmsg.incoming
-                return None
-            case gm.Role.WORKER:
-                # First, update the peer map, we need it to handle kill
-                # notifications
-                self.route_from_peer[gmsg.local_id] = rmsg.incoming
+        # First, update the peer map, we need it to handle kill
+        # notifications
+        self.route_from_peer[gmsg.local_id] = rmsg.incoming
 
-                # Then check for the expected pending mission and send it
-                pending_alloc = self.alloc_from_task.get(gmsg.mission, None)
-                if pending_alloc is None:
-                    logging.error('Worker came with unknown mission %s', gmsg.mission)
-                    return None
+        # Then check for the expected pending mission and send it
+        pending_alloc = self.alloc_from_task.get(gmsg.mission, None)
+        if pending_alloc is None:
+            logging.error('Worker came with unknown mission %s', gmsg.mission)
+            return None
 
-                # Before sending, mark it as affected to this worker so we can
-                # handle errors and free resources later
-                self.alloc_from_wroute[tuple(rmsg.incoming)] = pending_alloc
+        # Before sending, mark it as affected to this worker so we can
+        # handle errors and free resources later
+        self.alloc_from_wroute[tuple(rmsg.incoming)] = pending_alloc
 
-                # Fill in the worker route in original request
-                return RoutedMessage(
-                        incoming=pending_alloc.msg.incoming,
-                        forward=rmsg.incoming,
-                        body=pending_alloc.msg.body
-                        )
+        # Fill in the worker route in original request
+        return RoutedMessage(
+                incoming=pending_alloc.msg.incoming,
+                forward=rmsg.incoming,
+                body=pending_alloc.msg.body
+                )
+
+    def on_routed_pool_ready(self, rmsg: RoutedMessage, gmsg: gm.PoolReady):
+        """
+        Register pool route and resources
+        """
+        assert not rmsg.forward
+        assert self.pool is None
+
+        # When the pool manager joins, record its route and set the available
+        # resources
+        self.pool = rmsg.incoming
+        self.resources = Resources(gmsg.cpus[:self.max_cpus])
 
     def free_resources(self, worker_route: Route, reuse=True) -> None:
         """
@@ -118,7 +122,7 @@ class CommonProtocol(ReplyProtocol):
         alloc = self.alloc_from_wroute.pop(tuple(worker_route), None)
         if alloc:
             # Free resources
-            self.resources += alloc.resources
+            self.resources = self.resources.free(alloc.resources)
             if self.alloc_from_task.pop(alloc.task_id, None) is None:
                 logging.error('Double free of allocation %s', alloc)
             # Free worker for reuse if marked as such
@@ -171,13 +175,13 @@ class CommonProtocol(ReplyProtocol):
             )
         return None
 
-    def calc_resources(self, msg: RoutedMessage) -> Resources:
+    def calc_resource_claim(self, msg: RoutedMessage) -> gtt.ResourceClaim:
         """
         Determine resources requested by a request
         """
         if isinstance(msg.body, gm.Submit):
             return msg.body.resources
-        return Resources(cpus=1)
+        return ResourceClaim(cpus=1)
 
     def on_request(self, msg: RoutedMessage, gmsg: gm.Stat | gm.Submit | gm.Get):
         """
@@ -250,6 +254,9 @@ class CommonProtocol(ReplyProtocol):
         # Record joining peers and forward pre allocated requests
         if isinstance(gmsg, gm.Ready):
             return self.on_routed_ready(msg, gmsg)
+
+        if isinstance(gmsg, gm.PoolReady):
+            return self.on_routed_pool_ready(msg, gmsg)
 
         # Similarly, record dead peers and forward failures
         if isinstance(gmsg, gm.Exited):

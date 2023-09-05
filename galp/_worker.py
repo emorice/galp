@@ -414,7 +414,6 @@ class Worker:
         Main message processing loop of the worker.
         """
         ready = gm.Ready(
-            role=gm.Role.WORKER,
             local_id=str(os.getpid()),
             mission=self.mission,
             )

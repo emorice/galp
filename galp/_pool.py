@@ -100,11 +100,12 @@ class Pool:
 
     async def notify_ready(self):
         """
-        Sends a message back to broker to signal we joined
+        Sends a message back to broker to signal we joined, and with which cpus
         """
+        cpus = list(psutil.Process().cpu_affinity())
         await self.broker_transport.send_message(
                 self.broker_protocol.route_message(None,
-                    gm.Ready(role=gm.Role.POOL, local_id=str(os.getpid()), mission=b'')
+                    gm.PoolReady(cpus=cpus)
                     )
                 )
 

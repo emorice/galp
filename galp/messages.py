@@ -12,13 +12,6 @@ from pydantic import Field, PlainSerializer
 from . import task_types as gtt
 from .task_types import TaskName, TaskDef, CoreTaskDef, TaskRef
 
-class Role(str, Enum):
-    """
-    Enum identifying the role of a peer in the system
-    """
-    POOL = 'pool'
-    WORKER = 'worker'
-
 M = TypeVar('M', bound='BaseMessage')
 
 @dataclass(frozen=True)
@@ -171,17 +164,28 @@ class Fork(BaseMessage):
 @dataclass(frozen=True)
 class Ready(BaseMessage):
     """
-    A message advertising a peer joining the system
+    A message advertising a worker joining the system
 
     Attributes:
         local_id: a string identifying the worker in a local system, typically the pid
         mission: a bytestring identifying why the peer is joining
     """
-    role: Annotated[Role, PlainSerializer(lambda x: x.value)]
     local_id: str
     mission: bytes
 
     verb: Literal['ready'] = field(default='ready', repr=False)
+
+@dataclass(frozen=True)
+class PoolReady(BaseMessage):
+    """
+    A message advertising a pool (forkserver) joining the system
+
+    Attributes:
+        cpus: list of cpus made available by said pool.
+    """
+    cpus: list[int]
+
+    verb: Literal['pool_ready'] = field(default='pool_ready', repr=False)
 
 @dataclass(frozen=True)
 class Stat(BaseMessage):
@@ -212,7 +216,7 @@ class Submit(BaseMessage):
         resources: to be allocated to the task
     """
     task_def: CoreTaskDef
-    resources: gtt.Resources
+    resources: gtt.ResourceClaim
 
     verb: Literal['submit'] = field(default='submit', repr=False)
 
@@ -223,8 +227,19 @@ class Submit(BaseMessage):
         """
         return f'{self.verb}:{self.task_def.name.hex()}'.encode('ascii')
 
+
+@dataclass(frozen=True)
+class Exec(BaseMessage):
+    """
+    A message wrapping a Submit with a resource allocation
+    """
+    submit: Submit
+    resources: gtt.Resources
+
+    verb: Literal['exec'] = field(default='exec', repr=False)
+
 Message = Annotated[
         Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
-        | Fork | Put | Ready | Stat | Submit,
+        | Fork | Put | Ready | PoolReady | Stat | Submit | Exec,
         Field(discriminator='verb')
         ]

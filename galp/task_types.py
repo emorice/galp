@@ -468,19 +468,38 @@ class ReadyCoreTaskDef(BaseModel):
             raise ValueError('Wrong inputs')
         return self
 
-@total_ordering
 @dataclass(frozen=True)
-class Resources:
+class ResourceClaim:
     """
     Resources claimed by a task
     """
     cpus: int = Field(ge=0)
 
-    def __sub__(self, other: 'Resources') -> 'Resources':
-        return Resources(cpus=self.cpus - other.cpus)
+@dataclass(frozen=True)
+class Resources:
+    """
+    Resources available or allocated to a task
+    """
+    cpus: list[int]
 
-    def __add__(self, other: 'Resources') -> 'Resources':
-        return Resources(cpus=self.cpus + other.cpus)
+    def allocate(self, claim: ResourceClaim
+            ) -> tuple['Resources | None', 'Resources']:
+        """
+        Try to split resources specified by claim off this resource set
 
-    def __ge__(self, other: 'Resources') -> bool:
-        return self.cpus >= other.cpus
+        Returns:
+            tuple (allocated, rest). If resources are insufficient, `rest` is
+            unchanged and `allocated` will be None.
+        """
+        if claim.cpus > len(self.cpus):
+            return None, self
+
+        alloc_cpus, rest_cpus = self.cpus[:claim.cpus], self.cpus[claim.cpus:]
+
+        return Resources(alloc_cpus), Resources(rest_cpus)
+
+    def free(self, resources):
+        """
+        Return allocated resources
+        """
+        return Resources(self.cpus + resources.cpus)
