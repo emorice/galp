@@ -119,7 +119,6 @@ class Serializer(Generic[Nat, Ref]):
                 except (KeyError, IndexError) as exc:
                     raise DeserializeError(f'Missing child index {data}') from exc
             if code == _DILL_EXT_CODE:
-                logging.warning('Unsafe deserialization with dill')
                 return dill.loads(data)
             raise DeserializeError(f'Unknown ExtType {code}')
         return _hook
