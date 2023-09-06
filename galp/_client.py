@@ -279,8 +279,8 @@ class BrokerProtocol(ReplyProtocol):
         self.submitted_count : defaultdict[TaskName, int] = defaultdict(int)
         self.run_count : defaultdict[TaskName, int] = defaultdict(int)
 
-        # Resources
-        self.resources = gtt.Resources(cpus=cpus_per_task)
+        # Default resources
+        self.resources = gtt.ResourceClaim(cpus=cpus_per_task)
 
     def add(self, tasks: list[TaskNode]) -> None:
         """
@@ -349,7 +349,7 @@ class BrokerProtocol(ReplyProtocol):
 
         return None
 
-    def get_resources(self, task_def: gtt.CoreTaskDef) -> gtt.Resources:
+    def get_resources(self, task_def: gtt.CoreTaskDef) -> gtt.ResourceClaim:
         """
         Decide how much resources to allocate to a task
         """

@@ -5,9 +5,8 @@ Not in actual use yet
 """
 
 from typing import Literal, Annotated, TypeVar
-from enum import Enum
 from dataclasses import field, dataclass
-from pydantic import Field, PlainSerializer
+from pydantic import Field
 
 from . import task_types as gtt
 from .task_types import TaskName, TaskDef, CoreTaskDef, TaskRef
@@ -154,10 +153,11 @@ class Put(BaseMessage):
 @dataclass(frozen=True)
 class Fork(BaseMessage):
     """
-    A message asking for a new peer to be created
+    A message asking for a new peer, compatible with some resource claim, to be
+    created.
     """
     mission: bytes
-    resources: gtt.Resources
+    resources: gtt.ResourceClaim
 
     verb: Literal['fork'] = field(default='fork', repr=False)
 

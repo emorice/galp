@@ -7,6 +7,7 @@ import logging
 from typing import Any
 from dataclasses import dataclass
 from collections import defaultdict
+from itertools import cycle
 
 import zmq
 
@@ -42,6 +43,7 @@ class Allocation:
     """
     A request that was accepted, but is not yet treated
     """
+    claim: gtt.ResourceClaim
     resources: Resources
     msg: RoutedMessage
     task_id: bytes
@@ -54,7 +56,7 @@ class CommonProtocol(ReplyProtocol):
         super().__init__(name, router)
 
         # List of idle workers, by resources
-        self.idle_workers: defaultdict[Resources, list[Route]]
+        self.idle_workers: defaultdict[gtt.ResourceClaim, list[Route]]
         self.idle_workers = defaultdict(lambda : [])
 
         # Internal routing id indexed by self-identifiers
@@ -110,7 +112,10 @@ class CommonProtocol(ReplyProtocol):
         # When the pool manager joins, record its route and set the available
         # resources
         self.pool = rmsg.incoming
-        self.resources = Resources(gmsg.cpus[:self.max_cpus])
+        # Adapt the list of cpus to the requested number of max cpus by dropping
+        # or repeting some as needed
+        cpus = [x for x, _ in zip(cycle(gmsg.cpus), range(self.max_cpus))]
+        self.resources = Resources(cpus)
 
     def free_resources(self, worker_route: Route, reuse=True) -> None:
         """
@@ -127,7 +132,7 @@ class CommonProtocol(ReplyProtocol):
                 logging.error('Double free of allocation %s', alloc)
             # Free worker for reuse if marked as such
             if reuse:
-                self.idle_workers[alloc.resources].append(worker_route)
+                self.idle_workers[alloc.claim].append(worker_route)
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
@@ -163,11 +168,11 @@ class CommonProtocol(ReplyProtocol):
                         forward=alloc.msg.incoming,
                         body=gm.NotFound(name=orig_msg.body.name)
                         )
-            case gm.Submit():
+            case gm.Exec():
                 return RoutedMessage(
                         incoming=[],
                         forward=alloc.msg.incoming,
-                        body=gm.Failed(task_def=orig_msg.body.task_def)
+                        body=gm.Failed(task_def=orig_msg.body.submit.task_def)
                         )
         logging.error(
             'Worker %s died while handling %s, no error propagation',
@@ -181,7 +186,7 @@ class CommonProtocol(ReplyProtocol):
         """
         if isinstance(msg.body, gm.Submit):
             return msg.body.resources
-        return ResourceClaim(cpus=1)
+        return gtt.ResourceClaim(cpus=1)
 
     def on_request(self, msg: RoutedMessage, gmsg: gm.Stat | gm.Submit | gm.Get):
         """
@@ -189,7 +194,7 @@ class CommonProtocol(ReplyProtocol):
         """
         verb = gmsg.verb
 
-        resources = self.calc_resources(msg)
+        claim = self.calc_resource_claim(msg)
 
         # Drop if we already accepted the same task
         # This ideally should not happen if the client receives proper feedback
@@ -205,25 +210,36 @@ class CommonProtocol(ReplyProtocol):
             logging.info('Dropping %s (pool not joined)', verb)
             return None
 
-        # Drop if we don't have any resources left
-        if resources > self.resources:
+        # Try allocate and drop if we don't have any resources left
+        resources, self.resources = self.resources.allocate(claim)
+        if resources is None:
             logging.info('Dropping %s (no resources)', verb)
             return None
 
-        # Allocate. At this point the message can be considered
+        # Allocated. At this point the message can be considered
         # as accepted and queued
-        # Related to issue #87: therefore, we should already reply to the client now that we're
-        # taking the task
-        self.resources -= resources
+
+        # For Submits, the worker will need to know the details of the
+        # allocation, so wrap the original message
+        if isinstance(gmsg, gm.Submit):
+            msg = RoutedMessage(
+                    incoming=msg.incoming, forward=msg.forward,
+                    body=gm.Exec(submit=gmsg, resources=resources)
+                    )
+
+        # Related to issue #87: we should already reply to the client now that
+        # we're taking the task
         alloc = Allocation(
+                claim=claim,
                 resources=resources,
                 msg=msg,
                 task_id=task_id
                 )
         self.alloc_from_task[alloc.task_id] = alloc
 
+
         # If we have idle workers, directly forward to one
-        if (workers := self.idle_workers[resources]):
+        if (workers := self.idle_workers[claim]):
             worker_route = workers.pop()
             logging.debug('Worker available, forwarding %s', verb)
 
@@ -234,15 +250,15 @@ class CommonProtocol(ReplyProtocol):
             return RoutedMessage(
                     incoming=msg.incoming,
                     forward=worker_route,
-                    body=gmsg
+                    body=msg.body
                     )
 
-        # Else, forward the message to the pool, triggering worker spawning
+        # Else, ask the pool to fork a new worker
         # We'll send the request to the worker when it send us a READY
         return RoutedMessage(
                 incoming=Route(),
                 forward=self.pool,
-                body=gm.Fork(alloc.task_id, alloc.resources)
+                body=gm.Fork(alloc.task_id, alloc.claim)
                 )
 
     def on_routed_message(self, msg: RoutedMessage):

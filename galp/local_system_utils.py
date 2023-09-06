@@ -3,7 +3,6 @@ All-in-one client, broker, worker
 """
 
 import os
-import signal
 import tempfile
 import logging
 
@@ -13,7 +12,6 @@ import galp.pool
 from galp.client import Client
 from galp.broker import Broker
 from galp.async_utils import background
-from galp.cli import run_in_fork
 
 class LocalSystem:
     """
@@ -24,7 +22,7 @@ class LocalSystem:
     def __init__(self, pool_size=1, pin_workers=False, cpus_per_task=None, **worker_options):
         self._stack = AsyncExitStack()
 
-        endpoint = f'ipc://@galp_wk_{os.getpid()}'.encode('ascii')
+        endpoint = f'ipc://@galp_wk_{os.getpid()}'
         self.endpoint = endpoint
 
         if cpus_per_task is not None:
@@ -57,7 +55,7 @@ class LocalSystem:
             background(self._broker.run())
             )
         self._stack.enter_context(
-            _fork_pool(self._pool_config)
+            _spawn_pool(self._pool_config)
             )
         self.client =  Client(self.endpoint, self.cpus_per_task)
         return self.client
@@ -70,11 +68,11 @@ class LocalSystem:
         await self._stack.aclose()
 
 @contextmanager
-def _fork_pool(config):
-    pid = run_in_fork(galp.pool.main, config)
+def _spawn_pool(config):
+    popen = galp.pool.spawn(config)
     yield
-    os.kill(pid, signal.SIGTERM)
-    os.waitpid(pid, 0)
+    popen.terminate()
+    popen.wait()
 
 class TempSystem(LocalSystem):
     """

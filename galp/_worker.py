@@ -46,12 +46,12 @@ class NonFatalTaskError(RuntimeError):
 
 def limit_resources(vm_limit=None, cpus=None):
     """
-    Set resource limits from command line, for now only virtual memory and numpy
-    backend threads
+    Set resource limits from command line, for now only virtual memory
 
     We use base-10 prefixes: when in doubt, it's safer to
     set a stricter limit.
     """
+    # Note: this should be done per task, not globally at the beginning
     suffixes = {
         'K': 3,
         'M': 6,
@@ -71,11 +71,23 @@ def limit_resources(vm_limit=None, cpus=None):
         _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         resource.setrlimit(resource.RLIMIT_AS, (size, hard))
 
-    if cpus:
-        # pylint: disable=import-outside-toplevel
-        import numpy # pylint: disable=unused-import # side effect
-        import threadpoolctl # type: ignore[import]
-        threadpoolctl.threadpool_limits(cpus)
+    # This should not be necessary, because we pin the right number of cpus
+    # before reaching here, and most libraries we care about inspect pins to set
+    # the default pool size.
+    # We keep it commented out as documentation of the former behavior.
+    # Furthermore, we should need nothing at startup anyways, see issue #89
+    # if cpus:
+    #     import threadpoolctl # type: ignore[import]
+    #     # pylint: disable=import-outside-toplevel
+    #     import numpy # pylint: disable=unused-import # side effect
+    #     threadpoolctl.threadpool_limits(cpus)
+    del cpus
+
+def limit_task_resources(resources: gtt.Resources):
+    """
+    Set resource limits from received request, for each task independently
+    """
+    psutil.Process().cpu_affinity(resources.cpus)
 
 def make_worker_init(config):
     """Prepare a worker factory function. Must be called in main thread.
@@ -94,15 +106,12 @@ def make_worker_init(config):
     # Early setup, make sure this work before attempting config
     galp.cli.setup("worker", config.get('log_level'))
     galp.cli.set_sync_handlers()
+    limit_resources(config.get('vm'), config.get('cpus_per_task'))
 
     # Parse configuration
     setup = load_config(config,
             mandatory=['endpoint', 'store']
             )
-
-    # Late setup
-    print(setup)
-    limit_resources(setup.get('vm'), setup.get('cpus_per_task'))
 
     os.makedirs(os.path.join(setup['store'].dirpath, 'galp'), exist_ok=True)
 
@@ -188,11 +197,11 @@ class WorkerProtocol(ReplyProtocol):
         """
         Expose full message to submit handler
         """
-        if isinstance(msg.body, gm.Submit):
-            return self.on_routed_submit(msg, msg.body)
+        if isinstance(msg.body, gm.Exec):
+            return self.on_routed_exec(msg, msg.body)
         return super().on_routed_message(msg)
 
-    def on_routed_submit(self, request: RoutedMessage, msg: gm.Submit) -> Replies:
+    def on_routed_exec(self, request: RoutedMessage, msg: gm.Exec) -> Replies:
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -201,9 +210,13 @@ class WorkerProtocol(ReplyProtocol):
 
         This the only asynchronous handler, all others are semantically blocking.
         """
-        task_def = msg.task_def
-        logging.info('SUBMIT: %s', task_def.step)
+        sub = msg.submit
+        task_def = sub.task_def
+        logging.info('SUBMIT: %s on cpus %s', task_def.step, msg.resources.cpus)
         name = task_def.name
+
+        # Set the resource limits immediately
+        limit_task_resources(msg.resources)
 
         # Store hook. For now we just check the local cache, later we'll have a
         # central locking mechanism
@@ -225,7 +238,7 @@ class WorkerProtocol(ReplyProtocol):
         replies.extend(self.new_commands_to_replies(
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
-            self.worker.schedule_task(request, msg)
+            self.worker.schedule_task(request, sub)
             ))
         return replies
 

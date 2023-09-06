@@ -5,7 +5,6 @@ Abstract task types defintions
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from functools import total_ordering
 import hashlib
 from typing import (Any, Literal, Union, Annotated, TypeAlias, TypeVar, Generic,
         Iterable)

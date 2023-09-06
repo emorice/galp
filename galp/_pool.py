@@ -3,11 +3,13 @@ Start and re-start processes, keep track of crashes and failed tasks
 """
 
 import os
+import sys
 import asyncio
 import logging
 import signal
 import threading
 from contextlib import asynccontextmanager
+import subprocess
 
 import psutil
 import zmq
@@ -178,7 +180,6 @@ def forkserver(config):
 
     if config.get('pin_workers'):
         cpus = psutil.Process().cpu_affinity()
-        cpu_counter = 0
 
     while True:
         msg = load_model(gm.Message, socket.recv())
@@ -187,10 +188,16 @@ def forkserver(config):
                 _config = dict(config, mission=msg.mission,
                                cpus_per_task=msg.resources.cpus)
                 if _config.get('pin_workers'):
-                    cpu = cpus[cpu_counter]
-                    cpu_counter = (cpu_counter + 1) % len(cpus)
-                    logging.info('Pinning new worker to cpu %d', cpu)
-                    pid = galp.worker.fork(dict(_config, pin_cpus=[cpu]))
+                    # We always pin to the first n cpus. This does not mean that
+                    # we will actually execute on these ; cpu pins should be
+                    # reset in the worker based on information from the broker
+                    # at each task. Rather, it is a matter of having the right
+                    # number of bits in the cpu mask when modules that inspect
+                    # the mask are loaded, possibly even before the first task
+                    # is run.
+                    _cpus = cpus[:msg.resources.cpus]
+                    logging.info('Pinning new worker to cpus %s', _cpus)
+                    pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
                 else:
                     pid = galp.worker.fork(_config)
                 socket.send(pid.to_bytes(4, 'little'))
@@ -246,3 +253,40 @@ def main(config):
         logging.info("Pool manager exiting")
     asyncio.run(_amain(config))
     return 0
+
+def make_cli(config):
+    """
+    Generate a command line to spawn a pool
+    """
+    args = []
+    for key, val in config.items():
+        match key:
+            case 'pin_workers':
+                if val:
+                    args.append('--pin_workers')
+            case 'endpoint':
+                args.append(val)
+            case 'store':
+                args.append(val)
+            case 'steps':
+                for step in val or []:
+                    args.append('--steps')
+                    args.append(step)
+            case 'log_level':
+                args.append('--log-level')
+                args.append(val)
+            case 'config':
+                if val:
+                    args.append('--config')
+                    args.append(val)
+            case _:
+                raise ValueError(f'Argument {key} is not supported by the pool'
+                    'spawn entry point')
+    return [str(obj) for obj in args]
+
+def spawn(config):
+    """
+    Spawn a new pool process
+    """
+    return subprocess.Popen([sys.executable, '-m', 'galp.pool'] +
+            make_cli(config))
