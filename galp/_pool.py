@@ -288,5 +288,6 @@ def spawn(config):
     """
     Spawn a new pool process
     """
-    return subprocess.Popen([sys.executable, '-m', 'galp.pool'] +
-            make_cli(config))
+    line = [sys.executable, '-m', 'galp.pool'] + make_cli(config)
+    logging.info('Spawning %s', line)
+    return subprocess.Popen(line)
