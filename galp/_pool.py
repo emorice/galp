@@ -267,7 +267,9 @@ def make_cli(config):
             case 'endpoint':
                 args.append(val)
             case 'store':
-                args.append(val)
+                if val:
+                    args.append('--store')
+                    args.append(val)
             case 'steps':
                 for step in val or []:
                     args.append('--steps')

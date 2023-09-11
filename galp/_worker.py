@@ -569,7 +569,7 @@ def add_parser_arguments(parser):
         help="Endpoint to bind to, in ZMQ format, e.g. tcp://127.0.0.2:12345 "
             "or ipc://path/to/socket ; see also man zmq_bind."
         )
-    galp.cache.add_store_argument(parser)
+    galp.cache.add_store_argument(parser, optional=True)
 
     parser.add_argument('--vm',
         help='Limit on process virtual memory size, e.g. "2M" or "1G"')
