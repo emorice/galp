@@ -275,8 +275,9 @@ def make_cli(config):
                     args.append('--steps')
                     args.append(step)
             case 'log_level':
-                args.append('--log-level')
-                args.append(val)
+                if val:
+                    args.append('--log-level')
+                    args.append(val)
             case 'config':
                 if val:
                     args.append('--config')
