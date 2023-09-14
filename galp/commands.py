@@ -502,6 +502,14 @@ class Stat(NamedPrimitive[StatResult, str]):
     Get a task's metadata
     """
 
+class Put(NamedPrimitive[gtt.ResultRef, str]):
+    """
+    Upload the object of a literal task
+    """
+    def __init__(self, name: gtt.TaskName, data: Any):
+        super().__init__(name)
+        self.data = data
+
 def rget(name: gtt.TaskName) -> Command[list, str]:
     """
     Get a task result, then rescursively get all the sub-parts of it
