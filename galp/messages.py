@@ -187,8 +187,19 @@ class PoolReady(BaseMessage):
 
     verb: Literal['pool_ready'] = field(default='pool_ready', repr=False)
 
+class Request(BaseMessage):
+    """
+    Base class for request messages
+    """
+    @property
+    def task_key(self) -> bytes:
+        """
+        Unique request identifier
+        """
+        raise NotImplementedError
+
 @dataclass(frozen=True)
-class Stat(BaseMessage):
+class Stat(Request):
     """
     A message asking if a task is defined or executed
 
@@ -201,9 +212,6 @@ class Stat(BaseMessage):
 
     @property
     def task_key(self) -> bytes:
-        """
-        Unique request identifier
-        """
         return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
 @dataclass(frozen=True)
@@ -237,6 +245,12 @@ class Exec(BaseMessage):
     resources: gtt.Resources
 
     verb: Literal['exec'] = field(default='exec', repr=False)
+
+@dataclass(frozen=True)
+class Reply:
+    task_key: bytes
+
+    verb: Literal['reply'] = field(default='reply', repr=False)
 
 Message = Annotated[
         Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
