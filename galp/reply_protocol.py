@@ -24,6 +24,7 @@ class ReplyProtocol(Protocol):
         """
         try:
             return super().on_verb(route, msg_body)
+        # Obsolete pathway
         except IllegalRequestError as exc:
             return [RoutedMessage(
                     incoming=Route(),

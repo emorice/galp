@@ -55,6 +55,15 @@ class Protocol(LowerProtocol):
     message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
+    def __init__(self, name, router): #, lower_session, upper_layer):
+        """
+        This should eventually be split into a layer object that receives the
+        upper layer and a session object that receives the lower session
+        """
+        super().__init__(name, router)
+        #lower_session = LowerProtocol(name, router)
+        self.lower_session = self #lower_session
+        self.upper_layer = self #upper_layer
 
     # Default handlers
     # ================
@@ -84,7 +93,7 @@ class Protocol(LowerProtocol):
         """
         if isinstance(msg, RoutedMessage):
             self._log_message(msg, is_incoming=False)
-            return super().write_plain_message(self._dump_message(msg))
+            return self.lower_session.write_plain_message(self._dump_message(msg))
         if isinstance(msg, gm.Message):
             raise ValueError('Message must be routed (addressed) before being written out')
         raise TypeError(f'Invalid message type {type(msg)}')
