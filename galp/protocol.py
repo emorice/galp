@@ -8,7 +8,7 @@ from typing import TypeAlias, Iterable
 from dataclasses import dataclass
 
 import galp.messages as gm
-from galp.lower_protocol import LowerProtocol, Route
+from galp.lower_protocol import LowerProtocol, Route, IllegalRequestError
 from galp.serializer import dump_model, load_model, DeserializeError
 
 # Errors and exceptions
@@ -165,9 +165,9 @@ class Protocol(LowerProtocol):
                 case [payload, data]:
                     msg_obj = load_model(gm.Message, payload, data=data) # type: ignore[arg-type]
                 case _:
-                    self.on_invalid(route, 'Wrong number of frames')
+                    raise IllegalRequestError(route, 'Wrong number of frames')
         except DeserializeError as exc:
-            self.on_invalid(route, f'Bad message: {exc.args[0]}')
+            raise IllegalRequestError(route, f'Bad message: {exc.args[0]}')
 
         incoming, forward = route
         rmsg = RoutedMessage(incoming=incoming, forward=forward, body=msg_obj)

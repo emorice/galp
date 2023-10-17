@@ -24,9 +24,9 @@ import galp.messages as gm
 
 def make_msg(*parts):
     """
-    Add dummy route and counters to a message
+    Add dummy route to a message
     """
-    return [b'', b'\0\0\0\0', b'\x10\0\0\0', *parts]
+    return [b'', *parts]
 
 def asserted_zmq_recv_multipart(socket):
     """

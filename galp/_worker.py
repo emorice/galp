@@ -153,13 +153,6 @@ class WorkerProtocol(ReplyProtocol):
             return super().route_message(None, new)
         return orig.reply(new)
 
-    def on_invalid(self, route, reason):
-        """
-        Log the error
-        """
-        logging.error('Bad request: %s', reason)
-        return super().on_invalid(route, reason)
-
     def on_illegal(self, msg: gm.Illegal):
         """
         Terminate

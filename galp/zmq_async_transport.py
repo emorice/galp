@@ -5,6 +5,7 @@ Using ØMQ as a transport for Galp protoclols
 import zmq
 
 from galp.protocol import ProtocolEndException
+from galp.lower_protocol import Session
 
 class ZmqAsyncTransport:
     """
@@ -26,6 +27,8 @@ class ZmqAsyncTransport:
             self.socket.bind(endpoint)
         else:
             self.socket.connect(endpoint)
+
+        self.session = Session() # Not actually used yet
 
     def __del__(self):
         self.socket.close()
@@ -56,7 +59,7 @@ class ZmqAsyncTransport:
         type accepted by protocol.write_message.
         """
         zmq_msg = await self.socket.recv_multipart()
-        return self.protocol.on_message(zmq_msg)
+        return self.protocol.on_message_unsafe(self.session, zmq_msg)
 
     async def listen_reply_loop(self):
         """Simple processing loop
