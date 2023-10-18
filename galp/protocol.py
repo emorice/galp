@@ -155,7 +155,7 @@ class Protocol(LowerProtocol):
                 return [messages]
         return messages
 
-    def on_verb(self, route, msg_body: list[bytes]) -> Iterable[RoutedMessage]:
+    def on_verb(self, session: Session, route, msg_body: list[bytes]) -> Iterable[RoutedMessage]:
         """Parse given message, calling callbacks as needed.
 
         Returns:
@@ -175,14 +175,17 @@ class Protocol(LowerProtocol):
                 case _:
                     raise IllegalRequestError(route, 'Wrong number of frames')
         except DeserializeError as exc:
-            raise IllegalRequestError(route, f'Bad message: {exc.args[0]}')
+            raise IllegalRequestError(route, f'Bad message: {exc.args[0]}') from exc
 
         incoming, forward = route
         rmsg = RoutedMessage(incoming=incoming, forward=forward, body=msg_obj)
 
         self._log_message(rmsg, is_incoming=True)
 
-        return self.route_messages(rmsg, self.on_routed_message(rmsg))
+        return [
+                self.write_message(msg) for msg in
+                    self.route_messages(rmsg, self.on_routed_message(rmsg))
+                    ]
 
     def on_routed_message(self, msg: RoutedMessage) -> Replies:
         """

@@ -69,7 +69,12 @@ class Layer:
 
     The default invalid handler logs the error and suppresses the message
     without attempting to generate any kind of message back.
+
+    A layer can have zero to several upper layers to handle different payloads,
+    but if set, `self.upper` is used to generate new default sessions.
     """
+    def __init__(self, upper: 'Layer | None' = None):
+        self.upper = upper
 
     def validate(self, condition, route, reason) -> None:
         """
@@ -104,6 +109,15 @@ class Layer:
         logging.warning('Supressing malformed incoming message: %s', exc.reason)
         return []
 
+    def new_session(self) -> Session:
+        """
+        Initializes a new session to generate messages unrelated to an existing
+        context
+        """
+        if self.upper is None:
+            return Session()
+        return self.upper.new_session()
+
 class LowerSession(Session):
     """
     Keeps track of routing information of a peer and origin to address messages
@@ -136,7 +150,7 @@ class LowerProtocol(Layer):
     protocol.
     """
 
-    def __init__(self, name, router): #, upper: Layer):
+    def __init__(self, name, router: bool): #, upper: Layer):
         """
         Args:
             name: short string to include in log messages.
@@ -145,7 +159,7 @@ class LowerProtocol(Layer):
         """
         self.proto_name = name
         self.router = router
-        self.upper = self #upper
+        self.upper : Layer = self #upper
 
     # Main public methods
     # ===================
@@ -179,7 +193,7 @@ class LowerProtocol(Layer):
         if forward_route:
             out.append(forward.write(payload))
 
-        out.extend(self.upper.on_verb(routes, payload))
+        out.extend(self.upper.on_verb(reply, routes, payload))
 
         return out
 
@@ -226,8 +240,11 @@ class LowerProtocol(Layer):
 
         return msg, route
 
-    def on_verb(self, route: tuple[Route, Route], msg_body: list[bytes]) -> Iterable:
+    def on_verb(self, session: Session, route: tuple[Route, Route], msg_body: list[bytes]) -> Iterable:
         """
         Higher level interface to implement by subclassing.
         """
         raise NotImplementedError
+
+    def new_session(self) -> Session:
+        return LowerSession(None, self.router, Routes(incoming=Route(), forward=Route()))

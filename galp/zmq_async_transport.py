@@ -30,26 +30,38 @@ class ZmqAsyncTransport:
 
         self.session = Session() # Not actually used yet
 
+        self.top_session = self.protocol.new_session()
+
     def __del__(self):
         self.socket.close()
 
     async def send_message(self, msg):
         """
-        Passes msg to the protocol to be rewritten, then sends it
+        Passes msg to the protocol to be rewritten, then sends it.
+
+        Intended to be used by application to spontaneously send a message and
+        start a new communication. Not used to generate replies/reacts to an
+        incoming message.
         """
         zmq_msg = self.protocol.write_message(msg)
         # write_message is allowed to supress messages, so check for it
         if zmq_msg:
-            await self.socket.send_multipart(zmq_msg)
+            await self.send_raw(zmq_msg)
+
+    async def send_raw(self, msg):
+        """
+        Send a message as-is
+        """
+        await self.socket.send_multipart(msg)
 
     async def send_messages(self, messages):
         """
-        Wrapper of send_messages accepting None to several messages
+        Wrapper of send_raw accepting None to several messages
         """
         if not messages:
             return
         for message in messages:
-            await self.send_message(message)
+            await self.send_raw(message)
 
     async def recv_message(self):
         """
