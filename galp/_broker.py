@@ -284,10 +284,11 @@ class CommonProtocol(ReplyProtocol):
             self.free_resources(msg.incoming)
 
         # If a forward route is already present, the message is addressed at one
-        # specific worker or client, forward as-is.
+        # specific worker or client, forward as-is. Note that the lower layer
+        # forwards by default, so really this just means returning nothing.
         if msg.forward:
             logging.debug('Forwarding %s', gmsg.verb)
-            return msg
+            return []
 
         # Else, we may have to forward or queue the message. We decide based on
         # the verb whether this should be ultimately sent to a worker

@@ -8,7 +8,9 @@ from typing import TypeAlias, Iterable
 from dataclasses import dataclass
 
 import galp.messages as gm
-from galp.lower_protocol import LowerProtocol, Route, IllegalRequestError
+from galp.lower_protocol import (
+        LowerProtocol, Route, IllegalRequestError, Layer, Session
+        )
 from galp.serializer import dump_model, load_model, DeserializeError
 
 # Errors and exceptions
@@ -92,9 +94,15 @@ class Protocol(LowerProtocol):
         handlers
         """
         if isinstance(msg, RoutedMessage):
+            # Message still needs to be serialized. Ultimately we want that to
+            # be done by handlers within session objects and do nothing here.
             self._log_message(msg, is_incoming=False)
             return self.lower_session.write_plain_message(self._dump_message(msg))
-        if isinstance(msg, gm.Message):
+        if isinstance(msg, list) and msg and isinstance(msg[0], bytes):
+            # Message has already been written. Ultimately we want all messages
+            # here and then we can drop this function
+            return msg
+        if isinstance(msg, gm.BaseMessage):
             raise ValueError('Message must be routed (addressed) before being written out')
         raise TypeError(f'Invalid message type {type(msg)}')
 

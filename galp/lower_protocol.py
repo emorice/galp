@@ -3,6 +3,7 @@ Implementation of the lower level of GALP, handles routing.
 """
 
 from typing import NoReturn, Iterable
+from dataclasses import dataclass
 
 import logging
 
@@ -11,6 +12,14 @@ Route = list[bytes]
 This actually ZMQ specific and should be changed to a generic if we ever need
 more protocols
 """
+
+@dataclass
+class Routes:
+    """
+    The routing layer of a message
+    """
+    incoming: Route
+    forward: Route
 
 PlainMessage = tuple[tuple[Route, Route], list[bytes]]
 
@@ -95,6 +104,30 @@ class Layer:
         logging.warning('Supressing malformed incoming message: %s', exc.reason)
         return []
 
+class LowerSession(Session):
+    """
+    Keeps track of routing information of a peer and origin to address messages
+    """
+    def __init__(self, lower_session: Session | None, is_router: bool, routes: Routes):
+        super().__init__(lower_session)
+        self.is_router = is_router
+        self.routes = routes
+
+    def write_layer(self, payload: list[bytes]) -> list[bytes]:
+        """
+        Concats route and message.
+        """
+        if self.is_router:
+            # If routing, we need an id, we take it from the forward segment
+            # Note: this id is consumed by the zmq router sending stage and does
+            # not end up on the wire
+            next_hop, *forward_route = self.routes.forward
+            route_parts = [next_hop] + self.routes.incoming + forward_route
+        else:
+            route_parts = self.routes.incoming + self.routes.forward
+
+        return route_parts + [b''] + payload
+
 class LowerProtocol(Layer):
     """
     Lower half of a galp protocol handler.
@@ -103,7 +136,7 @@ class LowerProtocol(Layer):
     protocol.
     """
 
-    def __init__(self, name, router):
+    def __init__(self, name, router): #, upper: Layer):
         """
         Args:
             name: short string to include in log messages.
@@ -112,18 +145,43 @@ class LowerProtocol(Layer):
         """
         self.proto_name = name
         self.router = router
+        self.upper = self #upper
 
     # Main public methods
     # ===================
 
-    def on_message(self, session: Session, msg_parts: list[bytes]):
+    def on_message(self, session: Session, msg_parts: list[bytes]
+                   ) -> list[list[bytes]]:
         """
-        Parses the lower part of a GALP message,
+        Parses the routing part of a GALP message,
         then calls the upper protocol with the parsed message.
-        """
-        msg_body, route = self._parse_lower(msg_parts)
 
-        return self.on_verb(route, msg_body)
+        This creates two sessions: one associated with the original recipient
+        (forward session), and one associated with the original sender (reply
+        session). By default, the forward session is used immediately to forward
+        the incoming message, and only the reply session is exposed to the layer
+        above. Messages are automatically forwarded without further action from
+        the higher handlers ; however, interrupting the handler with, say, a
+        validation error would cause the forwarded message to be dropped too.
+        """
+        payload, routes = self._parse_lower(msg_parts)
+
+        incoming_route, forward_route = routes
+
+        forward = LowerSession(session, self.router,
+                               Routes(incoming_route, forward_route)
+                               )
+        reply = LowerSession(session, self.router,
+                               Routes(Route(), incoming_route)
+                               )
+        out = []
+
+        if forward_route:
+            out.append(forward.write(payload))
+
+        out.extend(self.upper.on_verb(routes, payload))
+
+        return out
 
     def write_plain_message(self, msg: PlainMessage):
         """
