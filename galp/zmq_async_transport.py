@@ -28,7 +28,7 @@ class ZmqAsyncTransport:
         else:
             self.socket.connect(endpoint)
 
-        self.session = Session() # Not actually used yet
+        self.session = Session(None) # Not actually used yet
 
         self.top_session = self.protocol.new_session()
 

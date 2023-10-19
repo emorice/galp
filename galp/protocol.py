@@ -47,6 +47,21 @@ Replies: TypeAlias = gm.Message | RoutedMessage | Iterable[gm.Message | RoutedMe
 Allowed returned type of message handers
 """
 
+@dataclass
+class UpperSession(Session):
+    """
+    Session encapuslating a galp message to be sent
+    """
+    message: gm.Message
+
+    def write_message(self) -> list[bytes]:
+        frames = [
+                dump_model(self.message, exclude={'data'})
+                ]
+        if hasattr(self.message, 'data'):
+            frames.append(self.message.data)
+        return frames
+
 class Protocol(LowerProtocol):
     """
     Helper class gathering methods solely concerned with parsing and building
@@ -106,7 +121,7 @@ class Protocol(LowerProtocol):
             raise ValueError('Message must be routed (addressed) before being written out')
         raise TypeError(f'Invalid message type {type(msg)}')
 
-    def route_messages(self, orig: RoutedMessage | None, news: Replies
+    def route_messages(self, session: Session, orig: RoutedMessage | None, news: Replies
             ) -> list[RoutedMessage]:
         """
         Route each of an optional list of messages
@@ -184,7 +199,7 @@ class Protocol(LowerProtocol):
 
         return [
                 self.write_message(msg) for msg in
-                    self.route_messages(rmsg, self.on_routed_message(rmsg))
+                    self.route_messages(session, rmsg, self.on_routed_message(rmsg))
                     ]
 
     def on_routed_message(self, msg: RoutedMessage) -> Replies:
