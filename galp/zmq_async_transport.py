@@ -48,13 +48,13 @@ class ZmqAsyncTransport:
         if zmq_msg:
             await self.send_raw(zmq_msg)
 
-    async def send_raw(self, msg):
+    async def send_raw(self, msg: list[bytes]):
         """
         Send a message as-is
         """
         await self.socket.send_multipart(msg)
 
-    async def send_messages(self, messages):
+    async def send_messages(self, messages: list[list[bytes]]):
         """
         Wrapper of send_raw accepting None to several messages
         """
@@ -63,7 +63,7 @@ class ZmqAsyncTransport:
         for message in messages:
             await self.send_raw(message)
 
-    async def recv_message(self):
+    async def recv_message(self) -> list[list[bytes]]:
         """
         Waits for one message, then call handlers when it arrives.
 
@@ -73,7 +73,7 @@ class ZmqAsyncTransport:
         zmq_msg = await self.socket.recv_multipart()
         return self.protocol.on_message_unsafe(self.session, zmq_msg)
 
-    async def listen_reply_loop(self):
+    async def listen_reply_loop(self) -> None:
         """Simple processing loop
 
         Waits for a message, call the protocol handler, then sends the replies.

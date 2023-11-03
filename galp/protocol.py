@@ -95,6 +95,9 @@ class Protocol(LowerProtocol):
     # ============
 
     def _dump_message(self, msg: RoutedMessage):
+        """
+        To be removed as this does not belong in the handler class.
+        """
         route = (msg.incoming, msg.forward)
         frames = [
                 dump_model(msg.body, exclude={'data'})
@@ -103,10 +106,12 @@ class Protocol(LowerProtocol):
             frames.append(msg.body.data)
         return route, frames
 
-    def write_message(self, msg: RoutedMessage):
+    def write_message(self, msg: RoutedMessage) -> list[bytes]:
         """
         Serialize gm.Message objects, allowing them to be returned directly from
         handlers
+
+        To be removed as this does not belong in the handler class.
         """
         if isinstance(msg, RoutedMessage):
             # Message still needs to be serialized. Ultimately we want that to
@@ -170,7 +175,8 @@ class Protocol(LowerProtocol):
                 return [messages]
         return messages
 
-    def on_verb(self, session: Session, route, msg_body: list[bytes]) -> Iterable[RoutedMessage]:
+    def on_verb(self, session: Session, route, msg_body: list[bytes]
+            ) -> list[list[bytes]]:
         """Parse given message, calling callbacks as needed.
 
         Returns:
@@ -197,6 +203,7 @@ class Protocol(LowerProtocol):
 
         self._log_message(rmsg, is_incoming=True)
 
+        # We should not need to call write_message here.
         return [
                 self.write_message(msg) for msg in
                     self.route_messages(session, rmsg, self.on_routed_message(rmsg))
