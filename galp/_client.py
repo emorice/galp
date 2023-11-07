@@ -369,7 +369,7 @@ class BrokerProtocol(ReplyProtocol):
         if isinstance(new, gm.Put | gm.NotFound):
             assert orig is not None
             return orig.reply(new)
-        return super().route_message(orig, new)
+        return self.base_session.write(new)
 
     def get(self, name: TaskName) -> gm.Get | None:
         """

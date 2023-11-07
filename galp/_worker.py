@@ -150,7 +150,7 @@ class WorkerProtocol(ReplyProtocol):
         if isinstance(new, RoutedMessage):
             return new
         if orig is None:
-            return super().route_message(None, new)
+            return self.base_session.write(new)
         return orig.reply(new)
 
     def on_illegal(self, msg: gm.Illegal):

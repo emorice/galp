@@ -48,19 +48,24 @@ Allowed returned type of message handers
 """
 
 @dataclass
-class UpperSession(Session):
+class UpperSession:
     """
-    Session encapuslating a galp message to be sent
+    Session encapsulating a galp message to be sent
     """
-    message: gm.Message
+    lower_session: Session
 
-    def write_message(self) -> list[bytes]:
+    def write(self, message: gm.Message) -> list[bytes]:
+        """
+        Write a complete message from a galp message object.
+
+        Route is specified through the lower_session attribute.
+        """
         frames = [
-                dump_model(self.message, exclude={'data'})
+                dump_model(message, exclude={'data'})
                 ]
-        if hasattr(self.message, 'data'):
-            frames.append(self.message.data)
-        return frames
+        if hasattr(message, 'data'):
+            frames.append(message.data)
+        return self.lower_session.write(frames)
 
 class Protocol(LowerProtocol):
     """
@@ -81,6 +86,10 @@ class Protocol(LowerProtocol):
         #lower_session = LowerProtocol(name, router)
         self.lower_session = self #lower_session
         self.upper_layer = self #upper_layer
+
+        lower_base_session = self.new_session() # from LowerProtocol. This
+        # should be given to the constructor by the stack building code instead.
+        self.base_session = UpperSession(lower_base_session)
 
     # Default handlers
     # ================
