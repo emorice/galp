@@ -145,28 +145,14 @@ class Protocol(LowerProtocol):
             for new in self.as_message_list(news)
             ]
 
-    def route_message(self, orig: RoutedMessage | None,
-            new: gm.Message | RoutedMessage) -> RoutedMessage:
+    def route_message(self, orig: None, new: gm.Message) -> list[bytes]:
         """
-        Decide how to address a message
-
-        Default is to set both routes to default objects, ignoring the original
-        if any.
-
-        Also accepts already routed messages and forward them as-is ; this
-        allows `on_routed_message` overrides to set the route themselves on a
-        per-message basis if needed.
+        Legacy default-addressing
         """
-        del orig
+        assert orig is None, 'Deprecated use'
+        assert isinstance(new, gm.BaseMessage), 'Deprecated use'
 
-        if isinstance(new, RoutedMessage):
-            return new
-
-        return RoutedMessage(
-                incoming=Route(),
-                forward=Route(),
-                body=new
-                )
+        return self.base_session.write(new)
 
     #  Recv methods
     # ==================
