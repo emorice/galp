@@ -46,6 +46,7 @@ class Allocation:
     claim: gtt.ResourceClaim
     resources: Resources
     msg: RoutedMessage
+    client: UpperSession
     task_id: bytes
 
 class CommonProtocol(ReplyProtocol):
@@ -162,17 +163,11 @@ class CommonProtocol(ReplyProtocol):
 
         match orig_msg.body:
             case gm.Get() | gm.Stat():
-                return RoutedMessage(
-                        incoming=[],
-                        forward=alloc.msg.incoming,
-                        body=gm.NotFound(name=orig_msg.body.name)
-                        )
+                return [alloc.client.write(gm.NotFound(name=orig_msg.body.name))]
             case gm.Exec():
-                return RoutedMessage(
-                        incoming=[],
-                        forward=alloc.msg.incoming,
-                        body=gm.Failed(task_def=orig_msg.body.submit.task_def)
-                        )
+                return [alloc.client.write(
+                        gm.Failed(task_def=orig_msg.body.submit.task_def)
+                        )]
         logging.error(
             'Worker %s died while handling %s, no error propagation',
             peer, alloc
@@ -187,7 +182,7 @@ class CommonProtocol(ReplyProtocol):
             return msg.body.resources
         return gtt.ResourceClaim(cpus=1)
 
-    def on_request(self, msg: RoutedMessage, gmsg: gm.Stat | gm.Submit | gm.Get):
+    def on_request(self, session: UpperSession, msg: RoutedMessage, gmsg: gm.Stat | gm.Submit | gm.Get):
         """
         Assign a worker
         """
@@ -232,6 +227,7 @@ class CommonProtocol(ReplyProtocol):
                 claim=claim,
                 resources=resources,
                 msg=msg,
+                client=session,
                 task_id=task_id
                 )
         self.alloc_from_task[alloc.task_id] = alloc
@@ -287,7 +283,7 @@ class CommonProtocol(ReplyProtocol):
         # Else, we may have to forward or queue the message. We decide based on
         # the verb whether this should be ultimately sent to a worker
         if isinstance(gmsg, gm.Stat | gm.Submit | gm.Get):
-            return self.on_request(msg, gmsg)
+            return self.on_request(session, msg, gmsg)
 
         # If we reach this point, we received a message we know nothing about
         return self.on_unhandled(gmsg)
