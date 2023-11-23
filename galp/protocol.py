@@ -178,6 +178,7 @@ class Protocol(LowerProtocol):
             Whatever the final handler for this message returned.
         """
 
+        # Deserialize the payload
         msg_obj: gm.Message
         try:
             match msg_body:
@@ -193,6 +194,10 @@ class Protocol(LowerProtocol):
         except DeserializeError as exc:
             raise IllegalRequestError(route, f'Bad message: {exc.args[0]}') from exc
 
+        # Set up a serializer for the response
+        upper_session = UpperSession(session)
+
+        # Build legacy routed message object, to be removed
         incoming, forward = route
         rmsg = RoutedMessage(incoming=incoming, forward=forward, body=msg_obj)
 
@@ -201,10 +206,10 @@ class Protocol(LowerProtocol):
         # We should not need to call write_message here.
         return [
                 self.write_message(msg) for msg in
-                    self.route_messages(session, rmsg, self.on_routed_message(rmsg))
+                    self.route_messages(session, rmsg, self.on_routed_message(upper_session, rmsg))
                     ]
 
-    def on_routed_message(self, msg: RoutedMessage) -> Replies:
+    def on_routed_message(self, session: UpperSession, msg: RoutedMessage) -> Replies:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name

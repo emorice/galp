@@ -14,7 +14,7 @@ import zmq
 import galp.messages as gm
 import galp.task_types as gtt
 
-from galp.protocol import Route, RoutedMessage
+from galp.protocol import Route, RoutedMessage, UpperSession
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
@@ -261,11 +261,22 @@ class CommonProtocol(ReplyProtocol):
                 body=gm.Fork(alloc.task_id, alloc.claim)
                 )
 
-    def on_routed_message(self, msg: RoutedMessage):
-        # First, call local handlers. We do that even for messages that we
-        # forward as is, as we have some state to update. This also ensures that
-        # the message is valid
+    def on_routed_message(self, session: UpperSession, msg: RoutedMessage):
         gmsg = msg.body
+
+        # Forward handler: we insert a hook here to detect when workers finish
+        # tasks and free the corresponding resources.
+        if msg.forward:
+            # Free resources for all messages indicating end of task
+            if isinstance(gmsg,
+                    gm.Done | gm.Failed | gm.NotFound | gm.Found | gm.Put):
+                self.free_resources(msg.incoming)
+            # Forward as-is. Note that the lower layer forwards by default, so
+            # really this just means returning nothing.
+            logging.debug('Forwarding %s', gmsg.verb)
+            return []
+
+        # From this point, handler for local message (no forward field)
 
         # Record joining peers and forward pre allocated requests
         if isinstance(gmsg, gm.Ready):
@@ -277,18 +288,6 @@ class CommonProtocol(ReplyProtocol):
         # Similarly, record dead peers and forward failures
         if isinstance(gmsg, gm.Exited):
             return self.on_exited(gmsg)
-
-        # Free resources for all messages indicating end of task
-        if isinstance(gmsg,
-                gm.Done | gm.Failed | gm.NotFound | gm.Found | gm.Put):
-            self.free_resources(msg.incoming)
-
-        # If a forward route is already present, the message is addressed at one
-        # specific worker or client, forward as-is. Note that the lower layer
-        # forwards by default, so really this just means returning nothing.
-        if msg.forward:
-            logging.debug('Forwarding %s', gmsg.verb)
-            return []
 
         # Else, we may have to forward or queue the message. We decide based on
         # the verb whether this should be ultimately sent to a worker
