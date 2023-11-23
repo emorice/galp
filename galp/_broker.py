@@ -67,7 +67,7 @@ class CommonProtocol(ReplyProtocol):
         self.resources = Resources(cpus=[]) # Available cpus
 
         # Route to a worker spawner
-        self.pool: Route | None = None
+        self.pool: UpperSession | None = None
 
         # Tasks currenty accepted or ruuning, by unique id
         self.alloc_from_task: dict[bytes, Allocation] = {}
@@ -102,16 +102,15 @@ class CommonProtocol(ReplyProtocol):
                 body=pending_alloc.msg.body
                 )
 
-    def on_routed_pool_ready(self, rmsg: RoutedMessage, gmsg: gm.PoolReady):
+    def on_routed_pool_ready(self, pool: UpperSession, gmsg: gm.PoolReady):
         """
         Register pool route and resources
         """
-        assert not rmsg.forward
         assert self.pool is None
 
         # When the pool manager joins, record its route and set the available
         # resources
-        self.pool = rmsg.incoming
+        self.pool = pool
         # Adapt the list of cpus to the requested number of max cpus by dropping
         # or repeting some as needed
         cpus = [x for x, _ in zip(cycle(gmsg.cpus), range(self.max_cpus))]
@@ -255,11 +254,7 @@ class CommonProtocol(ReplyProtocol):
 
         # Else, ask the pool to fork a new worker
         # We'll send the request to the worker when it send us a READY
-        return RoutedMessage(
-                incoming=Route(),
-                forward=self.pool,
-                body=gm.Fork(alloc.task_id, alloc.claim)
-                )
+        return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
     def on_routed_message(self, session: UpperSession, msg: RoutedMessage):
         gmsg = msg.body
@@ -283,7 +278,7 @@ class CommonProtocol(ReplyProtocol):
             return self.on_routed_ready(msg, gmsg)
 
         if isinstance(gmsg, gm.PoolReady):
-            return self.on_routed_pool_ready(msg, gmsg)
+            return self.on_routed_pool_ready(session, gmsg)
 
         # Similarly, record dead peers and forward failures
         if isinstance(gmsg, gm.Exited):
@@ -300,7 +295,7 @@ class CommonProtocol(ReplyProtocol):
     def route_message(self, orig, new):
         """
         Trivial routing layer because the broker already generates routed
-        messages only
+        messages only (either RoutedMessage or directly serialized messages)
         """
-        assert isinstance(new, RoutedMessage)
+        assert not isinstance(new, gm.BaseMessage)
         return new
