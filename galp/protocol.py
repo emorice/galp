@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import galp.messages as gm
 from galp.lower_protocol import (
-        LowerProtocol, Route, IllegalRequestError, Layer, Session,
+        LowerProtocol, Route, IllegalRequestError, Session,
         LegacyRouteWriter
         )
 from galp.serializer import dump_model, load_model, DeserializeError
@@ -48,6 +48,11 @@ Replies: TypeAlias = gm.Message | RoutedMessage | Iterable[gm.Message | RoutedMe
 Allowed returned type of message handers
 """
 
+TransportMessage: TypeAlias = list[bytes]
+"""
+Type of messages expected by the transport
+"""
+
 @dataclass
 class UpperSession:
     """
@@ -55,7 +60,7 @@ class UpperSession:
     """
     lower_session: Session
 
-    def write(self, message: gm.Message) -> list[bytes]:
+    def write(self, message: gm.Message) -> TransportMessage:
         """
         Write a complete message from a galp message object.
 
@@ -123,12 +128,13 @@ class Protocol(LowerProtocol):
             frames.append(msg.body.data)
         return route, frames
 
-    def write_message(self, msg: RoutedMessage) -> list[bytes]:
+    def write_message(self, msg: RoutedMessage | TransportMessage) -> TransportMessage:
         """
         Serialize gm.Message objects, allowing them to be returned directly from
         handlers
 
-        To be removed as this does not belong in the handler class.
+        To be removed as this does not belong in the handler class. As a
+        transition, allow already written messages and pass them as is
         """
         if isinstance(msg, RoutedMessage):
             # Message still needs to be serialized. Ultimately we want that to
@@ -144,7 +150,7 @@ class Protocol(LowerProtocol):
         raise TypeError(f'Invalid message type {type(msg)}')
 
     def route_messages(self, session: Session, orig: RoutedMessage | None, news: Replies
-            ) -> list[RoutedMessage]:
+            ) -> list[TransportMessage]:
         """
         Route each of an optional list of messages
         """
@@ -153,7 +159,7 @@ class Protocol(LowerProtocol):
             for new in self.as_message_list(news)
             ]
 
-    def route_message(self, orig: None, new: gm.Message) -> list[bytes]:
+    def route_message(self, orig: None, new: gm.Message) -> TransportMessage:
         """
         Legacy default-addressing
         """
@@ -179,7 +185,7 @@ class Protocol(LowerProtocol):
         return messages
 
     def on_verb(self, session: Session, route, msg_body: list[bytes]
-            ) -> list[list[bytes]]:
+            ) -> list[TransportMessage]:
         """Parse given message, calling callbacks as needed.
 
         Returns:
@@ -214,7 +220,7 @@ class Protocol(LowerProtocol):
                     self.route_messages(session, rmsg, self.on_routed_message(session, rmsg))
                     ]
 
-    def on_routed_message(self, session: UpperSession, msg: RoutedMessage) -> Replies:
+    def on_routed_message(self, session: Session, msg: RoutedMessage) -> Replies:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name
