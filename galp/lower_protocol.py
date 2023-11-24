@@ -136,7 +136,7 @@ class LowerProtocol(Layer):
     protocol.
     """
 
-    def __init__(self, router: bool): #, upper: Layer):
+    def __init__(self, router: bool, upper):
         """
         Args:
             name: short string to include in log messages.
@@ -144,7 +144,7 @@ class LowerProtocol(Layer):
                 first routing segment. Default False.
         """
         self.router = router
-        self.upper : Layer = self #upper
+        self.upper = upper
 
     # Main public methods
     # ===================

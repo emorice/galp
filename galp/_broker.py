@@ -30,7 +30,7 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
                 )
         self.proto = stack.upper
         self.transport = ZmqAsyncTransport(
-            stack.root,
+            stack,
             endpoint, zmq.ROUTER, bind=True)
 
     async def run(self):

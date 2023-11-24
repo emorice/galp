@@ -356,7 +356,7 @@ class Worker:
         self.protocol = stack.upper
         self.endpoint = setup['endpoint']
         self.transport = ZmqAsyncTransport(
-            stack.root,
+            stack,
             self.endpoint, zmq.DEALER # pylint: disable=no-member
             )
         self.step_dir = setup['steps']

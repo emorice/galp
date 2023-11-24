@@ -43,7 +43,7 @@ class Pool:
                 name='BK', router=False
                 )
         self.broker_protocol = stack.upper
-        self.broker_transport = ZmqAsyncTransport(stack.root,
+        self.broker_transport = ZmqAsyncTransport(stack,
             config['endpoint'], zmq.DEALER # pylint: disable=no-member
             )
 

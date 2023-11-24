@@ -90,10 +90,12 @@ def make_stack(make_upper_protocol, name, router) -> HandlerStack:
         stack to be given to the transport
     """
     app_upper = make_upper_protocol(name, router)
-    lib_lower = app_upper
+    lib_upper = app_upper # Still relies on inheritance
+    app_lower = lib_upper # Not yet exposed to app
+    lib_lower = LowerProtocol(router, app_lower)
     return HandlerStack(app_upper, lib_lower)
 
-class Protocol(LowerProtocol):
+class Protocol:
     """
     Helper class gathering methods solely concerned with parsing and building
     messages, but not with what to do with them.
@@ -103,7 +105,7 @@ class Protocol(LowerProtocol):
     message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
-    def __init__(self, name, router): # upper_layer):
+    def __init__(self, name, router):
         """
         This should eventually be split into a layer object that receives the
         upper layer and a session object that receives the lower session
@@ -114,10 +116,6 @@ class Protocol(LowerProtocol):
 
         # To keep, for logging
         self.proto_name = name
-
-        # To be removed, the handler needs no dependency on the lower-level
-        # handler
-        super().__init__(router)
 
         # To be removed, only used for legacy RoutedMessage objects
         self.legacy_route_writer = LegacyRouteWriter(router)

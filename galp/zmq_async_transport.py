@@ -10,13 +10,16 @@ from galp.lower_protocol import Session
 class ZmqAsyncTransport:
     """
     Args:
-        protocol: Protocol object with callbacks to handle messages
+        stack: Protocol stack object with callbacks to handle messages. Only the
+            stack root is normally needed but we have a legacy message writing path
+            that uses the top layer too
         endpoint: zmq endpoint to connect to
         socket_type: zmq socket type
         bind: whether to bind or connect, default False (connect)
     """
-    def __init__(self, protocol, endpoint, socket_type, bind=False):
-        self.protocol = protocol
+    def __init__(self, stack, endpoint, socket_type, bind=False):
+        self.stack = stack
+        self.protocol = stack.root
 
         self.endpoint = endpoint
 
@@ -41,7 +44,7 @@ class ZmqAsyncTransport:
         start a new communication. Not used to generate replies/reacts to an
         incoming message.
         """
-        zmq_msg = self.protocol.write_message(msg)
+        zmq_msg = self.stack.upper.write_message(msg)
         # write_message is allowed to supress messages, so check for it
         if zmq_msg:
             await self.send_raw(zmq_msg)

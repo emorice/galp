@@ -79,7 +79,7 @@ class Client:
 
         self.protocol = stack.upper
         self.transport = ZmqAsyncTransport(
-            protocol=stack.root,
+            stack=stack,
             # pylint: disable=no-member # False positive
             endpoint=endpoint, socket_type=zmq.DEALER
             )
