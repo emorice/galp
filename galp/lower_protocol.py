@@ -199,26 +199,6 @@ class LowerProtocol(Layer):
 
         return out
 
-    def write_plain_message(self, msg: PlainMessage):
-        """
-        Concats route and message.
-        """
-        route, msg_body = msg
-        incoming_route, forward_route = route
-        if not forward_route:
-            # We used to allow these and re-interpret the routes, but that was a
-            # hack
-            assert not incoming_route, 'Message with an origin but no dest'
-
-        if self.router:
-            # If routing, we need an id, we take it from the forward segment
-            next_hop, *forward_route = forward_route
-            route_parts = [next_hop] + incoming_route + forward_route
-        else:
-            route_parts = incoming_route + forward_route
-
-        return route_parts + [b''] + msg_body
-
     # Internal parsing utilities
     # ==========================
 
@@ -250,3 +230,31 @@ class LowerProtocol(Layer):
 
     def new_session(self) -> Session:
         return LowerSession(None, self.router, Routes(incoming=Route(), forward=Route()))
+
+@dataclass
+class LegacyRouteWriter:
+    """
+    Obsolete way of writing a route into a message.
+    Used by Protocol (upper) to write the equally legacy RoutedMessage objects.
+    """
+    router: bool
+
+    def write_plain_message(self, msg: PlainMessage):
+        """
+        Concats route and message.
+        """
+        route, msg_body = msg
+        incoming_route, forward_route = route
+        if not forward_route:
+            # We used to allow these and re-interpret the routes, but that was a
+            # hack
+            assert not incoming_route, 'Message with an origin but no dest'
+
+        if self.router:
+            # If routing, we need an id, we take it from the forward segment
+            next_hop, *forward_route = forward_route
+            route_parts = [next_hop] + incoming_route + forward_route
+        else:
+            route_parts = incoming_route + forward_route
+
+        return route_parts + [b''] + msg_body

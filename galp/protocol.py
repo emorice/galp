@@ -9,7 +9,8 @@ from dataclasses import dataclass
 
 import galp.messages as gm
 from galp.lower_protocol import (
-        LowerProtocol, Route, IllegalRequestError, Layer, Session
+        LowerProtocol, Route, IllegalRequestError, Layer, Session,
+        LegacyRouteWriter
         )
 from galp.serializer import dump_model, load_model, DeserializeError
 
@@ -77,18 +78,25 @@ class Protocol(LowerProtocol):
     message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
-    def __init__(self, name, router): #, lower_session, upper_layer):
+    def __init__(self, name, router): # upper_layer):
         """
         This should eventually be split into a layer object that receives the
         upper layer and a session object that receives the lower session
         """
+        # To be removed, the handler needs no dependency on the lower-level
+        # handler
         super().__init__(name, router)
-        #lower_session = LowerProtocol(name, router)
-        self.lower_session = self #lower_session
+
+        # To be removed, only used for legacy RoutedMessage objects
+        self.legacy_route_writer = LegacyRouteWriter(router)
+
+        # To keep, this is the main way of accessing the application-defined
+        # handlers, but this should be a parameter instead of inheritance
         self.upper_layer = self #upper_layer
 
-        lower_base_session = self.new_session() # from LowerProtocol. This
-        # should be given to the constructor by the stack building code instead.
+        # To be removed, this is used in route_message, which is out of this
+        # class' responsibility
+        lower_base_session = self.new_session() # from LowerProtocol
         self.base_session = UpperSession(lower_base_session)
 
     # Default handlers
@@ -126,7 +134,7 @@ class Protocol(LowerProtocol):
             # Message still needs to be serialized. Ultimately we want that to
             # be done by handlers within session objects and do nothing here.
             self._log_message(msg, is_incoming=False)
-            return self.lower_session.write_plain_message(self._dump_message(msg))
+            return self.legacy_route_writer.write_plain_message(self._dump_message(msg))
         if isinstance(msg, list) and msg and isinstance(msg[0], bytes):
             # Message has already been written. Ultimately we want all messages
             # here and then we can drop this function
