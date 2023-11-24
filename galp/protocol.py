@@ -190,7 +190,9 @@ class Protocol:
     def route_messages(self, session: Session, orig: RoutedMessage | None, news: Replies
             ) -> list[TransportMessage]:
         """
-        Route each of an optional list of messages
+        Route each of an optional list of messages. Legacy, handlers should
+        generate new messages through contextual writers and pass only already
+        written messages back.
         """
         return [
             self.route_message(orig, new)
@@ -199,12 +201,10 @@ class Protocol:
 
     def route_message(self, orig: None, new: gm.Message) -> TransportMessage:
         """
-        Legacy default-addressing
+        Legacy default-addressing. This is not the responsibility of this class,
+        and all apps have their custom version.
         """
-        assert orig is None, 'Deprecated use'
-        assert isinstance(new, gm.BaseMessage), 'Deprecated use'
-
-        return self.base_session.write(new)
+        raise NotImplementedError
 
     #  Recv methods
     # ==================
