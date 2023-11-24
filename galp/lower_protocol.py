@@ -228,14 +228,14 @@ class LowerProtocol(Layer):
         """
         raise NotImplementedError
 
-    def new_session(self) -> Session:
-        return LowerSession(None, self.router, Routes(incoming=Route(), forward=Route()))
-
 @dataclass
 class LegacyRouteWriter:
     """
-    Obsolete way of writing a route into a message.
-    Used by Protocol (upper) to write the equally legacy RoutedMessage objects.
+    Obsolete ways of writing a route into a message.
+    write_plain_message is used by Protocol (upper) to write the equally legacy
+    RoutedMessage objects.
+    new_session is used by protocol to write default-addressed messages in
+    route_message.
     """
     router: bool
 
@@ -258,3 +258,9 @@ class LegacyRouteWriter:
             route_parts = incoming_route + forward_route
 
         return route_parts + [b''] + msg_body
+
+    def new_session(self) -> Session:
+        """
+        Create a default-addressing session
+        """
+        return LowerSession(None, self.router, Routes(incoming=Route(), forward=Route()))

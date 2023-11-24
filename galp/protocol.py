@@ -88,6 +88,10 @@ class Protocol(LowerProtocol):
         This should eventually be split into a layer object that receives the
         upper layer and a session object that receives the lower session
         """
+        # To keep, this is the main way of accessing the application-defined
+        # handlers, but this should be a parameter instead of inheritance
+        self.upper_layer = self #upper_layer
+
         # To be removed, the handler needs no dependency on the lower-level
         # handler
         super().__init__(name, router)
@@ -95,13 +99,9 @@ class Protocol(LowerProtocol):
         # To be removed, only used for legacy RoutedMessage objects
         self.legacy_route_writer = LegacyRouteWriter(router)
 
-        # To keep, this is the main way of accessing the application-defined
-        # handlers, but this should be a parameter instead of inheritance
-        self.upper_layer = self #upper_layer
-
         # To be removed, this is used in route_message, which is out of this
         # class' responsibility
-        lower_base_session = self.new_session() # from LowerProtocol
+        lower_base_session = self.legacy_route_writer.new_session()
         self.base_session = UpperSession(lower_base_session)
 
     # Default handlers
