@@ -73,6 +73,26 @@ class UpperSession:
             frames.append(message.data)
         return self.lower_session.write(frames)
 
+@dataclass
+class HandlerStack:
+    """
+    Handling side of a network stack
+    """
+    upper: 'Protocol'
+    root: LowerProtocol
+
+def make_stack(make_upper_protocol, name, router) -> HandlerStack:
+    """
+    Factory function to assemble the handler stack
+
+    Returns:
+        The result of each app-provided class factory, and the final root of the
+        stack to be given to the transport
+    """
+    app_upper = make_upper_protocol(name, router)
+    lib_lower = app_upper
+    return HandlerStack(app_upper, lib_lower)
+
 class Protocol(LowerProtocol):
     """
     Helper class gathering methods solely concerned with parsing and building

@@ -23,7 +23,7 @@ import galp.task_types as gtt
 from galp import async_utils
 from galp.cache import CacheStack
 from galp.serializer import DeserializeError
-from galp.protocol import ProtocolEndException, RoutedMessage
+from galp.protocol import ProtocolEndException, RoutedMessage, make_stack
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
@@ -67,14 +67,19 @@ class Client:
     """
 
     def __init__(self, endpoint: str, cpus_per_task: int | None = None):
-        self.protocol = BrokerProtocol(
-            'BK', router=False,
-            schedule=self.schedule, # callback to add tasks to the scheduling queue
-            cpus_per_task=cpus_per_task or 1
-            )
+        stack = make_stack(
+                lambda name, router :BrokerProtocol(
+                    name, router,
+                    schedule=self.schedule, # callback to add tasks to the scheduling queue
+                    cpus_per_task=cpus_per_task or 1
+                    ),
+                name='BK',
+                router=False
+                )
 
+        self.protocol = stack.upper
         self.transport = ZmqAsyncTransport(
-            protocol=self.protocol,
+            protocol=stack.root,
             # pylint: disable=no-member # False positive
             endpoint=endpoint, socket_type=zmq.DEALER
             )

@@ -14,7 +14,7 @@ import zmq
 import galp.messages as gm
 import galp.task_types as gtt
 
-from galp.protocol import Route, RoutedMessage, UpperSession, Session
+from galp.protocol import Route, RoutedMessage, UpperSession, Session, make_stack
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
@@ -24,9 +24,13 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     Load-balancing client-to-worker and a worker-to-broker loops
     """
     def __init__(self, endpoint, n_cpus):
-        self.proto = CommonProtocol('CW', router=True, max_cpus=n_cpus)
+        stack = make_stack(
+                lambda name, router: CommonProtocol(name, router, max_cpus=n_cpus),
+                name='CW', router=True
+                )
+        self.proto = stack.upper
         self.transport = ZmqAsyncTransport(
-            self.proto,
+            stack.root,
             endpoint, zmq.ROUTER, bind=True)
 
     async def run(self):

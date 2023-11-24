@@ -17,6 +17,7 @@ import zmq
 import galp.worker
 import galp.messages as gm
 from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.protocol import make_stack
 from galp.reply_protocol import ReplyProtocol
 from galp.serializer import dump_model, load_model
 from galp.async_utils import background
@@ -37,9 +38,12 @@ class Pool:
         self.signal = None
         self.pending_signal = asyncio.Event()
 
-        self.broker_protocol = BrokerProtocol(pool=self)
-        self.broker_transport = ZmqAsyncTransport(
-            self.broker_protocol,
+        stack = make_stack(
+                lambda name, router: BrokerProtocol(pool=self),
+                name='BK', router=False
+                )
+        self.broker_protocol = stack.upper
+        self.broker_transport = ZmqAsyncTransport(stack.root,
             config['endpoint'], zmq.DEALER # pylint: disable=no-member
             )
 

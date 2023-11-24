@@ -30,7 +30,7 @@ import galp.task_types as gtt
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException,
-    RoutedMessage, Replies)
+    RoutedMessage, Replies, make_stack)
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
@@ -348,12 +348,15 @@ class Worker:
     execution logic.
     """
     def __init__(self, setup: dict):
-        self.protocol = WorkerProtocol(
-            self, setup['store'],
-            'BK', router=False)
+        stack = make_stack(
+                lambda name, router: WorkerProtocol(self,
+                    setup['store'], name, router),
+                name='BK', router=False
+                )
+        self.protocol = stack.upper
         self.endpoint = setup['endpoint']
         self.transport = ZmqAsyncTransport(
-            self.protocol,
+            stack.root,
             self.endpoint, zmq.DEALER # pylint: disable=no-member
             )
         self.step_dir = setup['steps']
