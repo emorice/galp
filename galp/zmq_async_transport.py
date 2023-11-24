@@ -30,8 +30,6 @@ class ZmqAsyncTransport:
 
         self.session = Session(None) # Not actually used yet
 
-        self.top_session = self.protocol.new_session()
-
     def __del__(self):
         self.socket.close()
 

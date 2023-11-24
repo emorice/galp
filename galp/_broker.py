@@ -14,7 +14,7 @@ import zmq
 import galp.messages as gm
 import galp.task_types as gtt
 
-from galp.protocol import Route, RoutedMessage, UpperSession
+from galp.protocol import Route, RoutedMessage, UpperSession, Session
 from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
@@ -252,8 +252,9 @@ class CommonProtocol(ReplyProtocol):
         # We'll send the request to the worker when it send us a READY
         return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_routed_message(self, session: UpperSession, msg: RoutedMessage):
+    def on_routed_message(self, session: Session, msg: RoutedMessage):
         gmsg = msg.body
+        session = UpperSession(session)
 
         # Forward handler: we insert a hook here to detect when workers finish
         # tasks and free the corresponding resources.

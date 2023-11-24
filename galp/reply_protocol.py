@@ -6,7 +6,7 @@ from typing import Iterable
 
 import galp.messages as gm
 from galp.lower_protocol import IllegalRequestError, Session
-from galp.protocol import Protocol, Route, RoutedMessage
+from galp.protocol import Protocol, Route, RoutedMessage, UpperSession
 
 class ReplyProtocol(Protocol):
     """
