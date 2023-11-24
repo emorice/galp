@@ -2,7 +2,6 @@
 Implementation of the lower level of GALP, handles routing.
 """
 
-from typing import NoReturn, Iterable, Generic, TypeVar
 from dataclasses import dataclass
 
 import logging
@@ -68,20 +67,14 @@ class Session:
 
 class Layer:
     """
-    Base class for protocol layers
+    Mixin class to provide error handling around `on_message`
 
     The only effective function is to provide a way to abort handling in
     the message handler to let the invalid handler take the relay.
 
     The default invalid handler logs the error and suppresses the message
     without attempting to generate any kind of message back.
-
-    A layer can have zero to several upper layers to handle different payloads,
-    but if set, `self.upper` is used to generate new default sessions.
     """
-    def __init__(self, upper: 'Layer | None' = None):
-        self.upper = upper
-
     def validate(self, condition, route, reason) -> None:
         """
         Calls invalid message callback. Must always raise and be caught if the
@@ -103,7 +96,7 @@ class Layer:
     def on_message(self, session: Session, msg_parts: list[bytes]
             ) -> list[list[bytes]]:
         """
-        Private handler implemtation, rasing on invalid messages
+        Private handler implemtation, raising on invalid messages
         """
         raise NotImplementedError
 
@@ -114,15 +107,6 @@ class Layer:
         _ = session
         logging.warning('Supressing malformed incoming message: %s', exc.reason)
         return []
-
-    def new_session(self) -> Session:
-        """
-        Initializes a new session to generate messages unrelated to an existing
-        context
-        """
-        if self.upper is None:
-            return Session(None)
-        return self.upper.new_session()
 
 @dataclass
 class LowerSession(Session):
@@ -220,12 +204,6 @@ class LowerProtocol(Layer):
         msg = msg[1:]
 
         return msg, route
-
-    def on_verb(self, session: Session, route: tuple[Route, Route], msg_body: list[bytes]) -> Iterable:
-        """
-        Higher level interface to implement by subclassing.
-        """
-        raise NotImplementedError
 
 @dataclass
 class LegacyRouteWriter:
