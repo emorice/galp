@@ -426,9 +426,7 @@ class Worker:
             local_id=str(os.getpid()),
             mission=self.mission,
             )
-        await self.transport.send_message(
-                self.protocol.route_message(None, ready)
-                )
+        await self.transport.send_message(ready)
 
         await self.transport.listen_reply_loop()
 

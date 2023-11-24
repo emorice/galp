@@ -98,22 +98,14 @@ class Pool:
         """
         Sends a message back to broker to signal a worker died
         """
-        await self.broker_transport.send_message(
-                self.broker_protocol.route_message(None,
-                    gm.Exited(peer=str(pid))
-                )
-            )
+        await self.broker_transport.send_message(gm.Exited(peer=str(pid)))
 
     async def notify_ready(self):
         """
         Sends a message back to broker to signal we joined, and with which cpus
         """
         cpus = list(psutil.Process().cpu_affinity())
-        await self.broker_transport.send_message(
-                self.broker_protocol.route_message(None,
-                    gm.PoolReady(cpus=cpus)
-                    )
-                )
+        await self.broker_transport.send_message(gm.PoolReady(cpus=cpus))
 
     async def check_deaths(self):
         """

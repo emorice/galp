@@ -74,14 +74,24 @@ class UpperSession:
         return self.lower_session.write(frames)
 
 @dataclass
-class HandlerStack:
+class Stack:
     """
     Handling side of a network stack
     """
     upper: 'Protocol'
     root: LowerProtocol
+    base_session: UpperSession
 
-def make_stack(make_upper_protocol, name, router) -> HandlerStack:
+    def write_local(self, msg: gm.Message) -> TransportMessage:
+        """
+        Write a locally generated, next-hop addressed, galp message
+
+        This is a temporary interface to get the message writing out of the
+        handling stack
+        """
+        return self.base_session.write(msg)
+
+def make_stack(make_upper_protocol, name, router) -> Stack:
     """
     Factory function to assemble the handler stack
 
@@ -89,11 +99,18 @@ def make_stack(make_upper_protocol, name, router) -> HandlerStack:
         The result of each app-provided class factory, and the final root of the
         stack to be given to the transport
     """
+    # Handlers
     app_upper = make_upper_protocol(name, router)
     lib_upper = app_upper # Still relies on inheritance
     app_lower = lib_upper # Not yet exposed to app
     lib_lower = LowerProtocol(router, app_lower)
-    return HandlerStack(app_upper, lib_lower)
+
+    # Writers
+    _legacy_route_writer = LegacyRouteWriter(router)
+    _lower_base_session = _legacy_route_writer.new_session()
+    base_session = UpperSession(_lower_base_session)
+
+    return Stack(app_upper, lib_lower, base_session)
 
 class Protocol:
     """

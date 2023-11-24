@@ -81,11 +81,9 @@ async def test_fill_queue(blocked_client):
     with pytest.raises(asyncio.TimeoutError):
         async with timeout(1):
             await client.transport.send_message(
-                    client.protocol.route_message(None,
-                        # pylint: disable=no-member
-                        Submit(task_def=task.task_def,
-                               resources=gtt.Resources(cpus=1))
-                        )
+                    # pylint: disable=no-member
+                    Submit(task_def=task.task_def,
+                           resources=gtt.Resources(cpus=1))
                     )
 
 async def test_unique_submission(peer_client):
@@ -114,11 +112,7 @@ async def test_unique_submission(peer_client):
             # Process one STAT for the task, two for the args and reply NOTFOUND
             for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
-                await peer.send_message(
-                        peer.stack.upper.route_message(None,
-                            NotFound(name=name)
-                            )
-                        )
+                await peer.send_message(NotFound(name=name))
 
             # Process one SUBMIT and drop it
             await peer.recv_message()
@@ -126,11 +120,8 @@ async def test_unique_submission(peer_client):
             # Process a second SUBMIT and reply DOING
             await peer.recv_message()
             logging.info('Mock processing')
-            await peer.send_message(
-                    peer.stack.upper.route_message(None,
-                        Doing(name=task.name) # pylint: disable=no-member
-                        )
-                    )
+            await peer.send_message(Doing(name=task.name)) # pylint: disable=no-member
+
             # We should not receive any further message, at least until we add status
             # update to the protocol
             with pytest.raises(asyncio.TimeoutError):
