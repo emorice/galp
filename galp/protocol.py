@@ -92,9 +92,12 @@ class Protocol(LowerProtocol):
         # handlers, but this should be a parameter instead of inheritance
         self.upper_layer = self #upper_layer
 
+        # To keep, for logging
+        self.proto_name = name
+
         # To be removed, the handler needs no dependency on the lower-level
         # handler
-        super().__init__(name, router)
+        super().__init__(router)
 
         # To be removed, only used for legacy RoutedMessage objects
         self.legacy_route_writer = LegacyRouteWriter(router)
