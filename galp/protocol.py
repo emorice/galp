@@ -205,7 +205,7 @@ class Protocol:
                 return [messages]
         return messages
 
-    def on_verb(self, session: Session, route, msg_body: list[bytes]
+    def on_message(self, session: Session, route, msg_body: list[bytes]
             ) -> list[TransportMessage]:
         """Parse given message, calling callbacks as needed.
 
