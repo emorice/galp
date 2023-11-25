@@ -79,6 +79,7 @@ class Stack:
     Handling side of a network stack
     """
     upper: 'Protocol'
+    lib_upper: 'Protocol' # Only for legacy transport iface
     root: LowerProtocol
     base_session: UpperSession
 
@@ -110,7 +111,7 @@ def make_stack(make_upper_protocol, name, router) -> Stack:
     _lower_base_session = _legacy_route_writer.new_session()
     base_session = UpperSession(_lower_base_session)
 
-    return Stack(app_upper, lib_lower, base_session)
+    return Stack(app_upper, lib_upper, lib_lower, base_session)
 
 class Protocol:
     """

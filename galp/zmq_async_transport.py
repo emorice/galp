@@ -51,7 +51,7 @@ class ZmqAsyncTransport:
                 zmq_msg = self.stack.write_local(msg)
             # Legacy interface, to be removed
             case RoutedMessage():
-                zmq_msg = self.stack.upper.write_message(msg)
+                zmq_msg = self.stack.lib_upper.write_message(msg)
             # Use with legacy route_message, to be removed as well
             case list():
                 zmq_msg = msg
