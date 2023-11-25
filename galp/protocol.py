@@ -102,7 +102,7 @@ def make_stack(make_upper_protocol, name, router) -> Stack:
     """
     # Handlers
     app_upper = make_upper_protocol(name, router)
-    lib_upper = app_upper # Still relies on inheritance
+    lib_upper = Protocol(name, router, app_upper)
     app_lower = lib_upper # Not yet exposed to app
     lib_lower = LowerProtocol(router, app_lower)
 
@@ -123,14 +123,14 @@ class Protocol:
     message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
-    def __init__(self, name, router): # upper
+    def __init__(self, name, router, upper=None):
         """
         This should eventually be split into a layer object that receives the
         upper layer and a session object that receives the lower session
         """
         # To keep, this is the main way of accessing the application-defined
         # handlers, but this should be a parameter instead of inheritance
-        self.upper = self #upper_layer
+        self.upper = upper
 
         # To keep, for logging
         self.proto_name = name
@@ -216,7 +216,23 @@ class Protocol:
                 return [messages]
         return messages
 
-    def on_message(self, session: Session, route, msg_body: list[bytes]
+    def on_message(self, session: Session, route: tuple[Route, Route], msg_body: list[bytes]
+            ) -> Iterable[TransportMessage]:
+        """
+        Message handler that call's Protocol default handler
+        and catches IllegalRequestError
+        """
+        try:
+            return self.on_message_unsafe(session, route, msg_body)
+        # Obsolete pathway
+        except IllegalRequestError as exc:
+            return [self.write_message(RoutedMessage(
+                    incoming=Route(),
+                    forward=route[0],
+                    body=gm.Illegal(reason=exc.reason)
+                    ))]
+
+    def on_message_unsafe(self, session: Session, route, msg_body: list[bytes]
             ) -> list[TransportMessage]:
         """Parse given message, calling callbacks as needed.
 
