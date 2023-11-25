@@ -122,14 +122,14 @@ class Protocol:
     message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
-    def __init__(self, name, router):
+    def __init__(self, name, router): # upper
         """
         This should eventually be split into a layer object that receives the
         upper layer and a session object that receives the lower session
         """
         # To keep, this is the main way of accessing the application-defined
         # handlers, but this should be a parameter instead of inheritance
-        self.upper_layer = self #upper_layer
+        self.upper = self #upper_layer
 
         # To keep, for logging
         self.proto_name = name
@@ -151,8 +151,8 @@ class Protocol:
         """
         logging.error("Unhandled GALP verb %s", msg.verb)
 
-    # Send methods
-    # ============
+    # To be removed: send methods
+    # ===========================
 
     def _dump_message(self, msg: RoutedMessage):
         """
@@ -195,16 +195,9 @@ class Protocol:
         written messages back.
         """
         return [
-            self.route_message(orig, new)
+            self.upper.route_message(orig, new)
             for new in self.as_message_list(news)
             ]
-
-    def route_message(self, orig: None, new: gm.Message) -> TransportMessage:
-        """
-        Legacy default-addressing. This is not the responsibility of this class,
-        and all apps have their custom version.
-        """
-        raise NotImplementedError
 
     #  Recv methods
     # ==================
@@ -255,7 +248,8 @@ class Protocol:
         # We should not need to call write_message here.
         return [
                 self.write_message(msg) for msg in
-                    self.route_messages(session, rmsg, self.on_routed_message(session, rmsg))
+                    self.route_messages(session, rmsg,
+                        self.upper.on_routed_message(session, rmsg))
                     ]
 
     def on_routed_message(self, session: Session, msg: RoutedMessage) -> Replies:
