@@ -25,7 +25,7 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
     def __init__(self, endpoint, n_cpus):
         stack = make_stack(
-                lambda name, router: CommonProtocol(name, router, max_cpus=n_cpus),
+                lambda name, router: CommonProtocol(max_cpus=n_cpus),
                 name='CW', router=True
                 )
         self.proto = stack.upper
@@ -53,13 +53,11 @@ class Allocation:
     client: UpperSession
     task_id: bytes
 
-class CommonProtocol(ReplyProtocol):
+class CommonProtocol:
     """
     Handler for messages received from clients, pool and workers.
     """
-    def __init__(self, name: str, router: bool, max_cpus: int):
-        super().__init__(name, router)
-
+    def __init__(self, max_cpus: int):
         # List of idle workers, by resources
         self.idle_workers: defaultdict[gtt.ResourceClaim, list[Route]]
         self.idle_workers = defaultdict(lambda : [])
