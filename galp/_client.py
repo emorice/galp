@@ -359,13 +359,6 @@ class BrokerProtocol:
 
     # Custom protocol sender
     # ======================
-    # For simplicity these set the route inside them
-
-    def route_message(self, orig: RoutedMessage, new: gm.Message):
-        """
-        Send message back to original sender only for replies to GETs
-        """
-        return orig.reply(new)
 
     def get(self, name: TaskName) -> gm.Get | None:
         """

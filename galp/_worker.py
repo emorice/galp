@@ -130,27 +130,6 @@ class WorkerProtocol:
         self.script = cm.Script(store=self.store)
         self.dispatcher = NameDispatcher(self)
 
-    def route_message(self, orig: RoutedMessage, new: gm.Message | RoutedMessage):
-        """
-        Always reply back to original message, if any.
-
-        While the client may send unadressed messages to the broker for them to
-        be allocated, the worker always replies to a request from an established
-        client and never sends default-addressed messages.
-
-        Note that the brokers fills in the worker address, so that messages that
-        were originally sent to the broker are undistinguishable from messages
-        directly addressed to the worker, from the worker's perspective.
-
-        This makes the broker essentially transparent as far as the worker is
-        concerned.
-        """
-        if isinstance(new, RoutedMessage):
-            # Used for submits
-            return new
-        # Used for get/stat
-        return orig.reply(new)
-
     def on_illegal(self, msg: gm.Illegal):
         """
         Terminate

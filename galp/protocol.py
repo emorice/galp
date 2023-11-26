@@ -182,17 +182,17 @@ class Protocol:
             raise ValueError('Message must be routed (addressed) before being written out')
         raise TypeError(f'Invalid message type {type(msg)}')
 
-    def route_messages(self, orig: RoutedMessage | None, news: Replies
-            ) -> list[TransportMessage]:
+    def route_messages(self, orig: RoutedMessage, news: Replies
+            ) -> list[RoutedMessage | TransportMessage]:
         """
         Route each of an optional list of messages. Legacy, handlers should
         generate new messages through contextual writers and pass only already
         written messages back.
         """
         return [
-            self.upper.route_message(orig, new)
-            for new in self.as_message_list(news)
-            ]
+                orig.reply(new) if isinstance(new, gm.BaseMessage) else new
+                for new in self.as_message_list(news)
+                ]
 
     #  Recv methods
     # ==================
@@ -322,12 +322,3 @@ class NameDispatcher:
         A message without an overriden callback was received.
         """
         logging.error("Unhandled GALP verb %s", msg.verb)
-
-    def route_message(self, orig: RoutedMessage | None, new: gm.Message | RoutedMessage
-            ) -> TransportMessage:
-        """
-        Route each of an optional list of messages. Legacy, handlers should
-        generate new messages through contextual writers and pass only already
-        written messages back.
-        """
-        return self.upper.route_message(orig, new)
