@@ -182,7 +182,7 @@ class Protocol:
             raise ValueError('Message must be routed (addressed) before being written out')
         raise TypeError(f'Invalid message type {type(msg)}')
 
-    def route_messages(self, session: Session, orig: RoutedMessage | None, news: Replies
+    def route_messages(self, orig: RoutedMessage | None, news: Replies
             ) -> list[TransportMessage]:
         """
         Route each of an optional list of messages. Legacy, handlers should
@@ -190,7 +190,7 @@ class Protocol:
         written messages back.
         """
         return [
-            self.upper.route_message(session, orig, new)
+            self.upper.route_message(orig, new)
             for new in self.as_message_list(news)
             ]
 
@@ -259,7 +259,7 @@ class Protocol:
         # We should not need to call write_message here.
         return [
                 self.write_message(msg) for msg in
-                    self.route_messages(self.base_session, rmsg,
+                    self.route_messages(rmsg,
                         self.upper.on_routed_message(session, rmsg))
                     ]
 
@@ -323,11 +323,11 @@ class NameDispatcher:
         """
         logging.error("Unhandled GALP verb %s", msg.verb)
 
-    def route_message(self, session, orig: RoutedMessage | None, new: gm.Message | RoutedMessage
+    def route_message(self, orig: RoutedMessage | None, new: gm.Message | RoutedMessage
             ) -> TransportMessage:
         """
         Route each of an optional list of messages. Legacy, handlers should
         generate new messages through contextual writers and pass only already
         written messages back.
         """
-        return self.upper.route_message(session, orig, new)
+        return self.upper.route_message(orig, new)

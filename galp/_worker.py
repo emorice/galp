@@ -130,8 +130,7 @@ class WorkerProtocol:
         self.script = cm.Script(store=self.store)
         self.dispatcher = NameDispatcher(self)
 
-    def route_message(self, session, orig: RoutedMessage | None,
-                      new: gm.Message | RoutedMessage):
+    def route_message(self, orig: RoutedMessage, new: gm.Message | RoutedMessage):
         """
         Always reply back to original message, if any.
 
@@ -147,9 +146,9 @@ class WorkerProtocol:
         concerned.
         """
         if isinstance(new, RoutedMessage):
+            # Used for submits
             return new
-        if orig is None:
-            return session.write(new)
+        # Used for get/stat
         return orig.reply(new)
 
     def on_illegal(self, msg: gm.Illegal):

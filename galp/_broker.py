@@ -290,7 +290,7 @@ class CommonProtocol:
         # If we reach this point, we received a message we know nothing about
         return self.on_unhandled(gmsg)
 
-    def route_message(self, _session, orig, new):
+    def route_message(self, orig, new):
         """
         Trivial routing layer because the broker already generates routed
         messages only (either RoutedMessage or directly serialized messages)

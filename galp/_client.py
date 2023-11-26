@@ -361,16 +361,11 @@ class BrokerProtocol:
     # ======================
     # For simplicity these set the route inside them
 
-    def route_message(self, session, orig: RoutedMessage | None, new: gm.Message | RoutedMessage):
+    def route_message(self, orig: RoutedMessage, new: gm.Message):
         """
         Send message back to original sender only for replies to GETs
-
-        Everything else is default-addressed to the broker
         """
-        if isinstance(new, gm.Put | gm.NotFound):
-            assert orig is not None
-            return orig.reply(new)
-        return session.write(new)
+        return orig.reply(new)
 
     def get(self, name: TaskName) -> gm.Get | None:
         """
