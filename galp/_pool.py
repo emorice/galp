@@ -17,8 +17,7 @@ import zmq
 import galp.worker
 import galp.messages as gm
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.protocol import make_stack
-from galp.reply_protocol import ReplyProtocol
+from galp.protocol import make_stack, NameDispatcher
 from galp.serializer import dump_model, load_model
 from galp.async_utils import background
 
@@ -39,7 +38,7 @@ class Pool:
         self.pending_signal = asyncio.Event()
 
         stack = make_stack(
-                lambda name, router: BrokerProtocol(pool=self),
+                lambda name, router: NameDispatcher(BrokerProtocol(pool=self)),
                 name='BK', router=False
                 )
         self.broker_protocol = stack.upper
@@ -150,12 +149,11 @@ class Pool:
                 rpid, rexit = os.waitpid(pid, 0)
                 logging.info('Child %s exited with code %d', pid, rexit >> 8)
 
-class BrokerProtocol(ReplyProtocol):
+class BrokerProtocol:
     """
     Simple protocol to process spawn request from broker
     """
     def __init__(self, pool: Pool) -> None:
-        super().__init__('BK', router=False)
         self.pool = pool
 
     def on_fork(self, msg: gm.Fork):

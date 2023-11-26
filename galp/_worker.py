@@ -30,8 +30,7 @@ import galp.task_types as gtt
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException,
-    RoutedMessage, Replies, make_stack)
-from galp.reply_protocol import ReplyProtocol
+    RoutedMessage, Replies, make_stack, NameDispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -121,17 +120,17 @@ def make_worker_init(config):
         return Worker(setup)
     return _make_worker
 
-class WorkerProtocol(ReplyProtocol):
+class WorkerProtocol:
     """
     Handler for messages from the broker
     """
-    def __init__(self, worker: 'Worker', store: CacheStack, name: str, router: bool):
-        super().__init__(name, router)
+    def __init__(self, worker: 'Worker', store: CacheStack):
         self.worker = worker
         self.store = store
         self.script = cm.Script(store=self.store)
+        self.dispatcher = NameDispatcher(self)
 
-    def route_message(self, orig: RoutedMessage | None,
+    def route_message(self, session, orig: RoutedMessage | None,
                       new: gm.Message | RoutedMessage):
         """
         Always reply back to original message, if any.
@@ -150,7 +149,7 @@ class WorkerProtocol(ReplyProtocol):
         if isinstance(new, RoutedMessage):
             return new
         if orig is None:
-            return self.base_session.write(new)
+            return session.write(new)
         return orig.reply(new)
 
     def on_illegal(self, msg: gm.Illegal):
@@ -192,7 +191,7 @@ class WorkerProtocol(ReplyProtocol):
         """
         if isinstance(msg.body, gm.Exec):
             return self.on_routed_exec(msg, msg.body)
-        return super().on_routed_message(session, msg)
+        return self.dispatcher.on_routed_message(session, msg)
 
     def on_routed_exec(self, request: RoutedMessage, msg: gm.Exec) -> Replies:
         """Start processing the submission asynchronously.
@@ -350,10 +349,10 @@ class Worker:
     def __init__(self, setup: dict):
         stack = make_stack(
                 lambda name, router: WorkerProtocol(self,
-                    setup['store'], name, router),
+                    setup['store']),
                 name='BK', router=False
                 )
-        self.protocol = stack.upper
+        self.protocol : 'WorkerProtocol' = stack.upper
         self.endpoint = setup['endpoint']
         self.transport = ZmqAsyncTransport(
             stack,
@@ -391,7 +390,7 @@ class Worker:
             else:
                 reply = gm.Failed(task_def=task_def)
             await self.transport.send_message(
-                    self.protocol.route_message(job.request, reply)
+                    job.request.reply(reply)
                     )
 
     def schedule_task(self, request: RoutedMessage, msg: gm.Submit) -> list[cm.InertCommand]:

@@ -12,7 +12,7 @@ from async_timeout import timeout
 import galp
 import galp.tests.steps as gts
 import galp.task_types as gtt
-from galp.protocol import Protocol, make_stack
+from galp.protocol import make_stack, NameDispatcher
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.messages import Doing, Submit, NotFound
 
@@ -27,7 +27,9 @@ async def peer_client():
     # understandably
     endpoint = 'inproc://test_fill_queue'
     peer = ZmqAsyncTransport(
-            make_stack(lambda name, router: Protocol('CL', router=False), 'CL', False),
+            make_stack(
+                lambda name, router: NameDispatcher(type('Mock', (), {})()),
+                'CL', False),
         endpoint, zmq.DEALER, bind=True) # pylint: disable=no-member
 
     client = galp.Client(endpoint)
@@ -101,8 +103,8 @@ async def test_unique_submission(peer_client):
         submit_counter[0] += 1
     def _count_stat(*_):
         stat_counter[0] += 1
-    peer.stack.upper.on_submit = _count
-    peer.stack.upper.on_stat = _count_stat
+    peer.stack.upper.upper.on_submit = _count
+    peer.stack.upper.upper.on_stat = _count_stat
 
     bg_collect = asyncio.create_task(
         client.collect(task)

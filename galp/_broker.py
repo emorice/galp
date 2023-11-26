@@ -15,7 +15,6 @@ import galp.messages as gm
 import galp.task_types as gtt
 
 from galp.protocol import Route, RoutedMessage, UpperSession, Session, make_stack
-from galp.reply_protocol import ReplyProtocol
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
 
@@ -291,7 +290,7 @@ class CommonProtocol:
         # If we reach this point, we received a message we know nothing about
         return self.on_unhandled(gmsg)
 
-    def route_message(self, orig, new):
+    def route_message(self, _session, orig, new):
         """
         Trivial routing layer because the broker already generates routed
         messages only (either RoutedMessage or directly serialized messages)

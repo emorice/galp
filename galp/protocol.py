@@ -146,12 +146,6 @@ class Protocol:
     # Default handlers
     # ================
 
-    def on_unhandled(self, msg: gm.Message):
-        """
-        A message without an overriden callback was received.
-        """
-        logging.error("Unhandled GALP verb %s", msg.verb)
-
     # To be removed: send methods
     # ===========================
 
@@ -196,7 +190,7 @@ class Protocol:
         written messages back.
         """
         return [
-            self.upper.route_message(orig, new)
+            self.upper.route_message(session, orig, new)
             for new in self.as_message_list(news)
             ]
 
@@ -265,19 +259,10 @@ class Protocol:
         # We should not need to call write_message here.
         return [
                 self.write_message(msg) for msg in
-                    self.route_messages(session, rmsg,
+                    self.route_messages(self.base_session, rmsg,
                         self.upper.on_routed_message(session, rmsg))
                     ]
 
-    def on_routed_message(self, session: Session, msg: RoutedMessage) -> Replies:
-        """
-        Process a routed message by forwarding the body only to the on_ method
-        of matching name
-        """
-        method_name = f'on_{msg.body.verb}'
-        if not hasattr(self, method_name):
-            return self.on_unhandled(msg.body)
-        return getattr(self, method_name)(msg.body)
 
     # Logging
 
@@ -313,3 +298,36 @@ class Protocol:
         else:
             logging.info(pattern, msg_log_str)
         logging.debug(pattern, meta_log_str)
+
+@dataclass
+class NameDispatcher:
+    """
+    Dispatches galp messages to methods named after a `on_<type>` template
+    """
+    def __init__(self, upper):
+        self.upper = upper
+
+    def on_routed_message(self, session: Session, msg: RoutedMessage) -> Replies:
+        """
+        Process a routed message by forwarding the body only to the on_ method
+        of matching name
+        """
+        method = getattr(self.upper, f'on_{msg.body.verb}', None)
+        if not method:
+            return self._on_unhandled(msg.body)
+        return method(msg.body)
+
+    def _on_unhandled(self, msg: gm.Message):
+        """
+        A message without an overriden callback was received.
+        """
+        logging.error("Unhandled GALP verb %s", msg.verb)
+
+    def route_message(self, session, orig: RoutedMessage | None, new: gm.Message | RoutedMessage
+            ) -> TransportMessage:
+        """
+        Route each of an optional list of messages. Legacy, handlers should
+        generate new messages through contextual writers and pass only already
+        written messages back.
+        """
+        return self.upper.route_message(session, orig, new)

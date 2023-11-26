@@ -23,8 +23,8 @@ import galp.task_types as gtt
 from galp import async_utils
 from galp.cache import CacheStack
 from galp.serializer import DeserializeError
-from galp.protocol import ProtocolEndException, RoutedMessage, make_stack
-from galp.reply_protocol import ReplyProtocol
+from galp.protocol import (ProtocolEndException, RoutedMessage, make_stack,
+    NameDispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
@@ -68,16 +68,15 @@ class Client:
 
     def __init__(self, endpoint: str, cpus_per_task: int | None = None):
         stack = make_stack(
-                lambda name, router :BrokerProtocol(
-                    name, router,
+                lambda name, router : NameDispatcher(BrokerProtocol(
                     schedule=self.schedule, # callback to add tasks to the scheduling queue
                     cpus_per_task=cpus_per_task or 1
-                    ),
+                    )),
                 name='BK',
                 router=False
                 )
 
-        self.protocol = stack.upper
+        self.protocol = stack.upper.upper
         self.transport = ZmqAsyncTransport(
             stack=stack,
             # pylint: disable=no-member # False positive
@@ -256,14 +255,11 @@ class Client:
         assert not isinstance(collect.val, cm.Pending)
         return collect.val
 
-class BrokerProtocol(ReplyProtocol):
+class BrokerProtocol:
     """
     Main logic of the interaction of a client with a broker
     """
-    def __init__(self, name: str, router: bool,
-                 schedule: Callable[[cm.InertCommand], None], cpus_per_task: int):
-        super().__init__(name, router)
-
+    def __init__(self, schedule: Callable[[cm.InertCommand], None], cpus_per_task: int):
         self.schedule = schedule
 
         # Memory only native+serial cache
@@ -323,7 +319,7 @@ class BrokerProtocol(ReplyProtocol):
             if isinstance(task_node.task_def, LiteralTaskDef):
                 self.store.put_native(name, task_node.data)
 
-    def write_next(self, command: cm.InertCommand) -> RoutedMessage | None:
+    def write_next(self, command: cm.InertCommand) -> gm.Message | None:
         """
         Returns the next nessage to be sent for a task given the information we
         have about it
@@ -342,13 +338,13 @@ class BrokerProtocol(ReplyProtocol):
                     self.submitted_count[name] += 1
                     sub = gm.Submit(task_def=command.task_def,
                                     resources=self.get_resources(command.task_def))
-                    return self.route_message(None, sub)
+                    return sub
             case cm.Get():
                 get = self.get(command.name)
                 if get is not None:
-                    return self.route_message(None, get)
+                    return get
             case cm.Stat():
-                return self.route_message(None, gm.Stat(name=command.name))
+                return gm.Stat(name=command.name)
             case _:
                 raise NotImplementedError(command)
 
@@ -365,7 +361,7 @@ class BrokerProtocol(ReplyProtocol):
     # ======================
     # For simplicity these set the route inside them
 
-    def route_message(self, orig: RoutedMessage | None, new: gm.Message | RoutedMessage):
+    def route_message(self, session, orig: RoutedMessage | None, new: gm.Message | RoutedMessage):
         """
         Send message back to original sender only for replies to GETs
 
@@ -374,7 +370,7 @@ class BrokerProtocol(ReplyProtocol):
         if isinstance(new, gm.Put | gm.NotFound):
             assert orig is not None
             return orig.reply(new)
-        return self.base_session.write(new)
+        return session.write(new)
 
     def get(self, name: TaskName) -> gm.Get | None:
         """
