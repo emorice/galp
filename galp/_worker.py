@@ -163,13 +163,13 @@ class WorkerProtocol:
             logging.exception('GET: Cache ERROR: %s', name)
         return gm.NotFound(name=name)
 
-    def on_routed_message(self, session, msg: RoutedMessage) -> Replies:
+    def on_message(self, session, msg: RoutedMessage) -> Replies:
         """
         Expose full message to submit handler
         """
         if isinstance(msg.body, gm.Exec):
             return self.on_routed_exec(msg, msg.body)
-        return self.dispatcher.on_routed_message(session, msg)
+        return self.dispatcher.on_message(session, msg)
 
     def on_routed_exec(self, request: RoutedMessage, msg: gm.Exec) -> Replies:
         """Start processing the submission asynchronously.

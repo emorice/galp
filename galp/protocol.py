@@ -260,7 +260,7 @@ class Protocol:
         return [
                 self.write_message(msg) for msg in
                     self.route_messages(rmsg,
-                        self.upper.on_routed_message(session, rmsg))
+                        self.upper.on_message(session, rmsg))
                     ]
 
 
@@ -307,7 +307,7 @@ class NameDispatcher:
     def __init__(self, upper):
         self.upper = upper
 
-    def on_routed_message(self, session: Session, msg: RoutedMessage) -> Replies:
+    def on_message(self, session: Session, msg: RoutedMessage) -> Replies:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name

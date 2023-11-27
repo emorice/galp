@@ -253,7 +253,7 @@ class CommonProtocol:
         # We'll send the request to the worker when it send us a READY
         return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_routed_message(self, session: Session, msg: RoutedMessage):
+    def on_message(self, session: Session, msg: RoutedMessage):
         gmsg = msg.body
         session = UpperSession(session)
 
