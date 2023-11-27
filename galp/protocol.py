@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import galp.messages as gm
 from galp.lower_protocol import (
         LowerProtocol, Route, IllegalRequestError, Session,
-        LegacyRouteWriter
+        LegacyRouteWriter, InvalidMessageDispatcher
         )
 from galp.serializer import dump_model, load_model, DeserializeError
 
@@ -104,7 +104,9 @@ def make_stack(make_upper_protocol, name, router) -> Stack:
     app_upper = make_upper_protocol(name, router)
     lib_upper = Protocol(name, router, app_upper)
     app_lower = lib_upper # Not yet exposed to app
-    lib_lower = LowerProtocol(router, app_lower)
+    lib_lower = InvalidMessageDispatcher(
+            LowerProtocol(router, app_lower)
+            )
 
     # Writers
     _legacy_route_writer = LegacyRouteWriter(router)
@@ -246,9 +248,9 @@ class Protocol:
                 case [payload, data]:
                     msg_obj = load_model(gm.Message, payload, data=data) # type: ignore[arg-type]
                 case _:
-                    raise IllegalRequestError(route, 'Wrong number of frames')
+                    raise IllegalRequestError('Wrong number of frames')
         except DeserializeError as exc:
-            raise IllegalRequestError(route, f'Bad message: {exc.args[0]}') from exc
+            raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
 
         # Build legacy routed message object, to be removed
         incoming, forward = route

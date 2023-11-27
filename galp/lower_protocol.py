@@ -25,9 +25,8 @@ PlainMessage = tuple[tuple[Route, Route], list[bytes]]
 class IllegalRequestError(Exception):
     """Base class for all badly formed requests, should trigger sending an ILLEGAL
     message back"""
-    def __init__(self, route: tuple[Route, Route], reason: str):
+    def __init__(self, reason: str):
         super().__init__()
-        self.route = route
         self.reason = reason
 
 @dataclass
@@ -65,7 +64,7 @@ class Session:
             return self.lower_session.write(current)
         return current
 
-class Layer:
+class InvalidMessageDispatcher:
     """
     Mixin class to provide error handling around `on_message`
 
@@ -75,38 +74,18 @@ class Layer:
     The default invalid handler logs the error and suppresses the message
     without attempting to generate any kind of message back.
     """
-    def validate(self, condition, route, reason) -> None:
-        """
-        Calls invalid message callback. Must always raise and be caught if the
-        condition fails.
-        """
-        if not condition:
-            raise IllegalRequestError(route, reason)
+    def __init__(self, upper):
+        self.upper = upper
 
-    def on_message_unsafe(self, session: Session, msg_parts: list[bytes]
+    def on_message(self, session: Session, msg_parts: list[bytes]
             ) -> list[list[bytes]]:
         """
         Public handler for messages, including invalid message handling.
         """
         try:
-            return self.on_message(session, msg_parts)
+            return self.upper.on_message(session, msg_parts)
         except IllegalRequestError as exc:
-            return self.on_invalid(session, exc)
-
-    def on_message(self, session: Session, msg_parts: list[bytes]
-            ) -> list[list[bytes]]:
-        """
-        Private handler implemtation, raising on invalid messages
-        """
-        raise NotImplementedError
-
-    def on_invalid(self, session: Session, exc: IllegalRequestError) -> list[list[bytes]]:
-        """
-        Handler for invalid messages
-        """
-        _ = session
-        logging.warning('Supressing malformed incoming message: %s', exc.reason)
-        return []
+            return self.upper.on_invalid(session, exc)
 
 @dataclass
 class LowerSession(Session):
@@ -128,7 +107,7 @@ class LowerSession(Session):
             return [next_hop, *self.routes.incoming, *forward_route, b'']
         return [*self.routes.incoming, *self.routes.forward, b'']
 
-class LowerProtocol(Layer):
+class LowerProtocol:
     """
     Lower half of a galp protocol handler.
 
@@ -182,6 +161,15 @@ class LowerProtocol(Layer):
 
         return out
 
+    def on_invalid(self, session: Session, exc: IllegalRequestError) -> list[list[bytes]]:
+        """
+        Handler for invalid messages
+        """
+        _ = session
+        logging.warning('Supressing malformed incoming message: %s', exc.reason)
+        return []
+
+
     # Internal parsing utilities
     # ==========================
 
@@ -200,7 +188,8 @@ class LowerProtocol(Layer):
         route = route_parts[:1], route_parts[1:]
 
         # Discard empty frame
-        self.validate(msg and not msg[0], route, 'Missing empty delimiter frame')
+        if not msg or  msg[0]:
+            raise IllegalRequestError('Missing empty delimiter frame')
         msg = msg[1:]
 
         return msg, route

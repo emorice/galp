@@ -82,7 +82,7 @@ class ZmqAsyncTransport:
         type accepted by protocol.write_message.
         """
         zmq_msg = await self.socket.recv_multipart()
-        return self.protocol.on_message_unsafe(self.session, zmq_msg)
+        return self.protocol.on_message(self.session, zmq_msg)
 
     async def listen_reply_loop(self) -> None:
         """Simple processing loop
