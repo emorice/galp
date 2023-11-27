@@ -110,7 +110,7 @@ def collect_kwargs(store, task):
             proto.script.commands[command.key].done(children)
             )
 
-    proto = BrokerProtocol('CL', False, _schedule, cpus_per_task=1)
+    proto = BrokerProtocol(_schedule, cpus_per_task=1)
     proto.add([task])
 
     ## Collect args from local and remote store. Since we don't pass any
