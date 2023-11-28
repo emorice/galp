@@ -14,7 +14,7 @@ import zmq
 import galp.messages as gm
 import galp.task_types as gtt
 
-from galp.protocol import (Route, RoutedMessage, UpperSession,
+from galp.protocol import (RoutedMessage, UpperSession,
     make_stack, UpperForwardingSession)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
@@ -59,11 +59,11 @@ class CommonProtocol:
     """
     def __init__(self, max_cpus: int):
         # List of idle workers, by resources
-        self.idle_workers: defaultdict[gtt.ResourceClaim, list[Route]]
+        self.idle_workers: defaultdict[gtt.ResourceClaim, list[UpperForwardingSession]]
         self.idle_workers = defaultdict(lambda : [])
 
         # Internal routing id indexed by self-identifiers
-        self.route_from_peer : dict[str, Any] = {}
+        self.session_from_peer : dict[str, UpperForwardingSession] = {}
 
         # Total resources
         self.max_cpus = max_cpus
@@ -76,7 +76,7 @@ class CommonProtocol:
         self.alloc_from_task: dict[bytes, Allocation] = {}
 
         # Tasks currently running on a worker
-        self.alloc_from_wroute: dict[Any, Allocation] = {}
+        self.alloc_from_wuid: dict[Any, Allocation] = {}
 
     def on_routed_ready(self, session: UpperForwardingSession, rmsg: RoutedMessage, gmsg: gm.Ready):
         """
@@ -86,7 +86,7 @@ class CommonProtocol:
 
         # First, update the peer map, we need it to handle kill
         # notifications
-        self.route_from_peer[gmsg.local_id] = rmsg.incoming
+        self.session_from_peer[gmsg.local_id] = session
 
         # Then check for the expected pending mission and send it
         pending_alloc = self.alloc_from_task.get(gmsg.mission, None)
@@ -96,7 +96,7 @@ class CommonProtocol:
 
         # Before sending, mark it as affected to this worker so we can
         # handle errors and free resources later
-        self.alloc_from_wroute[tuple(rmsg.incoming)] = pending_alloc
+        self.alloc_from_wuid[session.uid] = pending_alloc
 
         # Fill in the worker route in original request
         return [session
@@ -120,14 +120,13 @@ class CommonProtocol:
         cpus = [x for x, _ in zip(cycle(gmsg.cpus), range(self.max_cpus))]
         self.resources = Resources(cpus)
 
-    def free_resources(self, worker_route: Route, reuse=True) -> None:
+    def free_resources(self, session: UpperForwardingSession, reuse=True) -> None:
         """
         Add a worker to the idle list after clearing the current task
         information and freeing resources
         """
         # Get task
-        # route needs to be converted from list to tuple to be used as key
-        alloc = self.alloc_from_wroute.pop(tuple(worker_route), None)
+        alloc = self.alloc_from_wuid.pop(session.uid, None)
         if alloc:
             # Free resources
             self.resources = self.resources.free(alloc.resources)
@@ -135,7 +134,7 @@ class CommonProtocol:
                 logging.error('Double free of allocation %s', alloc)
             # Free worker for reuse if marked as such
             if reuse:
-                self.idle_workers[alloc.claim].append(worker_route)
+                self.idle_workers[alloc.claim].append(session)
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
@@ -146,19 +145,19 @@ class CommonProtocol:
         peer = msg.peer
         logging.error("Worker %s exited", peer)
 
-        route = self.route_from_peer.get(peer)
-        if route is None:
+        session = self.session_from_peer.get(peer)
+        if session is None:
             logging.error("Worker %s is unknown, ignoring exit", peer)
             return None
 
-        alloc = self.alloc_from_wroute.pop(tuple(route), None)
+        alloc = self.alloc_from_wuid.pop(session.uid, None)
         if alloc is None:
             logging.error("Worker %s was not assigned a task, ignoring exit", peer)
             return None
 
         # Free resources, since a dead worker uses none, but of course don't
         # mark the worker as reusable
-        self.free_resources(route, reuse=False)
+        self.free_resources(session, reuse=False)
 
         # Note that we set the incoming to empty, which equals re-interpreting
         # the message as addressed to us
@@ -240,18 +239,17 @@ class CommonProtocol:
 
         # If we have idle workers, directly forward to one
         if (workers := self.idle_workers[claim]):
-            worker_route = workers.pop()
+            worker = workers.pop()
             logging.debug('Worker available, forwarding %s', verb)
 
             # Save task info
-            self.alloc_from_wroute[tuple(worker_route)] = alloc
+            self.alloc_from_wuid[worker.uid] = alloc
 
             # We build the message and return it to transport
-            return RoutedMessage(
-                    incoming=msg.incoming,
-                    forward=worker_route,
-                    body=msg.body
-                    )
+            return [worker
+                    .forward_from(msg.incoming)
+                    .write(msg.body)
+                    ]
 
         # Else, ask the pool to fork a new worker
         # We'll send the request to the worker when it send us a READY
@@ -266,7 +264,7 @@ class CommonProtocol:
             # Free resources for all messages indicating end of task
             if isinstance(gmsg,
                     gm.Done | gm.Failed | gm.NotFound | gm.Found | gm.Put):
-                self.free_resources(msg.incoming)
+                self.free_resources(session)
             # Forward as-is. Note that the lower layer forwards by default, so
             # really this just means returning nothing.
             logging.debug('Forwarding %s', gmsg.verb)

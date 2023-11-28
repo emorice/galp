@@ -87,6 +87,13 @@ class UpperForwardingSession:
         """
         return UpperSession(self.lower.forward_from(origin))
 
+    @property
+    def uid(self):
+        """
+        Hashable identifier
+        """
+        return self.lower.uid
+
 
 @dataclass
 class Stack:

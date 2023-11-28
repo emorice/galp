@@ -130,6 +130,12 @@ class ForwardingSession:
                 Routes(incoming=nat_origin, forward=self.forward)
                 )
 
+    @property
+    def uid(self):
+        """
+        Hashable identifier for this destination
+        """
+        return tuple(self.forward)
 
 class LowerProtocol:
     """
