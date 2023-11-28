@@ -239,17 +239,19 @@ class Protocol:
         Message handler that call's Protocol default handler
         and catches IllegalRequestError
         """
+        # Wrap session
+        upper_session = UpperForwardingSession(session)
+
         try:
-            return self.on_message_unsafe(session, route, msg_body)
+            return self.on_message_unsafe(upper_session, route, msg_body)
         # Obsolete pathway
         except IllegalRequestError as exc:
-            return [self.write_message(RoutedMessage(
-                    incoming=Route(),
-                    forward=route[0],
-                    body=gm.Illegal(reason=exc.reason)
-                    ))]
+            return [upper_session
+                    .forward_from(None)
+                    .write(gm.Illegal(reason=exc.reason))
+                    ]
 
-    def on_message_unsafe(self, session: ForwardingSession, route, msg_body: list[bytes]
+    def on_message_unsafe(self, session: UpperForwardingSession, route, msg_body: list[bytes]
             ) -> list[TransportMessage]:
         """Parse given message, calling callbacks as needed.
 
@@ -277,16 +279,13 @@ class Protocol:
         incoming, forward = route
         rmsg = RoutedMessage(incoming=incoming, forward=forward, body=msg_obj)
 
-        # Wrap session
-        upper_session = UpperForwardingSession(session)
-
         self._log_message(rmsg, is_incoming=True)
 
         # We should not need to call write_message here.
         return [
                 self.write_message(msg) for msg in
-                    self.route_messages(upper_session,
-                        self.upper.on_message(upper_session, rmsg))
+                    self.route_messages(session,
+                        self.upper.on_message(session, rmsg))
                     ]
 
 
