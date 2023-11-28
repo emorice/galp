@@ -94,7 +94,6 @@ class UpperForwardingSession:
         """
         return self.lower.uid
 
-
 @dataclass
 class Stack:
     """
@@ -206,7 +205,7 @@ class Protocol:
             raise ValueError('Message must be routed (addressed) before being written out')
         raise TypeError(f'Invalid message type {type(msg)}')
 
-    def route_messages(self, orig: RoutedMessage, news: Replies
+    def route_messages(self, orig: UpperForwardingSession, news: Replies
             ) -> list[RoutedMessage | TransportMessage]:
         """
         Route each of an optional list of messages. Legacy, handlers should
@@ -214,7 +213,7 @@ class Protocol:
         written messages back.
         """
         return [
-                orig.reply(new) if isinstance(new, gm.BaseMessage) else new
+                orig.forward_from(None).write(new) if isinstance(new, gm.BaseMessage) else new
                 for new in self.as_message_list(news)
                 ]
 
@@ -286,7 +285,7 @@ class Protocol:
         # We should not need to call write_message here.
         return [
                 self.write_message(msg) for msg in
-                    self.route_messages(rmsg,
+                    self.route_messages(upper_session,
                         self.upper.on_message(upper_session, rmsg))
                     ]
 

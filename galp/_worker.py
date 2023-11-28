@@ -29,8 +29,9 @@ import galp.task_types as gtt
 
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
-from galp.protocol import (ProtocolEndException,
-    RoutedMessage, Replies, make_stack, NameDispatcher)
+from galp.protocol import (ProtocolEndException, UpperSession,
+        UpperForwardingSession,
+        RoutedMessage, Replies, make_stack, NameDispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -163,15 +164,17 @@ class WorkerProtocol:
             logging.exception('GET: Cache ERROR: %s', name)
         return gm.NotFound(name=name)
 
-    def on_message(self, session, msg: RoutedMessage) -> Replies:
+    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage) -> Replies:
         """
         Expose full message to submit handler
         """
+        # We only send local messages
+        upper_session = session.forward_from(None)
         if isinstance(msg.body, gm.Exec):
-            return self.on_routed_exec(msg, msg.body)
-        return self.dispatcher.on_message(session, msg)
+            return self.on_routed_exec(upper_session, msg.body)
+        return self.dispatcher.on_message(upper_session, msg)
 
-    def on_routed_exec(self, request: RoutedMessage, msg: gm.Exec) -> Replies:
+    def on_routed_exec(self, session: UpperSession, msg: gm.Exec) -> Replies:
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -208,7 +211,7 @@ class WorkerProtocol:
         replies.extend(self.new_commands_to_replies(
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
-            self.worker.schedule_task(request, sub)
+            self.worker.schedule_task(session, sub)
             ))
         return replies
 
@@ -312,10 +315,11 @@ class JobResult:
     Result of executing a step
 
     Attributes:
+        session: communication handle to the client to use to send a reply back
         result: None iff the task has failed, other wise a reference to the
             stored result.
     """
-    request: RoutedMessage
+    session: UpperSession
     submit: gm.Submit
     result: gtt.FlatResultRef | None
 
@@ -367,18 +371,18 @@ class Worker:
                 reply = gm.Done(task_def=task_def, result=job.result)
             else:
                 reply = gm.Failed(task_def=task_def)
-            await self.transport.send_message(
-                    job.request.reply(reply)
+            await self.transport.send_raw(
+                    job.session.write(reply)
                     )
 
-    def schedule_task(self, request: RoutedMessage, msg: gm.Submit) -> list[cm.InertCommand]:
+    def schedule_task(self, session: UpperSession, msg: gm.Submit) -> list[cm.InertCommand]:
         """
         Callback to schedule a task for execution.
         """
         task_def = msg.task_def
         def _start_task(inputs: cm.FinalResult[list, str]):
             task = asyncio.create_task(
-                self.run_submission(request, msg, inputs)
+                self.run_submission(session, msg, inputs)
                 )
             self.galp_jobs.put_nowait(task)
 
@@ -433,7 +437,7 @@ class Worker:
 
         return args, kwargs
 
-    async def run_submission(self, request: RoutedMessage, msg: gm.Submit,
+    async def run_submission(self, session: UpperSession, msg: gm.Submit,
                              inputs: cm.FinalResult[list, str]) -> JobResult:
         """
         Actually run the task
@@ -471,12 +475,12 @@ class Worker:
             self.protocol.store.put_task_def(task_def)
             result_ref = self.protocol.store.put_native(name, result, task_def.scatter)
 
-            return JobResult(request, msg, result_ref)
+            return JobResult(session, msg, result_ref)
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return JobResult(request, msg, None)
+            return JobResult(session, msg, None)
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.
