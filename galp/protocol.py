@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import galp.messages as gm
 from galp.lower_protocol import (
         LowerProtocol, Route, IllegalRequestError, Session,
+        ForwardingSession,
         LegacyRouteWriter, InvalidMessageDispatcher
         )
 from galp.serializer import dump_model, load_model, DeserializeError
@@ -72,6 +73,20 @@ class UpperSession:
         if hasattr(message, 'data'):
             frames.append(message.data)
         return self.lower_session.write(frames)
+
+@dataclass
+class UpperForwardingSession:
+    """
+    Wrapper class for forwarding session that stacks galp serialization
+    """
+    lower: ForwardingSession
+
+    def forward_from(self, origin: Route | None) -> UpperSession:
+        """
+        Wrapper around forward_from that wraps the result in a UpperSession
+        """
+        return UpperSession(self.lower.forward_from(origin))
+
 
 @dataclass
 class Stack:
@@ -212,8 +227,8 @@ class Protocol:
                 return [messages]
         return messages
 
-    def on_message(self, session: Session, route: tuple[Route, Route], msg_body: list[bytes]
-            ) -> Iterable[TransportMessage]:
+    def on_message(self, session: ForwardingSession, route: tuple[Route, Route],
+            msg_body: list[bytes]) -> Iterable[TransportMessage]:
         """
         Message handler that call's Protocol default handler
         and catches IllegalRequestError
@@ -228,7 +243,7 @@ class Protocol:
                     body=gm.Illegal(reason=exc.reason)
                     ))]
 
-    def on_message_unsafe(self, session: Session, route, msg_body: list[bytes]
+    def on_message_unsafe(self, session: ForwardingSession, route, msg_body: list[bytes]
             ) -> list[TransportMessage]:
         """Parse given message, calling callbacks as needed.
 
@@ -256,13 +271,16 @@ class Protocol:
         incoming, forward = route
         rmsg = RoutedMessage(incoming=incoming, forward=forward, body=msg_obj)
 
+        # Wrap session
+        upper_session = UpperForwardingSession(session)
+
         self._log_message(rmsg, is_incoming=True)
 
         # We should not need to call write_message here.
         return [
                 self.write_message(msg) for msg in
                     self.route_messages(rmsg,
-                        self.upper.on_message(session, rmsg))
+                        self.upper.on_message(upper_session, rmsg))
                     ]
 
 

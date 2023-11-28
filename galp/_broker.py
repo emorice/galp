@@ -14,7 +14,8 @@ import zmq
 import galp.messages as gm
 import galp.task_types as gtt
 
-from galp.protocol import Route, RoutedMessage, UpperSession, Session, make_stack
+from galp.protocol import (Route, RoutedMessage, UpperSession,
+    make_stack, UpperForwardingSession)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
 
@@ -77,7 +78,7 @@ class CommonProtocol:
         # Tasks currently running on a worker
         self.alloc_from_wroute: dict[Any, Allocation] = {}
 
-    def on_routed_ready(self, rmsg: RoutedMessage, gmsg: gm.Ready):
+    def on_routed_ready(self, session: UpperForwardingSession, rmsg: RoutedMessage, gmsg: gm.Ready):
         """
         Register worker route and forward initial worker mission
         """
@@ -98,13 +99,12 @@ class CommonProtocol:
         self.alloc_from_wroute[tuple(rmsg.incoming)] = pending_alloc
 
         # Fill in the worker route in original request
-        return RoutedMessage(
-                incoming=pending_alloc.msg.incoming,
-                forward=rmsg.incoming,
-                body=pending_alloc.msg.body
-                )
+        return [session
+                .forward_from(pending_alloc.msg.incoming)
+                .write(pending_alloc.msg.body)
+                ]
 
-    def on_routed_pool_ready(self, pool: UpperSession, gmsg: gm.PoolReady):
+    def on_routed_pool_ready(self, pool: UpperForwardingSession, gmsg: gm.PoolReady):
         """
         Register pool route and resources
         """
@@ -112,7 +112,9 @@ class CommonProtocol:
 
         # When the pool manager joins, record its route and set the available
         # resources
-        self.pool = pool
+        # We already set the forward-address to None since we will never need to
+        # forward anything to pool.
+        self.pool = pool.forward_from(None)
         # Adapt the list of cpus to the requested number of max cpus by dropping
         # or repeting some as needed
         cpus = [x for x, _ in zip(cycle(gmsg.cpus), range(self.max_cpus))]
@@ -183,7 +185,8 @@ class CommonProtocol:
             return msg.body.resources
         return gtt.ResourceClaim(cpus=1)
 
-    def on_request(self, session: UpperSession, msg: RoutedMessage, gmsg: gm.Stat | gm.Submit | gm.Get):
+    def on_request(self, session: UpperForwardingSession, msg: RoutedMessage,
+            gmsg: gm.Stat | gm.Submit | gm.Get):
         """
         Assign a worker
         """
@@ -228,7 +231,8 @@ class CommonProtocol:
                 claim=claim,
                 resources=resources,
                 msg=msg,
-                client=session,
+                # For local error messages, no forwarding needed
+                client=session.forward_from(None),
                 task_id=task_id
                 )
         self.alloc_from_task[alloc.task_id] = alloc
@@ -253,9 +257,8 @@ class CommonProtocol:
         # We'll send the request to the worker when it send us a READY
         return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_message(self, session: Session, msg: RoutedMessage):
+    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage):
         gmsg = msg.body
-        session = UpperSession(session)
 
         # Forward handler: we insert a hook here to detect when workers finish
         # tasks and free the corresponding resources.
@@ -273,7 +276,7 @@ class CommonProtocol:
 
         # Record joining peers and forward pre allocated requests
         if isinstance(gmsg, gm.Ready):
-            return self.on_routed_ready(msg, gmsg)
+            return self.on_routed_ready(session, msg, gmsg)
 
         if isinstance(gmsg, gm.PoolReady):
             return self.on_routed_pool_ready(session, gmsg)

@@ -107,6 +107,30 @@ class LowerSession(Session):
             return [next_hop, *self.routes.incoming, *forward_route, b'']
         return [*self.routes.incoming, *self.routes.forward, b'']
 
+@dataclass
+class ForwardingSession:
+    """
+    Session encapsulating a destination but letting the user fill in the origin
+    part of the message
+    """
+    lower: Session
+    is_router: bool
+    forward: Route
+
+    def forward_from(self, origin: Route | None):
+        """
+        Creates a session to send galp messages
+
+        Args:
+            origin: where the message originates from and where replies should
+            be sent. If None, means the message was locally generated.
+        """
+        nat_origin = Route() if origin is None else origin
+        return LowerSession(self.lower, self.is_router,
+                Routes(incoming=nat_origin, forward=self.forward)
+                )
+
+
 class LowerProtocol:
     """
     Lower half of a galp protocol handler.
@@ -149,9 +173,7 @@ class LowerProtocol:
         forward = LowerSession(session, self.router,
                                Routes(incoming_route, forward_route)
                                )
-        reply = LowerSession(session, self.router,
-                               Routes(Route(), incoming_route)
-                               )
+        reply = ForwardingSession(session, self.router, incoming_route)
         out = []
 
         if forward_route:
