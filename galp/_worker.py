@@ -172,6 +172,8 @@ class WorkerProtocol:
         upper_session = session.forward_from(None)
         if isinstance(msg.body, gm.Exec):
             return self.on_routed_exec(upper_session, msg.body)
+        if isinstance(msg.body, gm.Put):
+            return self.on_routed_put(upper_session, msg.body)
         return self.dispatcher.on_message(upper_session, msg)
 
     def on_routed_exec(self, session: UpperSession, msg: gm.Exec) -> Replies:
@@ -208,19 +210,19 @@ class WorkerProtocol:
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        replies.extend(self.new_commands_to_replies(
+        replies.extend(self.new_commands_to_replies(session,
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
             self.worker.schedule_task(session, sub)
             ))
         return replies
 
-    def on_put(self, msg: gm.Put):
+    def on_routed_put(self, session: UpperSession, msg: gm.Put):
         """
         Put object in store, and mark the command as done
         """
         self.store.put_serial(msg.name, (msg.data, msg.children))
-        return self.new_commands_to_replies(
+        return self.new_commands_to_replies(session,
             self.script.commands['GET', msg.name].done(msg.children)
             )
 
@@ -279,11 +281,12 @@ class WorkerProtocol:
         logging.info('STAT: NOT FOUND %s', msg.name)
         return gm.NotFound(name=msg.name)
 
-    def new_commands_to_replies(self, commands: list[cm.InertCommand]) -> list[gm.Message]:
+    def new_commands_to_replies(self, session: UpperSession, commands: list[cm.InertCommand]
+            ) -> list[list[bytes]]:
         """
         Generate galp messages from a command reply list
         """
-        messages: list[gm.Message] = []
+        messages: list[list[bytes]] = []
 
         while commands:
             command = commands.pop()
@@ -305,7 +308,7 @@ class WorkerProtocol:
             except KeyError:
                 pass
             messages.append(
-                gm.Get(name=name)
+                session.write(gm.Get(name=name))
                 )
         return messages
 

@@ -271,7 +271,7 @@ class NameDispatcher:
     def __init__(self, upper):
         self.upper = upper
 
-    def on_message(self, session: Session, msg: RoutedMessage) -> Replies:
+    def on_message(self, _session, msg: RoutedMessage) -> Replies:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name
