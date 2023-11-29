@@ -32,19 +32,10 @@ class RoutedMessage:
     """
     A message with its routes
     """
-    incoming: Route
-    forward: Route
-
+    forward: bool
     body: gm.Message
 
-    def reply(self, new: gm.Message) -> 'RoutedMessage':
-        """
-        Address a message, extracting and swapping the
-        incoming and forward routes from `self`
-        """
-        return type(self)(incoming=self.forward, forward=self.incoming, body=new)
-
-Replies: TypeAlias = gm.Message | RoutedMessage | Iterable[gm.Message | RoutedMessage] | None
+Replies: TypeAlias = gm.Message | Iterable[gm.Message] | None
 """
 Allowed returned type of message handers
 """
@@ -182,19 +173,19 @@ class Protocol:
 
     @staticmethod
     def as_message_list(messages: Replies
-            ) -> Iterable[gm.Message | RoutedMessage]:
+            ) -> Iterable[gm.Message]:
         """
         Canonicallize a list of messages
         """
         match messages:
             case None:
                 return []
-            case gm.BaseMessage() | RoutedMessage():
+            case gm.BaseMessage():
                 return [messages]
         return messages
 
-    def on_message(self, session: ForwardingSession, route: tuple[Route, Route],
-            msg_body: list[bytes]) -> Iterable[TransportMessage]:
+    def on_message(self, session: ForwardingSession, is_forward: bool, msg_body: list[bytes]
+            ) -> Iterable[TransportMessage]:
         """
         Message handler that call's Protocol default handler
         and catches IllegalRequestError
@@ -203,7 +194,7 @@ class Protocol:
         upper_session = UpperForwardingSession(session)
 
         try:
-            return self.on_message_unsafe(upper_session, route, msg_body)
+            return self.on_message_unsafe(upper_session, is_forward, msg_body)
         # Obsolete pathway
         except IllegalRequestError as exc:
             return [upper_session
@@ -211,7 +202,7 @@ class Protocol:
                     .write(gm.Illegal(reason=exc.reason))
                     ]
 
-    def on_message_unsafe(self, session: UpperForwardingSession, route, msg_body: list[bytes]
+    def on_message_unsafe(self, session: UpperForwardingSession, is_forward, msg_body: list[bytes]
             ) -> list[TransportMessage]:
         """Parse given message, calling callbacks as needed.
 
@@ -236,8 +227,7 @@ class Protocol:
             raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
 
         # Build legacy routed message object, to be removed
-        incoming, forward = route
-        rmsg = RoutedMessage(incoming=incoming, forward=forward, body=msg_obj)
+        rmsg = RoutedMessage(forward=is_forward, body=msg_obj)
 
         self._log_message(rmsg, is_incoming=True)
 
@@ -254,11 +244,6 @@ class Protocol:
         # Extra addr is either an additional forward segment when receiving, or
         # additional source segment when sending, and characterizes a forwarded
         # message
-        if is_incoming:
-            addr, extra_addr = msg.incoming, msg.forward
-        else:
-            addr, extra_addr = msg.forward, msg.incoming
-
         verb = msg.body.verb.upper()
         match msg.body:
             case gm.Submit() | gm.Found():
@@ -268,18 +253,15 @@ class Protocol:
 
         msg_log_str = (
             f"{self.proto_name +' ' if self.proto_name else ''}"
-            f"[{addr[0].hex() if addr else ''}]"
             f" {verb} {arg}"
             )
-        meta_log_str = f"hops {len(addr + extra_addr)}"
 
         pattern = '<- %s' if is_incoming else '-> %s'
 
-        if extra_addr:
+        if msg.forward:
             logging.debug(pattern, msg_log_str)
         else:
             logging.info(pattern, msg_log_str)
-        logging.debug(pattern, meta_log_str)
 
 @dataclass
 class NameDispatcher:

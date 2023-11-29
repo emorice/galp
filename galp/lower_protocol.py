@@ -185,7 +185,7 @@ class LowerProtocol:
         if forward_route:
             out.append(forward.write(payload))
 
-        out.extend(self.upper.on_message(reply, routes, payload))
+        out.extend(self.upper.on_message(reply, bool(forward_route), payload))
 
         return out
 
