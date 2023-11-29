@@ -49,8 +49,8 @@ class Allocation:
     """
     claim: gtt.ResourceClaim
     resources: Resources
-    msg: RoutedMessage
-    client: UpperSession
+    msg: gm.BaseMessage
+    client: UpperForwardingSession
     task_id: bytes
 
 class CommonProtocol:
@@ -78,20 +78,18 @@ class CommonProtocol:
         # Tasks currently running on a worker
         self.alloc_from_wuid: dict[Any, Allocation] = {}
 
-    def on_routed_ready(self, session: UpperForwardingSession, rmsg: RoutedMessage, gmsg: gm.Ready):
+    def on_ready(self, session: UpperForwardingSession, msg: gm.Ready):
         """
         Register worker route and forward initial worker mission
         """
-        assert not rmsg.forward
-
         # First, update the peer map, we need it to handle kill
         # notifications
-        self.session_from_peer[gmsg.local_id] = session
+        self.session_from_peer[msg.local_id] = session
 
         # Then check for the expected pending mission and send it
-        pending_alloc = self.alloc_from_task.get(gmsg.mission, None)
+        pending_alloc = self.alloc_from_task.get(msg.mission, None)
         if pending_alloc is None:
-            logging.error('Worker came with unknown mission %s', gmsg.mission)
+            logging.error('Worker came with unknown mission %s', msg.mission)
             return None
 
         # Before sending, mark it as affected to this worker so we can
@@ -100,11 +98,11 @@ class CommonProtocol:
 
         # Fill in the worker route in original request
         return [session
-                .forward_from(pending_alloc.msg.incoming)
-                .write(pending_alloc.msg.body)
+                .forward_from(pending_alloc.client)
+                .write(pending_alloc.msg)
                 ]
 
-    def on_routed_pool_ready(self, pool: UpperForwardingSession, gmsg: gm.PoolReady):
+    def on_pool_ready(self, pool: UpperForwardingSession, msg: gm.PoolReady):
         """
         Register pool route and resources
         """
@@ -117,7 +115,7 @@ class CommonProtocol:
         self.pool = pool.forward_from(None)
         # Adapt the list of cpus to the requested number of max cpus by dropping
         # or repeting some as needed
-        cpus = [x for x, _ in zip(cycle(gmsg.cpus), range(self.max_cpus))]
+        cpus = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
         self.resources = Resources(cpus)
 
     def free_resources(self, session: UpperForwardingSession, reuse=True) -> None:
@@ -161,14 +159,15 @@ class CommonProtocol:
 
         # Note that we set the incoming to empty, which equals re-interpreting
         # the message as addressed to us
+        chan = alloc.client.forward_from(None)
         orig_msg = alloc.msg
 
-        match orig_msg.body:
+        match orig_msg:
             case gm.Get() | gm.Stat():
-                return [alloc.client.write(gm.NotFound(name=orig_msg.body.name))]
+                return [chan.write(gm.NotFound(name=orig_msg.name))]
             case gm.Exec():
-                return [alloc.client.write(
-                        gm.Failed(task_def=orig_msg.body.submit.task_def)
+                return [chan.write(
+                        gm.Failed(task_def=orig_msg.submit.task_def)
                         )]
         logging.error(
             'Worker %s died while handling %s, no error propagation',
@@ -176,20 +175,19 @@ class CommonProtocol:
             )
         return None
 
-    def calc_resource_claim(self, msg: RoutedMessage) -> gtt.ResourceClaim:
+    def calc_resource_claim(self, msg: gm.BaseMessage) -> gtt.ResourceClaim:
         """
         Determine resources requested by a request
         """
-        if isinstance(msg.body, gm.Submit):
-            return msg.body.resources
+        if isinstance(msg, gm.Submit):
+            return msg.resources
         return gtt.ResourceClaim(cpus=1)
 
-    def on_request(self, session: UpperForwardingSession, msg: RoutedMessage,
-            gmsg: gm.Stat | gm.Submit | gm.Get):
+    def on_request(self, session: UpperForwardingSession, msg: gm.Stat | gm.Submit | gm.Get):
         """
         Assign a worker
         """
-        verb = gmsg.verb
+        verb = msg.verb
 
         claim = self.calc_resource_claim(msg)
 
@@ -197,7 +195,7 @@ class CommonProtocol:
         # This ideally should not happen if the client receives proper feedback
         # on when to re-submit, but should happen from time to time under normal
         # operation
-        task_id = gmsg.task_key
+        task_id = msg.task_key
         if task_id in self.alloc_from_task:
             logging.info('Dropping %s (already allocated)', verb)
             return None
@@ -218,20 +216,20 @@ class CommonProtocol:
 
         # For Submits, the worker will need to know the details of the
         # allocation, so wrap the original message
-        if isinstance(gmsg, gm.Submit):
-            msg = RoutedMessage(
-                    incoming=msg.incoming, forward=msg.forward,
-                    body=gm.Exec(submit=gmsg, resources=resources)
-                    )
+        new_msg: gm.BaseMessage
+        if isinstance(msg, gm.Submit):
+            new_msg = gm.Exec(submit=msg, resources=resources)
+        else:
+            new_msg = msg
+        del msg
 
         # Related to issue #87: we should already reply to the client now that
         # we're taking the task
         alloc = Allocation(
                 claim=claim,
                 resources=resources,
-                msg=msg,
-                # For local error messages, no forwarding needed
-                client=session.forward_from(None),
+                msg=new_msg,
+                client=session,
                 task_id=task_id
                 )
         self.alloc_from_task[alloc.task_id] = alloc
@@ -247,8 +245,8 @@ class CommonProtocol:
 
             # We build the message and return it to transport
             return [worker
-                    .forward_from(msg.incoming)
-                    .write(msg.body)
+                    .forward_from(session)
+                    .write(new_msg)
                     ]
 
         # Else, ask the pool to fork a new worker
@@ -274,10 +272,10 @@ class CommonProtocol:
 
         # Record joining peers and forward pre allocated requests
         if isinstance(gmsg, gm.Ready):
-            return self.on_routed_ready(session, msg, gmsg)
+            return self.on_ready(session, gmsg)
 
         if isinstance(gmsg, gm.PoolReady):
-            return self.on_routed_pool_ready(session, gmsg)
+            return self.on_pool_ready(session, gmsg)
 
         # Similarly, record dead peers and forward failures
         if isinstance(gmsg, gm.Exited):
@@ -286,7 +284,7 @@ class CommonProtocol:
         # Else, we may have to forward or queue the message. We decide based on
         # the verb whether this should be ultimately sent to a worker
         if isinstance(gmsg, gm.Stat | gm.Submit | gm.Get):
-            return self.on_request(session, msg, gmsg)
+            return self.on_request(session, gmsg)
 
         # If we reach this point, we received a message we know nothing about
         return self.on_unhandled(gmsg)

@@ -117,7 +117,7 @@ class ForwardingSession:
     is_router: bool
     forward: Route
 
-    def forward_from(self, origin: Route | None):
+    def forward_from(self, origin: 'ForwardingSession | None'):
         """
         Creates a session to send galp messages
 
@@ -125,7 +125,7 @@ class ForwardingSession:
             origin: where the message originates from and where replies should
             be sent. If None, means the message was locally generated.
         """
-        nat_origin = Route() if origin is None else origin
+        nat_origin = Route() if origin is None else origin.forward
         return LowerSession(self.lower, self.is_router,
                 Routes(incoming=nat_origin, forward=self.forward)
                 )
@@ -221,7 +221,6 @@ class LowerProtocol:
         msg = msg[1:]
 
         return msg, route
-
 
 def make_local_session(is_router: bool) -> Session:
     """

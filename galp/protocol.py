@@ -61,7 +61,7 @@ class UpperSession:
     """
     lower_session: Session
 
-    def write(self, message: gm.Message) -> TransportMessage:
+    def write(self, message: gm.BaseMessage) -> TransportMessage:
         """
         Write a complete message from a galp message object.
 
@@ -81,11 +81,13 @@ class UpperForwardingSession:
     """
     lower: ForwardingSession
 
-    def forward_from(self, origin: Route | None) -> UpperSession:
+    def forward_from(self, origin: 'UpperForwardingSession | None') -> UpperSession:
         """
         Wrapper around forward_from that wraps the result in a UpperSession
         """
-        return UpperSession(self.lower.forward_from(origin))
+        return UpperSession(self.lower.forward_from(
+            origin.lower if origin is not None else None)
+            )
 
     @property
     def uid(self):
