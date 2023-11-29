@@ -222,39 +222,9 @@ class LowerProtocol:
 
         return msg, route
 
-@dataclass
-class LegacyRouteWriter:
+
+def make_local_session(is_router: bool) -> Session:
     """
-    Obsolete ways of writing a route into a message.
-    write_plain_message is used by Protocol (upper) to write the equally legacy
-    RoutedMessage objects.
-    new_session is used by protocol to write default-addressed messages in
-    route_message.
+    Create a default-addressing session
     """
-    router: bool
-
-    def write_plain_message(self, msg: PlainMessage):
-        """
-        Concats route and message.
-        """
-        route, msg_body = msg
-        incoming_route, forward_route = route
-        if not forward_route:
-            # We used to allow these and re-interpret the routes, but that was a
-            # hack
-            assert not incoming_route, 'Message with an origin but no dest'
-
-        if self.router:
-            # If routing, we need an id, we take it from the forward segment
-            next_hop, *forward_route = forward_route
-            route_parts = [next_hop] + incoming_route + forward_route
-        else:
-            route_parts = incoming_route + forward_route
-
-        return route_parts + [b''] + msg_body
-
-    def new_session(self) -> Session:
-        """
-        Create a default-addressing session
-        """
-        return LowerSession(None, self.router, Routes(incoming=Route(), forward=Route()))
+    return LowerSession(None, is_router, Routes(incoming=Route(), forward=Route()))

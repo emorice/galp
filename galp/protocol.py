@@ -10,8 +10,8 @@ from dataclasses import dataclass
 import galp.messages as gm
 from galp.lower_protocol import (
         LowerProtocol, Route, IllegalRequestError, Session,
-        ForwardingSession,
-        LegacyRouteWriter, InvalidMessageDispatcher
+        ForwardingSession, InvalidMessageDispatcher,
+        make_local_session
         )
 from galp.serializer import dump_model, load_model, DeserializeError
 
@@ -123,15 +123,14 @@ def make_stack(make_upper_protocol, name, router) -> Stack:
     """
     # Handlers
     app_upper = make_upper_protocol(name, router)
-    lib_upper = Protocol(name, router, app_upper)
+    lib_upper = Protocol(name, app_upper)
     app_lower = lib_upper # Not yet exposed to app
     lib_lower = InvalidMessageDispatcher(
             LowerProtocol(router, app_lower)
             )
 
     # Writers
-    _legacy_route_writer = LegacyRouteWriter(router)
-    _lower_base_session = _legacy_route_writer.new_session()
+    _lower_base_session = make_local_session(router)
     base_session = UpperSession(_lower_base_session)
 
     return Stack(app_upper, lib_upper, lib_lower, base_session)
@@ -146,7 +145,7 @@ class Protocol:
     message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
-    def __init__(self, name, router, upper=None):
+    def __init__(self, name, upper=None):
         """
         This should eventually be split into a layer object that receives the
         upper layer and a session object that receives the lower session
@@ -158,55 +157,14 @@ class Protocol:
         # To keep, for logging
         self.proto_name = name
 
-        # To be removed, only used for legacy RoutedMessage objects
-        self.legacy_route_writer = LegacyRouteWriter(router)
-
-        # To be removed, this is used in route_message, which is out of this
-        # class' responsibility
-        lower_base_session = self.legacy_route_writer.new_session()
-        self.base_session = UpperSession(lower_base_session)
-
     # Default handlers
     # ================
 
     # To be removed: send methods
     # ===========================
 
-    def _dump_message(self, msg: RoutedMessage):
-        """
-        To be removed as this does not belong in the handler class.
-        """
-        route = (msg.incoming, msg.forward)
-        frames = [
-                dump_model(msg.body, exclude={'data'})
-                ]
-        if hasattr(msg.body, 'data'):
-            frames.append(msg.body.data)
-        return route, frames
-
-    def write_message(self, msg: RoutedMessage | TransportMessage) -> TransportMessage:
-        """
-        Serialize gm.Message objects, allowing them to be returned directly from
-        handlers
-
-        To be removed as this does not belong in the handler class. As a
-        transition, allow already written messages and pass them as is
-        """
-        if isinstance(msg, RoutedMessage):
-            # Message still needs to be serialized. Ultimately we want that to
-            # be done by handlers within session objects and do nothing here.
-            self._log_message(msg, is_incoming=False)
-            return self.legacy_route_writer.write_plain_message(self._dump_message(msg))
-        if isinstance(msg, list) and msg and isinstance(msg[0], bytes):
-            # Message has already been written. Ultimately we want all messages
-            # here and then we can drop this function
-            return msg
-        if isinstance(msg, gm.BaseMessage):
-            raise ValueError('Message must be routed (addressed) before being written out')
-        raise TypeError(f'Invalid message type {type(msg)}')
-
     def route_messages(self, orig: UpperForwardingSession, news: Replies
-            ) -> list[RoutedMessage | TransportMessage]:
+            ) -> list[TransportMessage]:
         """
         Route each of an optional list of messages. Legacy, handlers should
         generate new messages through contextual writers and pass only already
@@ -282,12 +240,9 @@ class Protocol:
         self._log_message(rmsg, is_incoming=True)
 
         # We should not need to call write_message here.
-        return [
-                self.write_message(msg) for msg in
-                    self.route_messages(session,
-                        self.upper.on_message(session, rmsg))
-                    ]
-
+        return self.route_messages(session,
+                                   self.upper.on_message(session, rmsg)
+                                   )
 
     # Logging
 

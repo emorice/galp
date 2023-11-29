@@ -49,15 +49,10 @@ class ZmqAsyncTransport:
             # Sugar interface for common high level messages
             case gm.BaseMessage():
                 zmq_msg = self.stack.write_local(msg)
-            # Legacy interface, to be removed
-            case RoutedMessage():
-                zmq_msg = self.stack.lib_upper.write_message(msg)
             # Use with legacy route_message, to be removed as well
             case list():
                 zmq_msg = msg
-        # write_message is allowed to supress messages, so check for it
-        if zmq_msg:
-            await self.send_raw(zmq_msg)
+        await self.send_raw(zmq_msg)
 
     async def send_raw(self, msg: list[bytes]) -> None:
         """
