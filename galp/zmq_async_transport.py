@@ -4,7 +4,7 @@ Using ØMQ as a transport for Galp protoclols
 
 import zmq
 
-from galp.protocol import ProtocolEndException, RoutedMessage
+from galp.protocol import ProtocolEndException
 from galp.lower_protocol import Session
 import galp.messages as gm
 
@@ -37,22 +37,15 @@ class ZmqAsyncTransport:
     def __del__(self):
         self.socket.close()
 
-    async def send_message(self, msg: gm.BaseMessage | RoutedMessage) -> None:
+    async def send_message(self, msg: gm.BaseMessage) -> None:
         """
-        Passes msg to the protocol to be rewritten, then sends it.
+        Passes msg to the protocol to be serialized, then sends it.
 
         Intended to be used by application to spontaneously send a message and
         start a new communication. Not used to generate replies/reacts to an
         incoming message.
         """
-        match msg:
-            # Sugar interface for common high level messages
-            case gm.BaseMessage():
-                zmq_msg = self.stack.write_local(msg)
-            # Use with legacy route_message, to be removed as well
-            case list():
-                zmq_msg = msg
-        await self.send_raw(zmq_msg)
+        await self.send_raw(self.stack.write_local(msg))
 
     async def send_raw(self, msg: list[bytes]) -> None:
         """

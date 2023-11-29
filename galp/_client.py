@@ -23,8 +23,7 @@ import galp.task_types as gtt
 from galp import async_utils
 from galp.cache import CacheStack
 from galp.serializer import DeserializeError
-from galp.protocol import (ProtocolEndException, RoutedMessage, make_stack,
-    NameDispatcher)
+from galp.protocol import ProtocolEndException, make_stack, NameDispatcher
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
