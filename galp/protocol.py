@@ -317,3 +317,23 @@ def make_type_dispatcher(handlers: Iterable[Handler]
         #logging.error('No handler for %s', msg)
         return []
     return on_message
+
+@dataclass
+class ChainDispatcher:
+    """
+    Dispatches messages to two handlers
+    """
+    name_dispatcher: NameDispatcher
+    type_dispatch: Callable[[gm.BaseMessage], Replies]
+
+    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
+            ) -> Replies | list[list[bytes]]:
+        """
+        Expose full message to submit handler
+        """
+        # We only send local messages
+        upper_session = session.forward_from(None)
+        replies = self.type_dispatch(msg.body)
+        if replies:
+            return replies
+        return self.name_dispatcher.on_message(upper_session, msg)

@@ -22,8 +22,10 @@ import galp.task_types as gtt
 
 from galp import async_utils
 from galp.cache import CacheStack
+from galp.net_store import make_get_handler
 from galp.serializer import DeserializeError
-from galp.protocol import ProtocolEndException, make_stack, NameDispatcher
+from galp.protocol import ( ProtocolEndException, make_stack, NameDispatcher,
+        ChainDispatcher, make_type_dispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
@@ -66,16 +68,26 @@ class Client:
     """
 
     def __init__(self, endpoint: str, cpus_per_task: int | None = None):
+        # Memory only native+serial cache
+        store = CacheStack(
+            dirpath=None,
+            serializer=TaskSerializer)
+        self.protocol = BrokerProtocol(
+                schedule=self.schedule, # callback to add tasks to the scheduling queue
+                cpus_per_task=cpus_per_task or 1,
+                store=store
+                )
         stack = make_stack(
-                lambda name, router : NameDispatcher(BrokerProtocol(
-                    schedule=self.schedule, # callback to add tasks to the scheduling queue
-                    cpus_per_task=cpus_per_task or 1
-                    )),
+                lambda name, router : ChainDispatcher(
+                    NameDispatcher(self.protocol),
+                    make_type_dispatcher([
+                        make_get_handler(store)
+                        ])
+                    ),
                 name='BK',
                 router=False
                 )
 
-        self.protocol = stack.upper.upper
         self.transport = ZmqAsyncTransport(
             stack=stack,
             # pylint: disable=no-member # False positive
@@ -258,14 +270,10 @@ class BrokerProtocol:
     """
     Main logic of the interaction of a client with a broker
     """
-    def __init__(self, schedule: Callable[[cm.InertCommand], None], cpus_per_task: int):
+    def __init__(self, schedule: Callable[[cm.InertCommand], None],
+            cpus_per_task: int, store: CacheStack):
         self.schedule = schedule
-
-        # Memory only native+serial cache
-        self.store = CacheStack(
-            dirpath=None,
-            serializer=TaskSerializer)
-
+        self.store = store
         # Commands
         self.script = cm.Script(store=self.store)
 
@@ -378,22 +386,6 @@ class BrokerProtocol:
 
     # Protocol callbacks
     # ==================
-    def on_get(self, msg: gm.Get):
-        """
-        Sends back Put or NotFound
-        """
-        name = msg.name
-        reply: gm.Put | gm.NotFound
-        try:
-            data, children = self.store.get_serial(name)
-            reply = gm.Put(name=name, data=data, children=children)
-            logging.debug('Client GET on %s', name.hex())
-        except KeyError:
-            reply = gm.NotFound(name=name)
-            logging.warning('Client missed GET on %s', name)
-
-        return reply
-
     def on_put(self, msg: gm.Put):
         """
         Receive data, and schedule sub-gets if necessary and check for

@@ -11,6 +11,8 @@ from flask import Flask, render_template, abort
 import galp.config
 import galp.commands as cm
 from galp._client import BrokerProtocol
+from galp.task_types import TaskSerializer
+from galp.cache import CacheStack
 
 def render_object(obj):
     """
@@ -110,7 +112,10 @@ def collect_kwargs(store, task):
             proto.script.commands[command.key].done(children)
             )
 
-    proto = BrokerProtocol(_schedule, cpus_per_task=1)
+    mem_store = CacheStack(
+        dirpath=None,
+        serializer=TaskSerializer)
+    proto = BrokerProtocol(_schedule, cpus_per_task=1, store=mem_store)
     proto.add([task])
 
     ## Collect args from local and remote store. Since we don't pass any

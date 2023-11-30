@@ -32,7 +32,7 @@ from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException, UpperSession,
         UpperForwardingSession,
         RoutedMessage, Replies, make_stack, NameDispatcher,
-        make_type_dispatcher)
+        make_type_dispatcher, ChainDispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -131,10 +131,12 @@ class WorkerProtocol:
         self.worker = worker
         self.store = store
         self.script = cm.Script(store=self.store)
-        self.dispatcher = NameDispatcher(self)
-        self.type_dispatch = make_type_dispatcher(
-            make_store_handlers(store)
-            )
+        self.dispatcher = ChainDispatcher(
+                NameDispatcher(self),
+                make_type_dispatcher(
+                    make_store_handlers(store)
+                    )
+                )
 
     def on_illegal(self, msg: gm.Illegal):
         """
@@ -162,10 +164,7 @@ class WorkerProtocol:
             return self.on_routed_exec(upper_session, msg.body)
         if isinstance(msg.body, gm.Put):
             return self.on_routed_put(upper_session, msg.body)
-        replies = self.type_dispatch(msg.body)
-        if replies:
-            return replies
-        return self.dispatcher.on_message(upper_session, msg)
+        return self.dispatcher.on_message(session, msg)
 
     def on_routed_exec(self, session: UpperSession, msg: gm.Exec
             ) -> list[list[bytes]]:
