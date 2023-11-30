@@ -14,7 +14,7 @@ import logging
 import argparse
 import resource
 
-from typing import Awaitable, Generic, TypeVar, Callable, Iterable
+from typing import Awaitable
 from dataclasses import dataclass
 
 import psutil
@@ -31,12 +31,14 @@ from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException, UpperSession,
         UpperForwardingSession,
-        RoutedMessage, Replies, make_stack, NameDispatcher)
+        RoutedMessage, Replies, make_stack, NameDispatcher,
+        make_type_dispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
+from galp.net_store import make_store_handlers
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -121,57 +123,6 @@ def make_worker_init(config):
         return Worker(setup)
     return _make_worker
 
-M = TypeVar('M')
-
-@dataclass
-class Handler(Generic[M]):
-    """
-    Wraps a callable message handler while exposing the type of messages
-    intended to be handled
-    """
-    handles: type[M]
-    handler: Callable[[M], Replies]
-
-def make_get_handler(store: CacheStack) -> Handler[gm.Get]:
-    """
-    Answers GET requests based on underlying store
-    """
-    def on_get(msg: gm.Get):
-        name = msg.name
-        logging.debug('Received GET for %s', name)
-        reply: gm.Put | gm.NotFound
-        try:
-            data, children = store.get_serial(name)
-            reply = gm.Put(name=name, data=data, children=children)
-            logging.info('GET: Cache HIT: %s', name)
-            return reply
-        except KeyError:
-            logging.info('GET: Cache MISS: %s', name)
-        except StoreReadError:
-            logging.exception('GET: Cache ERROR: %s', name)
-        return gm.NotFound(name=name)
-    return Handler(gm.Get, on_get)
-
-def make_type_dispatcher(handlers: Iterable[Handler]
-        ) -> Callable[[gm.BaseMessage], Replies]:
-    """
-    Dispatches a message to a handler based on the type of the message
-    """
-    _handlers : dict[type, Callable[..., Replies]] = {
-        hdl.handles: hdl.handler
-        for hdl in handlers
-        }
-    def on_message(msg: gm.BaseMessage) -> Replies:
-        """
-        Dispatches
-        """
-        handler = _handlers.get(type(msg))
-        if handler:
-            return handler(msg)
-        #logging.error('No handler for %s', msg)
-        return []
-    return on_message
-
 class WorkerProtocol:
     """
     Handler for messages from the broker
@@ -181,9 +132,9 @@ class WorkerProtocol:
         self.store = store
         self.script = cm.Script(store=self.store)
         self.dispatcher = NameDispatcher(self)
-        self.type_dispatch = make_type_dispatcher([
-            make_get_handler(store)
-            ])
+        self.type_dispatch = make_type_dispatcher(
+            make_store_handlers(store)
+            )
 
     def on_illegal(self, msg: gm.Illegal):
         """
@@ -271,54 +222,6 @@ class WorkerProtocol:
         """
         reps = self.script.commands['GET', msg.name].failed('NOTFOUND')
         assert not reps
-
-    def on_stat(self, msg: gm.Stat):
-        """
-        Wrapper around unsafe handler
-        """
-        try:
-            return self._on_stat_io_unsafe(msg)
-        except StoreReadError:
-            logging.exception('STAT: ERROR %s', msg.name)
-        return gm.NotFound(name=msg.name)
-
-    def _on_stat_io_unsafe(self, msg: gm.Stat):
-        """
-        STAT handler allowed to raise store read errors
-        """
-        # Try first to extract both definition and children
-        task_def = None
-        try:
-            task_def = self.store.get_task_def(msg.name)
-        except KeyError:
-            pass
-
-        result_ref = None
-        try:
-            result_ref = self.store.get_children(msg.name)
-        except KeyError:
-            pass
-
-        # Case 1: both def and children, DONE
-        if task_def is not None and result_ref is not None:
-            logging.info('STAT: DONE %s', msg.name)
-            return gm.Done(task_def=task_def, result=result_ref)
-
-        # Case 2: only def, FOUND
-        if task_def is not None:
-            logging.info('STAT: FOUND %s', msg.name)
-            return gm.Found(task_def=task_def)
-
-        # Case 3: only children
-        # This means a legacy store that was missing tasks definition
-        # persistency, or a corruption. This was originally treated as DONE, but
-        # in the current model there is no way to make the peer accept a missing
-        # or fake definition
-        # if children is not None:
-
-        # Case 4: nothing
-        logging.info('STAT: NOT FOUND %s', msg.name)
-        return gm.NotFound(name=msg.name)
 
     def new_commands_to_replies(self, session: UpperSession, commands: list[cm.InertCommand]
             ) -> list[list[bytes]]:
@@ -490,7 +393,7 @@ class Worker:
 
         try:
             if isinstance(inputs, cm.Failed):
-                logging.error('Could not gather task inputs'
+                logging.error('Could not gather task inputs' +
                               ' for step %s (%s): %s', name, step_name,
                               inputs.error)
                 raise NonFatalTaskError(inputs.error)
@@ -526,7 +429,7 @@ class Worker:
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.
-            logging.exception('An unhandled error has occured within a step-'
+            logging.exception('An unhandled error has occured within a step-' +
                 'running asynchronous task. This signals a bug in GALP itself.')
             raise
 

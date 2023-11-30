@@ -4,12 +4,12 @@ GALP protocol implementation
 
 import logging
 
-from typing import TypeAlias, Iterable
+from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
 from dataclasses import dataclass
 
 import galp.messages as gm
 from galp.lower_protocol import (
-        LowerProtocol, Route, IllegalRequestError, Session,
+        LowerProtocol, IllegalRequestError, Session,
         ForwardingSession, InvalidMessageDispatcher,
         make_local_session
         )
@@ -286,3 +286,34 @@ class NameDispatcher:
         A message without an overriden callback was received.
         """
         logging.error("Unhandled GALP verb %s", msg.verb)
+
+M = TypeVar('M')
+
+@dataclass
+class Handler(Generic[M]):
+    """
+    Wraps a callable message handler while exposing the type of messages
+    intended to be handled
+    """
+    handles: type[M]
+    handler: Callable[[M], Replies]
+
+def make_type_dispatcher(handlers: Iterable[Handler]
+        ) -> Callable[[gm.BaseMessage], Replies]:
+    """
+    Dispatches a message to a handler based on the type of the message
+    """
+    _handlers : dict[type, Callable[..., Replies]] = {
+        hdl.handles: hdl.handler
+        for hdl in handlers
+        }
+    def on_message(msg: gm.BaseMessage) -> Replies:
+        """
+        Dispatches
+        """
+        handler = _handlers.get(type(msg))
+        if handler:
+            return handler(msg)
+        #logging.error('No handler for %s', msg)
+        return []
+    return on_message
