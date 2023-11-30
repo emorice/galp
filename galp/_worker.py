@@ -151,7 +151,8 @@ class WorkerProtocol:
         logging.info('Received EXIT, terminating')
         raise ProtocolEndException('Incoming EXIT')
 
-    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage) -> Replies:
+    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
+            ) -> Replies | list[list[bytes]]:
         """
         Expose full message to submit handler
         """
@@ -166,7 +167,8 @@ class WorkerProtocol:
             return replies
         return self.dispatcher.on_message(upper_session, msg)
 
-    def on_routed_exec(self, session: UpperSession, msg: gm.Exec) -> Replies:
+    def on_routed_exec(self, session: UpperSession, msg: gm.Exec
+            ) -> list[list[bytes]]:
         """Start processing the submission asynchronously.
 
         This means returning immediately to the event loop, which allows
@@ -190,13 +192,17 @@ class WorkerProtocol:
             try:
                 result_ref = self.store.get_children(name)
                 logging.info('SUBMIT: Cache HIT: %s', name)
-                return gm.Done(task_def=task_def, result=result_ref)
+                return [session.write(
+                    gm.Done(task_def=task_def, result=result_ref)
+                    )]
             except StoreReadError:
                 logging.exception('SUBMIT: Failed cache hit: %s', name)
-                return gm.Failed(task_def=task_def)
+                return [session.write(
+                    gm.Failed(task_def=task_def)
+                    )]
 
         # If not in cache, resolve metadata and run the task
-        replies : list[gm.Message] = [gm.Doing(name=name)]
+        replies : list[list[bytes]] = [session.write(gm.Doing(name=name))]
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
