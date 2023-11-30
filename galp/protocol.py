@@ -143,46 +143,14 @@ class Protocol:
         This should eventually be split into a layer object that receives the
         upper layer and a session object that receives the lower session
         """
-        # To keep, this is the main way of accessing the application-defined
-        # handlers, but this should be a parameter instead of inheritance
+        # Reference to application-defined handlers
         self.upper = upper
 
-        # To keep, for logging
+        # For logging
         self.proto_name = name
-
-    # Default handlers
-    # ================
-
-    # To be removed: send methods
-    # ===========================
-
-    def route_messages(self, orig: UpperForwardingSession, news: Replies
-            ) -> list[TransportMessage]:
-        """
-        Route each of an optional list of messages. Legacy, handlers should
-        generate new messages through contextual writers and pass only already
-        written messages back.
-        """
-        return [
-                orig.forward_from(None).write(new) if isinstance(new, gm.BaseMessage) else new
-                for new in self.as_message_list(news)
-                ]
 
     #  Recv methods
     # ==================
-
-    @staticmethod
-    def as_message_list(messages: Replies
-            ) -> Iterable[gm.Message]:
-        """
-        Canonicallize a list of messages
-        """
-        match messages:
-            case None:
-                return []
-            case gm.BaseMessage():
-                return [messages]
-        return messages
 
     def on_message(self, session: ForwardingSession, is_forward: bool, msg_body: list[bytes]
             ) -> Iterable[TransportMessage]:
@@ -232,9 +200,7 @@ class Protocol:
         self._log_message(rmsg, is_incoming=True)
 
         # We should not need to call write_message here.
-        return self.route_messages(session,
-                                   self.upper.on_message(session, rmsg)
-                                   )
+        return self.upper.on_message(session, rmsg) or []
 
     # Logging
 
@@ -271,7 +237,8 @@ class NameDispatcher:
     def __init__(self, upper):
         self.upper = upper
 
-    def on_message(self, _session, msg: RoutedMessage) -> Replies:
+    def on_message(self, _session, msg: RoutedMessage
+            ) -> list[TransportMessage] | None:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name
@@ -297,6 +264,18 @@ class Handler(Generic[M]):
     """
     handles: type[M]
     handler: Callable[[M], Replies]
+
+def _as_message_list(messages: Replies
+        ) -> Iterable[gm.Message]:
+    """
+    Canonicallize a list of messages
+    """
+    match messages:
+        case None:
+            return []
+        case gm.BaseMessage():
+            return [messages]
+    return messages
 
 def make_type_dispatcher(handlers: Iterable[Handler]
         ) -> Callable[[gm.BaseMessage], Replies]:
@@ -327,7 +306,7 @@ class ChainDispatcher:
     type_dispatch: Callable[[gm.BaseMessage], Replies]
 
     def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
-            ) -> Replies | list[list[bytes]]:
+            ) -> list[TransportMessage] | None:
         """
         Expose full message to submit handler
         """
@@ -335,5 +314,6 @@ class ChainDispatcher:
         upper_session = session.forward_from(None)
         replies = self.type_dispatch(msg.body)
         if replies:
-            return replies
+            return [upper_session.write(rep)
+                    for rep in _as_message_list(replies)]
         return self.name_dispatcher.on_message(upper_session, msg)
