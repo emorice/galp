@@ -14,7 +14,7 @@ import logging
 import argparse
 import resource
 
-from typing import Awaitable
+from typing import Awaitable, Generic, TypeVar, Callable, Iterable
 from dataclasses import dataclass
 
 import psutil
@@ -121,6 +121,57 @@ def make_worker_init(config):
         return Worker(setup)
     return _make_worker
 
+M = TypeVar('M')
+
+@dataclass
+class Handler(Generic[M]):
+    """
+    Wraps a callable message handler while exposing the type of messages
+    intended to be handled
+    """
+    handles: type[M]
+    handler: Callable[[M], Replies]
+
+def make_get_handler(store: CacheStack) -> Handler[gm.Get]:
+    """
+    Answers GET requests based on underlying store
+    """
+    def on_get(msg: gm.Get):
+        name = msg.name
+        logging.debug('Received GET for %s', name)
+        reply: gm.Put | gm.NotFound
+        try:
+            data, children = store.get_serial(name)
+            reply = gm.Put(name=name, data=data, children=children)
+            logging.info('GET: Cache HIT: %s', name)
+            return reply
+        except KeyError:
+            logging.info('GET: Cache MISS: %s', name)
+        except StoreReadError:
+            logging.exception('GET: Cache ERROR: %s', name)
+        return gm.NotFound(name=name)
+    return Handler(gm.Get, on_get)
+
+def make_type_dispatcher(handlers: Iterable[Handler]
+        ) -> Callable[[gm.BaseMessage], Replies]:
+    """
+    Dispatches a message to a handler based on the type of the message
+    """
+    _handlers : dict[type, Callable[..., Replies]] = {
+        hdl.handles: hdl.handler
+        for hdl in handlers
+        }
+    def on_message(msg: gm.BaseMessage) -> Replies:
+        """
+        Dispatches
+        """
+        handler = _handlers.get(type(msg))
+        if handler:
+            return handler(msg)
+        #logging.error('No handler for %s', msg)
+        return []
+    return on_message
+
 class WorkerProtocol:
     """
     Handler for messages from the broker
@@ -130,6 +181,9 @@ class WorkerProtocol:
         self.store = store
         self.script = cm.Script(store=self.store)
         self.dispatcher = NameDispatcher(self)
+        self.type_dispatch = make_type_dispatcher([
+            make_get_handler(store)
+            ])
 
     def on_illegal(self, msg: gm.Illegal):
         """
@@ -146,24 +200,6 @@ class WorkerProtocol:
         logging.info('Received EXIT, terminating')
         raise ProtocolEndException('Incoming EXIT')
 
-    def on_get(self, msg: gm.Get):
-        """
-        Looks up the persistent store
-        """
-        name = msg.name
-        logging.debug('Received GET for %s', name)
-        reply: gm.Put | gm.NotFound
-        try:
-            data, children = self.store.get_serial(name)
-            reply = gm.Put(name=name, data=data, children=children)
-            logging.info('GET: Cache HIT: %s', name)
-            return reply
-        except KeyError:
-            logging.info('GET: Cache MISS: %s', name)
-        except StoreReadError:
-            logging.exception('GET: Cache ERROR: %s', name)
-        return gm.NotFound(name=name)
-
     def on_message(self, session: UpperForwardingSession, msg: RoutedMessage) -> Replies:
         """
         Expose full message to submit handler
@@ -174,6 +210,9 @@ class WorkerProtocol:
             return self.on_routed_exec(upper_session, msg.body)
         if isinstance(msg.body, gm.Put):
             return self.on_routed_put(upper_session, msg.body)
+        replies = self.type_dispatch(msg.body)
+        if replies:
+            return replies
         return self.dispatcher.on_message(upper_session, msg)
 
     def on_routed_exec(self, session: UpperSession, msg: gm.Exec) -> Replies:
