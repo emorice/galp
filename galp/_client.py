@@ -9,7 +9,6 @@ import logging
 import asyncio
 import time
 
-from enum import IntEnum, auto
 from collections import defaultdict
 from typing import Callable, Iterable, Any
 
@@ -31,21 +30,6 @@ from galp.command_queue import CommandQueue
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, QueryTaskDef,
     ensure_task_node, TaskSerializer)
-
-class TaskStatus(IntEnum):
-    """
-    A sorted enum representing the status of a task
-    """
-    UNKNOWN = auto()
-
-    # DOING received
-    RUNNING = auto()
-
-    # DONE received or equiv.
-    COMPLETED = auto()
-
-    # FAILED received or equiv.
-    FAILED = auto()
 
 class TaskFailedError(RuntimeError):
     """
@@ -277,9 +261,9 @@ class BrokerProtocol:
         # Commands
         self.script = cm.Script(store=self.store)
 
-        # Should be phased out, currently used only with the RUNNING state to
-        # prevent re-sending a submit after receiving a DOING notification
-        self._status : defaultdict[TaskName, TaskStatus] = defaultdict(lambda: TaskStatus.UNKNOWN)
+        # Should be phased out, currently used to prevent re-sending a submit
+        # after receiving a DOING notification
+        self._started : defaultdict[TaskName, bool] = defaultdict(bool)
 
         # Public attributes: counters for the number of SUBMITs sent and DOING
         # received for each task
@@ -341,11 +325,13 @@ class BrokerProtocol:
         match command:
             case cm.Submit():
                 name = command.task_def.name
-                if self._status[name] < TaskStatus.RUNNING:
-                    self.submitted_count[name] += 1
-                    sub = gm.Submit(task_def=command.task_def,
-                                    resources=self.get_resources(command.task_def))
-                    return sub
+                if self._started[name]:
+                    # Early stop if we received DOING
+                    return None
+                self.submitted_count[name] += 1
+                sub = gm.Submit(task_def=command.task_def,
+                                resources=self.get_resources(command.task_def))
+                return sub
             case cm.Get():
                 get = self.get(command.name)
                 if get is not None:
@@ -408,7 +394,6 @@ class BrokerProtocol:
         """
         task_def = msg.task_def
         name = task_def.name
-        self._status[name] = TaskStatus.COMPLETED
 
         # trigger downstream commands
         command = self.script.commands.get(('SUBMIT', name))
@@ -431,7 +416,7 @@ class BrokerProtocol:
         sent.
         """
         self.run_count[msg.name] += 1
-        self._status[msg.name] = TaskStatus.RUNNING
+        self._started[msg.name] = True
 
     def on_failed(self, msg: gm.Failed):
         """
