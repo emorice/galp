@@ -388,17 +388,11 @@ class BrokerProtocol:
     # ==================
     def on_put(self, msg: gm.Put):
         """
-        Receive data, and schedule sub-gets if necessary and check for
-        termination
-        """
-        # Schedule sub-gets if necessary
-        # To be moved to the script engine eventually
-        # Also we should get rid of the handle
-        for child in msg.children:
-            # We do not send explicit DONEs for subtasks, so we mark them as
-            # done when we receive the parent data.
-            self._status[child.name] = TaskStatus.COMPLETED
+        Check data into store and fulfill promise.
 
+        If the object has parts (children), the recursive rget promise is
+        responsible for issuing the corresponsing new requests.
+        """
         # Put the parent part
         self.store.put_serial(msg.name, (msg.data, msg.children))
 
