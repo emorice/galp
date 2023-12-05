@@ -478,7 +478,7 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
-class Get(NamedPrimitive[list[gtt.TaskRef], str]):
+class Get(NamedPrimitive[gm.Put, str]):
     """
     Get a single resource part
     """
@@ -516,7 +516,7 @@ def rget(name: gtt.TaskName) -> Command[list, str]:
     """
     return (
         Get(name)
-        .then(lambda children: Gather([rget(c.name) for c in children]))
+        .then(lambda res: Gather([rget(c.name) for c in res.children]))
         )
 
 def no_not_found(stat_result: StatResult, task: gtt.Task

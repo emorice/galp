@@ -218,7 +218,7 @@ class WorkerProtocol:
         """
         self.store.put_serial(msg.name, (msg.data, msg.children))
         return self.new_commands_to_replies(session,
-            self.script.commands['GET', msg.name].done(msg.children)
+            self.script.commands['GET', msg.name].done(msg)
             )
 
     def on_not_found(self, msg: gm.NotFound):
@@ -243,7 +243,7 @@ class WorkerProtocol:
             try:
                 result_ref = self.store.get_children(name)
                 commands.extend(
-                    self.script.commands[command.key].done(result_ref.children)
+                    self.script.commands[command.key].done(result_ref)
                     )
                 continue
             except StoreReadError:

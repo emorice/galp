@@ -365,7 +365,7 @@ class BrokerProtocol:
 
         # Found, mark command as done and pass on children
         self.schedule_new(
-            self.script.commands['GET', name].done(result_ref.children)
+            self.script.commands['GET', name].done(result_ref)
             )
         # Supress normal output, removing task from queue
         return None
@@ -384,7 +384,7 @@ class BrokerProtocol:
 
         # Mark as done and sets result
         self.schedule_new(
-            self.script.commands['GET', msg.name].done(msg.children)
+            self.script.commands['GET', msg.name].done(msg)
             )
 
     def on_done(self, msg: gm.Done) -> None:
