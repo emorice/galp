@@ -15,6 +15,7 @@ from pydantic import (GetCoreSchemaHandler, BaseModel, Field, PlainSerializer,
         model_validator)
 
 from galp.serializer import Serializer
+from galp.serialize import Serialized
 import galp.steps
 
 # Core task type definitions
@@ -358,6 +359,8 @@ class TaskSerializer(Serializer[Task, TaskRef]):
                 return obj
             case _:
                 return None
+
+SerializedTask: TypeAlias = Serialized[TaskRef]
 
 def make_literal_task(obj: Any) -> TaskNode:
     """

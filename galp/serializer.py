@@ -1,16 +1,21 @@
 """
 Serialization utils
+
+This should be renamed to make more obvious that this is specific implementation
+of the serialization interface.
 """
 
 from __future__ import annotations
 
-from typing import Any, List, Callable, TypeVar, Generic
+from typing import Any, List, Callable, TypeVar
 import logging
 
 import msgpack # type: ignore[import] # Issue 85
 import dill # type: ignore[import] # Issue 85
 
 from pydantic import BaseModel, ValidationError, TypeAdapter, RootModel
+
+from galp import serialize
 
 class DeserializeError(ValueError):
     """
@@ -23,9 +28,10 @@ class DeserializeError(ValueError):
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
 
-class Serializer(Generic[Nat, Ref]):
+class Serializer(serialize.Serializer[Nat, Ref]):
     """
-    Abstraction for a serialization strategy
+    Implementation of a serialization based on msgpack and dill, with support
+    for further customization through an out-of-band mechanism.
 
     The class has two generics to be defined and handled by subclasses. Nat
     objects are objects that should be handled out of band in a custom way by

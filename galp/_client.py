@@ -29,7 +29,7 @@ from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, QueryTaskDef,
-    ensure_task_node, TaskSerializer)
+    ensure_task_node, TaskSerializer, SerializedTask)
 
 class TaskFailedError(RuntimeError):
     """
@@ -274,6 +274,9 @@ class BrokerProtocol:
         # Default resources
         self.resources = gtt.ResourceClaim(cpus=cpus_per_task)
 
+        # Serializer for Put handler, to be modularized away
+        self.serializer: TaskSerializer = TaskSerializer()
+
     def add(self, tasks: list[TaskNode]) -> None:
         """
         Browse the graph and add it to the tasks we're tracking, in an
@@ -358,14 +361,16 @@ class BrokerProtocol:
         Send GET for task if not locally available
         """
         try:
-            result_ref = self.store.get_children(name)
+            data, children = self.store.get_serial(name)
         except KeyError:
             # Not found, send a normal GET
             return gm.Get(name=name)
 
         # Found, mark command as done and pass on children
         self.schedule_new(
-            self.script.commands['GET', name].done(result_ref)
+            self.script.commands['GET', name].done(
+                SerializedTask(self.serializer, data, children)
+                )
             )
         # Supress normal output, removing task from queue
         return None
@@ -382,9 +387,11 @@ class BrokerProtocol:
         # Put the parent part
         self.store.put_serial(msg.name, (msg.data, msg.children))
 
+        # Inject serializer
+        serialized = SerializedTask(self.serializer, msg.data, msg.children)
         # Mark as done and sets result
         self.schedule_new(
-            self.script.commands['GET', msg.name].done(msg)
+            self.script.commands['GET', msg.name].done(serialized)
             )
 
     def on_done(self, msg: gm.Done) -> None:

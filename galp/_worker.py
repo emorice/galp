@@ -36,7 +36,7 @@ from galp.protocol import (ProtocolEndException, UpperSession,
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
-from galp.task_types import TaskRef, CoreTaskDef
+from galp.task_types import TaskRef, CoreTaskDef, TaskSerializer, SerializedTask
 from galp.profiler import Profiler
 from galp.net_store import make_store_handlers
 
@@ -137,6 +137,7 @@ class WorkerProtocol:
                     make_store_handlers(store)
                     )
                 )
+        self.serializer: TaskSerializer = TaskSerializer()
 
     def on_illegal(self, msg: gm.Illegal):
         """
@@ -217,8 +218,9 @@ class WorkerProtocol:
         Put object in store, and mark the command as done
         """
         self.store.put_serial(msg.name, (msg.data, msg.children))
+        serialized = SerializedTask(self.serializer, msg.data, msg.children)
         return self.new_commands_to_replies(session,
-            self.script.commands['GET', msg.name].done(msg)
+            self.script.commands['GET', msg.name].done(serialized)
             )
 
     def on_not_found(self, msg: gm.NotFound):
@@ -241,9 +243,11 @@ class WorkerProtocol:
                 raise NotImplementedError(command)
             name = command.name
             try:
-                result_ref = self.store.get_children(name)
+                data, children = self.store.get_serial(name)
                 commands.extend(
-                    self.script.commands[command.key].done(result_ref)
+                    self.script.commands[command.key].done(
+                        SerializedTask(self.serializer, data, children)
+                        )
                     )
                 continue
             except StoreReadError:

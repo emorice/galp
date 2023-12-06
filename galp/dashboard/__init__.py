@@ -10,9 +10,8 @@ from flask import Flask, render_template, abort
 
 import galp.config
 import galp.commands as cm
-import galp.messages as gm
 from galp._client import BrokerProtocol
-from galp.task_types import TaskSerializer
+from galp.task_types import TaskSerializer, SerializedTask
 from galp.cache import CacheStack
 
 def render_object(obj):
@@ -101,6 +100,7 @@ def collect_kwargs(store, task):
 
     ## Define how to fetch missing pieces (direct read from store)
     proto = None # fwd decl
+    serializer = TaskSerializer()
     def _schedule(command: cm.InertCommand):
         if not isinstance(command, cm.Get):
             raise NotImplementedError
@@ -110,12 +110,15 @@ def collect_kwargs(store, task):
             proto.store.put_serial(name, serialized)
         buf, children = proto.store.get_serial(name)
         proto.schedule_new(
-            proto.script.commands[command.key].done(gm.Put(name, buf, children))
+            proto.script.commands[command.key].done(
+                SerializedTask(serializer, buf, children)
+                )
             )
 
     mem_store = CacheStack(
         dirpath=None,
-        serializer=TaskSerializer)
+        serializer=serializer
+        )
     proto = BrokerProtocol(_schedule, cpus_per_task=1, store=mem_store)
     proto.add([task])
 
