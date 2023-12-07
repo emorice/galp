@@ -115,11 +115,10 @@ def collect_kwargs(store, task):
                 )
             )
 
-    mem_store = CacheStack(
-        dirpath=None,
-        serializer=serializer
-        )
-    proto = BrokerProtocol(_schedule, cpus_per_task=1, store=mem_store)
+    proto = BrokerProtocol(_schedule, cpus_per_task=1,
+            store=CacheStack(dirpath=None, serializer=serializer)
+            )
+
     proto.add([task])
 
     ## Collect args from local and remote store. Since we don't pass any
@@ -129,9 +128,14 @@ def collect_kwargs(store, task):
     for keyword, tin in tdef.kwargs.items():
         # You need to hold a reference, because advance_all won't !
         cmd = cm.rget(tin.name)
+        # This is recursive through _schedule, and will only return when no more
+        # commands are issued
         proto.schedule_new(
             cm.advance_all(proto.script, cm.get_leaves([cmd]))
             )
-        kwargs[keyword] = proto.store.get_native(tin.name)
+        if not isinstance(cmd.val, cm.Done):
+            # Error handling
+            raise NotImplementedError(cmd.val)
+        kwargs[keyword] = cmd.val.result
 
     return kwargs
