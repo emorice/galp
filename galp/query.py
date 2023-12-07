@@ -41,7 +41,7 @@ def query(script: cm.Script, subject: gtt.Task, _query):
     operator = query_to_op(query_obj, _query)
 
     return operator.requires(subject).then(
-            lambda *command: cm.Gather(operator.recurse(*command)).then(
+            lambda *required: cm.Gather(operator.recurse(*required)).then(
                 operator.safe_result
                 )
             )
@@ -97,7 +97,8 @@ class Operator:
         self.script = query_doc.script
         self.store = query_doc.script.store
         self.subject = query_doc.subject
-        self._req_cmd = None
+        # Result of the command specified in requires
+        self._required = None
 
     @staticmethod
     def requires(task: gtt.Task) -> cm.Command:
@@ -121,14 +122,14 @@ class Operator:
         """
         return cls._ops.get(name)
 
-    def recurse(self, cmd=None):
+    def recurse(self, required=None):
         """
         Build subqueries if needed
         """
-        self._req_cmd = cmd
-        return self._recurse(cmd)
+        self._required = required
+        return self._recurse(required)
 
-    def _recurse(self, _cmd):
+    def _recurse(self, _required):
         """
         Default implementation does not recurse, but checks that no sub-query
         was provided
@@ -143,9 +144,9 @@ class Operator:
         """
         Build result of operator from subcommands
         """
-        return self._result(self._req_cmd, subs)
+        return self._result(self._required, subs)
 
-    def _result(self, _req_cmd, _sub_cmds):
+    def _result(self, _required, _sub_cmds):
         return None
 
     def safe_result(self, subs):
@@ -210,9 +211,8 @@ class Sub(Operator):
     """
     requires = staticmethod(lambda task: cm.rget(task.name))
 
-    def _result(self, _run_cmd, _subs):
-        return self.store.get_native(
-                self.subject.name, shallow=False)
+    def _result(self, rget_result, _subs):
+        return rget_result
 
 class Done(Operator):
     """

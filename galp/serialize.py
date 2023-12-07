@@ -8,6 +8,14 @@ serializer but do not depend on what is the actual serialization strategy used.
 from dataclasses import dataclass
 from typing import Any, TypeVar, Generic, Callable
 
+class DeserializeError(ValueError):
+    """
+    Exception raised to wrap any error encountered by the deserialization
+    backends
+    """
+    def __init__(self, msg=None):
+        super().__init__(msg or 'Failed to deserialize')
+
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
 

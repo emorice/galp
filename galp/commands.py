@@ -13,6 +13,7 @@ from functools import wraps
 
 import galp.messages as gm
 import galp.task_types as gtt
+from galp.serialize import Serialized, DeserializeError
 
 # Result types
 # ============
@@ -478,7 +479,7 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
-class Get(NamedPrimitive[gm.Put, str]):
+class Get(NamedPrimitive[Serialized, str]):
     """
     Get a single resource part
     """
@@ -510,13 +511,27 @@ class Put(NamedPrimitive[gtt.ResultRef, str]):
         super().__init__(name)
         self.data = data
 
-def rget(name: gtt.TaskName) -> Command[list, str]:
+def safe_deserialize(res: Serialized, children: list):
+    """
+    Wrap serializer in a guard for invalid payloads
+    """
+    try:
+        return res.deserialize(children)
+    except DeserializeError:
+        msg = 'Failed to deserialize'
+        logging.exception(msg)
+        return Failed(msg)
+
+def rget(name: gtt.TaskName) -> Command[Any, str]:
     """
     Get a task result, then rescursively get all the sub-parts of it
     """
     return (
         Get(name)
-        .then(lambda res: Gather([rget(c.name) for c in res.children]))
+        .then(lambda res: (
+            Gather([rget(c.name) for c in res.children])
+            .then(lambda children: safe_deserialize(res, children))
+            ))
         )
 
 def no_not_found(stat_result: StatResult, task: gtt.Task
@@ -636,7 +651,7 @@ def rsubmit(task: gtt.Task, dry: bool = False) -> Command[gtt.RecResultRef, str]
                 )
             )
 
-def run(task: gtt.Task, dry=False):
+def run(task: gtt.Task, dry=False) -> Command[Any, str]:
     """
     Combined rsubmit + rget
 

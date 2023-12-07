@@ -16,14 +16,7 @@ import dill # type: ignore[import] # Issue 85
 from pydantic import BaseModel, ValidationError, TypeAdapter, RootModel
 
 from galp import serialize
-
-class DeserializeError(ValueError):
-    """
-    Exception raised to wrap any error encountered by the deserialization
-    backends
-    """
-    def __init__(self, msg=None):
-        super().__init__(msg or 'Failed to deserialize')
+from galp.serialize import DeserializeError
 
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
