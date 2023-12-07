@@ -215,9 +215,8 @@ class WorkerProtocol:
 
     def on_routed_put(self, session: UpperSession, msg: gm.Put):
         """
-        Put object in store, and mark the command as done
+        Mark the promise as done and pass result
         """
-        self.store.put_serial(msg.name, (msg.data, msg.children))
         serialized = SerializedTask(self.serializer, msg.data, msg.children)
         return self.new_commands_to_replies(session,
             self.script.commands['GET', msg.name].done(serialized)

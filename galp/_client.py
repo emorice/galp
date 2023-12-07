@@ -371,14 +371,11 @@ class BrokerProtocol:
     # ==================
     def on_put(self, msg: gm.Put):
         """
-        Check data into store and fulfill promise.
+        Fulfill promise.
 
         If the object has parts (children), the recursive rget promise is
         responsible for issuing the corresponsing new requests.
         """
-        # Put the parent part
-        self.store.put_serial(msg.name, (msg.data, msg.children))
-
         # Inject serializer
         serialized = SerializedTask(self.serializer, msg.data, msg.children)
         # Mark as done and sets result
