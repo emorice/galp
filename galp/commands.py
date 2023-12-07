@@ -395,6 +395,16 @@ class Script:
                     ) -> Result[list[Ok], Err]:
         """
         Value conjunction respecting self.keep_going
+
+        If all commands are Done, returns Done with the list of results.
+        If any fails, returns Failed with one of the errors.
+
+        If keep_going is True, this may return Failed when a failure is found
+        even if some commands are still Pending (but see Bugs below).
+
+        Bugs: this doesn't look exactly correct, when keep_going is False, it
+        looks like this returns Pending in input is (Pending, Failed) but Failed
+        if it's (Failed, Pending).
         """
         results = []
         failed = None

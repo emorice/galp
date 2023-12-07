@@ -22,13 +22,12 @@ import galp.task_types as gtt
 from galp import async_utils
 from galp.cache import CacheStack
 from galp.net_store import make_get_handler
-from galp.serializer import DeserializeError
 from galp.protocol import ( ProtocolEndException, make_stack, NameDispatcher,
         ChainDispatcher, make_type_dispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
-from galp.task_types import (TaskName, TaskNode, LiteralTaskDef, QueryTaskDef,
+from galp.task_types import (TaskName, TaskNode, LiteralTaskDef,
     ensure_task_node, TaskSerializer, SerializedTask)
 
 class TaskFailedError(RuntimeError):
@@ -152,45 +151,39 @@ class Client:
         # Update the task graph
         self.protocol.add(task_nodes)
 
-        val = await asyncio.wait_for(
+        cmd_vals = await asyncio.wait_for(
             self.run_collection(task_nodes, return_exceptions=return_exceptions,
                 dry_run=dry_run),
             timeout=timeout)
 
-        if isinstance(val, cm.Failed):
-            if not return_exceptions:
-                raise TaskFailedError(val.error)
-            # Issue #83: actually implement this
-            cmd_results = [val.error] * len(task_nodes)
-        else:
-            cmd_results = val.result
+        results: list[Any] = []
+        for val in cmd_vals:
+            match val:
+                case cm.Done():
+                    results.append(val.result)
+                case cm.Pending():
+                    # This should only be found if keep_going is False and an
+                    # other command fails, so we should find a Failed and raise
+                    # without actually returning this one.
+                    # Fill it in anyway, to avoid confusions
+                    results.append(val)
+                case cm.Failed():
+                    exc = TaskFailedError(
+                        f'Failed to collect task: {val.error}'
+                        )
+                    if return_exceptions:
+                        results.append(exc)
+                    else:
+                        raise exc
 
+        # Conventional result for dry runs, as results would then only contain
+        # internal objects that shouldn't be exposed
+        # In the future, we could instead return some dry-run information for
+        # programmatic use
         if dry_run:
             return None
 
-        results: list[Any] = []
-        failed = None
-        for task, cmd_result in zip(task_nodes, cmd_results):
-            tdef = task.task_def
-            if isinstance(tdef, QueryTaskDef):
-                # For queries, result is inline
-                results.append(cmd_result)
-            else:
-                # For the rest, result is in store on success
-                try:
-                    results.append(
-                        self.protocol.store.get_native(task.name)
-                        )
-                # On failure, more details on the error can be provided inline
-                except (KeyError, DeserializeError) as exc:
-                    new_exc = TaskFailedError('Failed to collect task '
-                            f'[{task.task_def}]: {cmd_result}')
-                    new_exc.__cause__ = exc
-                    failed = new_exc
-                    results.append(new_exc)
-        if failed is None or return_exceptions:
-            return results
-        raise failed
+        return results
 
     # Old name of gather
     collect = gather
@@ -208,7 +201,8 @@ class Client:
         return results
 
     async def run_collection(self, tasks: list[TaskNode],
-            return_exceptions: bool, dry_run: bool) -> cm.FinalResult[list, str]:
+            return_exceptions: bool, dry_run: bool
+            ) -> list[cm.Result]:
         """
         Processes messages until the collection target is achieved
         """
@@ -231,9 +225,8 @@ class Client:
         else:
             script.keep_going = False
 
-        collect = script.collect(
-                commands=[run_task(t, dry=dry_run) for t in tasks]
-                )
+        commands = [run_task(t, dry=dry_run) for t in tasks]
+        collect = script.collect(commands)
 
         try:
             _, cmds = script.callback(collect, _end)
@@ -247,8 +240,7 @@ class Client:
             pass
         # Issue 84: this work because End is only raised after collect is done,
         # but that's bad style.
-        assert not isinstance(collect.val, cm.Pending)
-        return collect.val
+        return [c.val for c in commands]
 
 class BrokerProtocol:
     """
