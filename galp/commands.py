@@ -314,13 +314,11 @@ class Script:
 
     Args:
         verbose: whether to print brief summary of command completion to stderr
-        store: Store object, destination to store Query result. Only needed for
-            queries.
         keep_going: whether to attempt to complete independent commands when one
             fails. If False, attempts to "fail fast" instead, and finishes as
             soon as any command fails.
     """
-    def __init__(self, verbose=True, store=None, keep_going: bool = False):
+    def __init__(self, verbose=True, keep_going: bool = False):
         # Strong references to all pending commands
         self.pending: set[Command] = set()
 
@@ -328,7 +326,6 @@ class Script:
         self.commands : WeakValueDictionary[CommandKey, PrimitiveProxy] = WeakValueDictionary()
         self.verbose = verbose
         self.keep_going = keep_going
-        self.store = store
 
     def collect(self, commands: list[Command[Ok, Err]]) -> Command[list[Ok], Err]:
         """

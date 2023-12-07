@@ -3,8 +3,7 @@ Implementation of complex queries within the command asynchronous system
 """
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Type
+from typing import Type
 
 from . import commands as cm
 from . import messages as gm

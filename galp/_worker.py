@@ -130,7 +130,7 @@ class WorkerProtocol:
     def __init__(self, worker: 'Worker', store: CacheStack):
         self.worker = worker
         self.store = store
-        self.script = cm.Script(store=self.store)
+        self.script = cm.Script()
         self.dispatcher = ChainDispatcher(
                 NameDispatcher(self),
                 make_type_dispatcher(

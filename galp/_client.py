@@ -259,7 +259,7 @@ class BrokerProtocol:
         self.schedule = schedule
         self.store = store
         # Commands
-        self.script = cm.Script(store=self.store)
+        self.script = cm.Script()
 
         # Should be phased out, currently used to prevent re-sending a submit
         # after receiving a DOING notification
