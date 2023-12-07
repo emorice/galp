@@ -534,6 +534,16 @@ def rget(name: gtt.TaskName) -> Command[Any, str]:
             ))
         )
 
+def sget(name: gtt.TaskName) -> Command[Any, str]:
+    """
+    Shallow or simple get: get a task result, and deserialize it but keeping
+    children as references instead of recursing on them like rget
+    """
+    return (
+        Get(name)
+        .then(lambda res: res.deserialize(res.children))
+        )
+
 def no_not_found(stat_result: StatResult, task: gtt.Task
                  ) -> gm.Found | gm.Done | Failed[str]:
     """
@@ -663,7 +673,7 @@ def run(task: gtt.Task, dry=False) -> Command[Any, str]:
 
 def srun(task: gtt.Task):
     """
-    Shallow run: combined ssubmit + get, fetches the raw result of a task but
+    Shallow run: combined ssubmit + sget, fetches the raw result of a task but
     not its children
     """
-    return ssubmit(task).then(lambda _: Get(task.name))
+    return ssubmit(task).then(lambda _: sget(task.name))

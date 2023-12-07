@@ -95,7 +95,6 @@ class Operator:
     def __init__(self, query_doc, sub_query):
         self.sub_query = sub_query
         self.script = query_doc.script
-        self.store = query_doc.script.store
         self.subject = query_doc.subject
         # Result of the command specified in requires
         self._required = None
@@ -199,11 +198,10 @@ class Base(Operator):
     """
     @staticmethod
     def requires(task: gtt.Task):
-        return cm.Get(task.name)
+        return cm.sget(task.name)
 
-    def _result(self, _srun_cmd, _subs):
-        return self.store.get_native(
-                self.subject.name, shallow=True)
+    def _result(self, sget_result, _subs):
+        return sget_result
 
 class Sub(Operator):
     """
@@ -350,11 +348,11 @@ class GetItem(Operator, named=False):
 
     requires = staticmethod(cm.srun)
 
-    def _recurse(self, _srun_cmd):
+    def _recurse(self, srun_result):
         """
         Subquery for a simple item
         """
-        shallow_obj = self.store.get_native(self.subject.name, shallow=True)
+        shallow_obj = srun_result
         sub_query = self.sub_query
 
         try:
@@ -404,11 +402,11 @@ class Iterate(Operator, named=False):
     """
     requires = staticmethod(cm.srun)
 
-    def _recurse(self, _srun_cmd):
+    def _recurse(self, srun_result):
         """
         Extract raw result and build subqueries
         """
-        shallow_obj = self.store.get_native(self.subject.name, shallow=True)
+        shallow_obj = srun_result
 
         sub_query = self.sub_query
         sub_query_commands = []
