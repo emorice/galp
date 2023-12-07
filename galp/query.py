@@ -13,7 +13,7 @@ from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .cache import StoreReadError
 from .serializer import DeserializeError
 
-def run_task(script: cm.Script, task: TaskNode, dry: bool = False) -> cm.Command:
+def run_task(task: TaskNode, dry: bool = False) -> cm.Command:
     """
     Creates command appropriate to type of task (query or non-query)
     """
@@ -23,22 +23,15 @@ def run_task(script: cm.Script, task: TaskNode, dry: bool = False) -> cm.Command
             raise NotImplementedError('Cannot dry-run queries yet')
         subject, = task.dependencies
         # Issue #81 unsafe reference
-        return query(script, subject, task_def.query)
+        return query(subject, task_def.query)
 
     return cm.run(task, dry)
 
-@dataclass
-class _Query:
-    script: cm.Script
-    subject: gtt.Task
-    query: Any
-
-def query(script: cm.Script, subject: gtt.Task, _query):
+def query(subject: gtt.Task, _query):
     """
     Process the query and decide on further commands to issue
     """
-    query_obj = _Query(script, subject, _query)
-    operator = query_to_op(query_obj, _query)
+    operator = query_to_op(subject, _query)
 
     return operator.requires(subject).then(
             lambda *required: cm.Gather(operator.recurse(*required)).then(
@@ -92,10 +85,9 @@ class Operator:
     """
     Register an operator requiring the given command
     """
-    def __init__(self, query_doc, sub_query):
+    def __init__(self, subject: gtt.Task, sub_query):
         self.sub_query = sub_query
-        self.script = query_doc.script
-        self.subject = query_doc.subject
+        self.subject = subject
         # Result of the command specified in requires
         self._required = None
 
@@ -115,7 +107,7 @@ class Operator:
             cls._ops[name] = cls
 
     @classmethod
-    def by_name(cls, name):
+    def by_name(cls, name) -> 'type[Operator] | None':
         """
         Return operator by dollar-less name or None
         """
@@ -158,14 +150,14 @@ class Operator:
             logging.exception('In %s:', self)
             return cm.Failed(exc)
 
-def query_to_op(cmd: _Query, query_doc) -> Operator:
+def query_to_op(subject: gtt.Task, query_doc) -> Operator:
     """
     Convert query into operator
     """
     is_compound, parsed_query = parse_query(query_doc)
     # Query set, turn each in its own query
     if is_compound:
-        return Compound(cmd, parsed_query.items())
+        return Compound(subject, parsed_query.items())
 
     # Simple queries, parse into key-sub_query
     query_key, sub_query = parsed_query
@@ -178,18 +170,18 @@ def query_to_op(cmd: _Query, query_doc) -> Operator:
             raise NotImplementedError(
                 f'No such operator: "{query_key}"'
                 )
-        return op_cls(cmd, sub_query)
+        return op_cls(subject, sub_query)
 
     ## Direct index
     if query_key.isidentifier() or query_key.isnumeric():
         index = int(query_key) if query_key.isnumeric() else query_key
-        return GetItem(cmd, sub_query, index)
+        return GetItem(subject, sub_query, index)
 
     ## Iterator
     if query_key == '*':
-        return Iterate(cmd, sub_query)
+        return Iterate(subject, sub_query)
 
-    raise NotImplementedError(cmd.query)
+    raise NotImplementedError(query_doc)
 
 class Base(Operator):
     """
@@ -260,7 +252,7 @@ class Args(Operator):
 
         if not isinstance(task_def, CoreTaskDef):
             raise TypeError('Object is not a job-type Task, cannot use a "args"'
-                ' query here.')
+                + ' query here.')
 
         sub_commands = []
         for index, sub_query in arg_subqueries.items():
@@ -270,7 +262,7 @@ class Args(Operator):
             except ValueError: # keyword argument
                 target = task_def.kwargs[index].name
             sub_commands.append(
-                query(self.script, gtt.TaskRef(target), sub_query)
+                query(gtt.TaskRef(target), sub_query)
                 )
         return sub_commands
 
@@ -317,7 +309,7 @@ class Children(Operator):
         if '*' in child_subqueries:
             if len(child_subqueries) > 1:
                 raise NotImplementedError('Only one sub_query supported when '
-                        'using universal children queries at the moment')
+                        + 'using universal children queries at the moment')
             child_subqueries = { i: child_subqueries['*']
                     for i in range(len(result.children))
                     }
@@ -328,7 +320,7 @@ class Children(Operator):
             except ValueError: # key-indexed child
                 raise NotImplementedError(index) from None
             sub_commands.append(
-                query(self.script, target, sub_query)
+                query(target, sub_query)
                 )
         return sub_commands
 
@@ -342,8 +334,8 @@ class GetItem(Operator, named=False):
     """
     Item access parametric operator
     """
-    def __init__(self, query_doc, sub_query, index):
-        super().__init__(query_doc, sub_query)
+    def __init__(self, subject, sub_query, index):
+        super().__init__(subject, sub_query)
         self.index = index
 
     requires = staticmethod(cm.srun)
@@ -369,7 +361,7 @@ class GetItem(Operator, named=False):
                 f'task, cannot apply sub_query "{sub_query}" to it'
                 )
 
-        return query(self.script, gtt.TaskRef(task.name), sub_query)
+        return query(gtt.TaskRef(task.name), sub_query)
 
     def _result(self, _srun_cmd, subs):
         """
@@ -382,13 +374,13 @@ class Compound(Operator, named=False):
     """
     Collection of several other operators
     """
-    def __init__(self, query_doc, sub_queries):
-        super().__init__(query_doc, None)
+    def __init__(self, subject, sub_queries):
+        super().__init__(subject, None)
         self.sub_queries = sub_queries
 
     def _recurse(self, _no_cmd):
         return [
-            query(self.script, self.subject, sub_query)
+            query(self.subject, sub_query)
             for sub_query in self.sub_queries
             ]
 
@@ -421,11 +413,10 @@ class Iterate(Operator, named=False):
         for task in shallow_obj:
             if not isinstance(task, gtt.Task):
                 raise TypeError('Object is not a collection of tasks, cannot'
-                    ' use a "*" query here')
+                    + ' use a "*" query here')
             # Issue # 81
             sub_query_commands.append(
-                    query(self.script,
-                        task_nodes.get(task.name, gtt.TaskRef(task.name)),
+                    query(task_nodes.get(task.name, gtt.TaskRef(task.name)),
                         sub_query)
                     )
 

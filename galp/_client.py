@@ -232,7 +232,7 @@ class Client:
             script.keep_going = False
 
         collect = script.collect(
-                commands=[run_task(script, t, dry=dry_run) for t in tasks]
+                commands=[run_task(t, dry=dry_run) for t in tasks]
                 )
 
         try:

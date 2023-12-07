@@ -344,7 +344,7 @@ class Worker:
         # References are safe by contract: a submit should only ever be sent
         # after its inputs are done
         collect = script.collect([
-                query(script, TaskRef(tin.name), tin.op)
+                query(TaskRef(tin.name), tin.op)
                 for tin in [
                     *task_def.args,
                     *task_def.kwargs.values()
