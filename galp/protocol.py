@@ -35,11 +35,6 @@ class RoutedMessage:
     forward: bool
     body: gm.Message
 
-Replies: TypeAlias = gm.Message | Iterable[gm.Message] | None
-"""
-Allowed returned type of message handers
-"""
-
 TransportMessage: TypeAlias = list[bytes]
 """
 Type of messages expected by the transport
@@ -256,6 +251,16 @@ class NameDispatcher:
 
 M = TypeVar('M')
 
+HandlerFunction: TypeAlias = Callable[[UpperSession, M], list[TransportMessage]]
+"""
+Type of function that handles a specific message M and generate replies
+"""
+
+DispatchFunction: TypeAlias = HandlerFunction[gm.BaseMessage]
+"""
+Type of function that can handle any of several messages
+"""
+
 @dataclass
 class Handler(Generic[M]):
     """
@@ -263,10 +268,14 @@ class Handler(Generic[M]):
     intended to be handled
     """
     handles: type[M]
-    handler: Callable[[M], Replies]
+    handler: HandlerFunction[M]
 
-def _as_message_list(messages: Replies
-        ) -> Iterable[gm.Message]:
+Replies: TypeAlias = gm.Message | Iterable[gm.Message] | None
+"""
+Allowed returned type of simple message handers
+"""
+
+def _as_message_list(messages: Replies) -> Iterable[gm.Message]:
     """
     Canonicallize a list of messages
     """
@@ -277,22 +286,35 @@ def _as_message_list(messages: Replies
             return [messages]
     return messages
 
-def make_type_dispatcher(handlers: Iterable[Handler]
-        ) -> Callable[[gm.BaseMessage], Replies]:
+def make_reply_handler(handler: Callable[[M], Replies]) -> HandlerFunction:
+    """
+    Chain a handler returning a galp.Message with message writing back to
+    oriignal sender
+    """
+    def on_message(session: UpperSession, msg: M) -> list[TransportMessage]:
+        replies = handler(msg)
+        if replies:
+            return [session.write(rep)
+                    for rep in _as_message_list(replies)]
+        return []
+    return on_message
+
+def make_type_dispatcher(handlers: Iterable[Handler]) -> DispatchFunction:
     """
     Dispatches a message to a handler based on the type of the message
     """
-    _handlers : dict[type, Callable[..., Replies]] = {
+    _handlers : dict[type, HandlerFunction] = {
         hdl.handles: hdl.handler
         for hdl in handlers
         }
-    def on_message(msg: gm.BaseMessage) -> Replies:
+    def on_message(session: UpperSession, msg: gm.BaseMessage
+            ) -> list[TransportMessage]:
         """
         Dispatches
         """
         handler = _handlers.get(type(msg))
         if handler:
-            return handler(msg)
+            return handler(session, msg)
         #logging.error('No handler for %s', msg)
         return []
     return on_message
@@ -303,7 +325,7 @@ class ChainDispatcher:
     Dispatches messages to two handlers
     """
     name_dispatcher: NameDispatcher
-    type_dispatch: Callable[[gm.BaseMessage], Replies]
+    type_dispatch: Callable[[UpperSession, gm.BaseMessage], list[TransportMessage]]
 
     def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
             ) -> list[TransportMessage] | None:
@@ -312,8 +334,7 @@ class ChainDispatcher:
         """
         # We only send local messages
         upper_session = session.forward_from(None)
-        replies = self.type_dispatch(msg.body)
+        replies = self.type_dispatch(upper_session, msg.body)
         if replies:
-            return [upper_session.write(rep)
-                    for rep in _as_message_list(replies)]
+            return replies
         return self.name_dispatcher.on_message(upper_session, msg)

@@ -9,13 +9,14 @@ from typing import Iterable
 
 from galp.messages import Get, Stat, NotFound, Found, Put, Done
 from galp.cache import CacheStack, StoreReadError
-from galp.protocol import Handler
+from galp.protocol import Handler, make_reply_handler
 
 def make_get_handler(store: CacheStack) -> Handler[Get]:
     """
     Answers GET requests based on underlying store
     """
-    def on_get(msg: Get):
+    @make_reply_handler
+    def _on_get(msg: Get):
         name = msg.name
         logging.debug('Received GET for %s', name)
         reply: Put | NotFound
@@ -29,12 +30,13 @@ def make_get_handler(store: CacheStack) -> Handler[Get]:
         except StoreReadError:
             logging.exception('GET: Cache ERROR: %s', name)
         return NotFound(name=name)
-    return Handler(Get, on_get)
+    return Handler(Get, _on_get)
 
 def make_stat_handler(store: CacheStack) -> Handler[Stat]:
     """
     Answers STAT requests based on underlying store
     """
+    @make_reply_handler
     def _on_stat(msg: Stat):
         try:
             return _on_stat_io_unsafe(store, msg)
