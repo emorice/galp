@@ -18,6 +18,7 @@ from galp.protocol import (RoutedMessage, UpperSession,
     make_stack, UpperForwardingSession)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
+from galp.req_rep import ReplySession
 
 class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
@@ -164,10 +165,14 @@ class CommonProtocol:
 
         match orig_msg:
             case gm.Get() | gm.Stat():
-                return [chan.write(gm.NotFound(name=orig_msg.name))]
+                return [
+                        ReplySession(chan, orig_msg.verb)
+                        .write(gm.NotFound(name=orig_msg.name))
+                        ]
             case gm.Exec():
-                return [chan.write(
-                        gm.Failed(task_def=orig_msg.submit.task_def)
+                return [
+                        ReplySession(chan, orig_msg.submit.verb)
+                        .write(gm.Failed(task_def=orig_msg.submit.task_def)
                         )]
         logging.error(
             'Worker %s died while handling %s, no error propagation',
@@ -260,9 +265,9 @@ class CommonProtocol:
         # tasks and free the corresponding resources.
         if msg.forward:
             # Free resources for all messages indicating end of task
-            if isinstance(gmsg,
-                    gm.Done | gm.Failed | gm.Reply):
-                self.free_resources(session)
+            if isinstance(gmsg, gm.Reply):
+                if not isinstance(gmsg.value, gm.Doing):
+                    self.free_resources(session)
             # Forward as-is. Note that the lower layer forwards by default, so
             # really this just means returning nothing.
             logging.debug('Forwarding %s', gmsg.verb)

@@ -9,27 +9,25 @@ from typing import Iterable
 
 from galp.messages import Get, Stat, NotFound, Found, Put, Done
 from galp.cache import CacheStack, StoreReadError
-from galp.protocol import Handler, make_request_handler
+from galp.req_rep import Handler, make_request_handler, ReplySession
 
 def make_get_handler(store: CacheStack) -> Handler[Get]:
     """
     Answers GET requests based on underlying store
     """
     @make_request_handler
-    def _on_get(msg: Get):
+    def _on_get(session: ReplySession, msg: Get):
         name = msg.name
         logging.debug('Received GET for %s', name)
-        reply: Put | NotFound
         try:
             data, children = store.get_serial(name)
-            reply = Put(name=name, data=data, children=children)
             logging.info('GET: Cache HIT: %s', name)
-            return reply
+            return [session.write(Put(name=name, data=data, children=children))]
         except KeyError:
             logging.info('GET: Cache MISS: %s', name)
         except StoreReadError:
             logging.exception('GET: Cache ERROR: %s', name)
-        return NotFound(name=name)
+        return [session.write(NotFound(name=name))]
     return Handler(Get, _on_get)
 
 def make_stat_handler(store: CacheStack) -> Handler[Stat]:
@@ -37,15 +35,15 @@ def make_stat_handler(store: CacheStack) -> Handler[Stat]:
     Answers STAT requests based on underlying store
     """
     @make_request_handler
-    def _on_stat(msg: Stat):
+    def _on_stat(session: ReplySession, msg: Stat):
         try:
-            return _on_stat_io_unsafe(store, msg)
+            return [session.write(_on_stat_io_unsafe(store, msg))]
         except StoreReadError:
             logging.exception('STAT: ERROR %s', msg.name)
-        return NotFound(name=msg.name)
+        return [session.write(NotFound(name=msg.name))]
     return Handler(Stat, _on_stat)
 
-def _on_stat_io_unsafe(store, msg: Stat):
+def _on_stat_io_unsafe(store, msg: Stat) -> Done | Found | NotFound:
     """
     STAT handler allowed to raise store read errors
     """

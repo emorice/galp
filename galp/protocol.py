@@ -248,7 +248,7 @@ def make_name_dispatcher(upper) -> DispatchFunction:
         """
         method = getattr(upper, f'on_{msg.verb}', None)
         if not method:
-            logging.error("Unhandled GALP verb %s", msg.verb)
+            #logging.error("Unhandled GALP verb %s", msg.verb)
             return []
         return method(msg)
     return on_message
@@ -289,24 +289,6 @@ Replies: TypeAlias = gm.Message | Iterable[gm.Message] | None
 """
 Allowed returned type of simple message handers
 """
-
-@dataclass
-class ReplySession:
-    """
-    Add request info to reply
-    """
-    lower: UpperSession
-    request: str
-
-    def write(self, value: gm.ReplyValue):
-        """
-        Wrap and write message
-        """
-        return self.lower.write(gm.Reply(
-            request=self.request,
-            value=value
-            ))
-
 def _as_message_list(messages: Replies) -> Iterable[gm.Message]:
     """
     Canonicallize a list of messages
@@ -317,19 +299,6 @@ def _as_message_list(messages: Replies) -> Iterable[gm.Message]:
         case gm.BaseMessage():
             return [messages]
     return messages
-
-def make_request_handler(handler: Callable[[M], Replies]) -> HandlerFunction:
-    """
-    Chain a handler returning a galp.Message with message writing back to
-    original sender
-    """
-    def on_message(session: UpperSession, msg: M) -> list[TransportMessage]:
-        replies = handler(msg)
-        if replies:
-            return [ReplySession(session, msg.verb).write(rep)
-                    for rep in _as_message_list(replies)]
-        return []
-    return on_message
 
 def make_type_dispatcher(handlers: Iterable[Handler]) -> DispatchFunction:
     """

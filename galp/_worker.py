@@ -39,7 +39,7 @@ from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef, TaskSerializer, SerializedTask
 from galp.profiler import Profiler
 from galp.net_store import make_store_handlers
-from galp.req_rep import make_reply_handler
+from galp.req_rep import make_reply_handler, ReplySession
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -188,6 +188,8 @@ class WorkerProtocol:
         task_def = sub.task_def
         logging.info('SUBMIT: %s on cpus %s', task_def.step, msg.resources.cpus)
         name = task_def.name
+        # Not that we reply to the Submit, not the Exec
+        reply_session = ReplySession(session, sub.verb)
 
         # Set the resource limits immediately
         limit_task_resources(msg.resources)
@@ -199,24 +201,24 @@ class WorkerProtocol:
             try:
                 result_ref = self.store.get_children(name)
                 logging.info('SUBMIT: Cache HIT: %s', name)
-                return [session.write(
+                return [reply_session.write(
                     gm.Done(task_def=task_def, result=result_ref)
                     )]
             except StoreReadError:
                 logging.exception('SUBMIT: Failed cache hit: %s', name)
-                return [session.write(
+                return [reply_session.write(
                     gm.Failed(task_def=task_def)
                     )]
 
         # If not in cache, resolve metadata and run the task
-        replies : list[list[bytes]] = [session.write(gm.Doing(name=name))]
+        replies : list[list[bytes]] = [reply_session.write(gm.Doing(name=name))]
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
         replies.extend(self.new_commands_to_replies(session,
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
-            self.worker.schedule_task(session, sub)
+            self.worker.schedule_task(reply_session, sub)
             ))
         return replies
 
@@ -279,7 +281,7 @@ class JobResult:
         result: None iff the task has failed, other wise a reference to the
             stored result.
     """
-    session: UpperSession
+    session: ReplySession
     submit: gm.Submit
     result: gtt.FlatResultRef | None
 
@@ -335,7 +337,7 @@ class Worker:
                     job.session.write(reply)
                     )
 
-    def schedule_task(self, session: UpperSession, msg: gm.Submit) -> list[cm.InertCommand]:
+    def schedule_task(self, session: ReplySession, msg: gm.Submit) -> list[cm.InertCommand]:
         """
         Callback to schedule a task for execution.
         """
@@ -397,7 +399,7 @@ class Worker:
 
         return args, kwargs
 
-    async def run_submission(self, session: UpperSession, msg: gm.Submit,
+    async def run_submission(self, session: ReplySession, msg: gm.Submit,
                              inputs: cm.FinalResult[list, str]) -> JobResult:
         """
         Actually run the task

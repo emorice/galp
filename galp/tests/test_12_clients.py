@@ -26,15 +26,16 @@ async def peer_client():
     # Inproc seems to have the most consistent buffering behavior,
     # understandably
     endpoint = 'inproc://test_fill_queue'
+    mock_handler = type('Mock', (), {})()
     peer = ZmqAsyncTransport(
             make_stack(
-                lambda name, router: NameDispatcher(type('Mock', (), {})()),
+                lambda name, router: NameDispatcher(mock_handler),
                 'CL', False),
         endpoint, zmq.DEALER, bind=True) # pylint: disable=no-member
 
     client = galp.Client(endpoint)
 
-    yield peer, client
+    yield peer, client, mock_handler
 
     peer.socket.close(linger=1)
     client.transport.socket.close(linger=1)
@@ -44,7 +45,7 @@ async def blocked_client(peer_client):
     """
     A Client and bound socket with the client sending queue artificially filled
     """
-    peer, client = peer_client
+    peer, client, handlers = peer_client
 
     # Lower the HWMs first, else filling the queues takes lots of messages
     # 0 creates problems, 1 seems the minimum still safe
@@ -70,13 +71,13 @@ async def blocked_client(peer_client):
         with pytest.raises(zmq.ZMQError):
             await _fill()
 
-    yield peer, client
+    yield peer, client, handlers
 
 async def test_fill_queue(blocked_client):
     """
     Tests that we can saturate the client outgoing queue at will
     """
-    _, client = blocked_client
+    _, client, _ = blocked_client
     task = gts.hello()
 
     # Check that client blocks
@@ -92,7 +93,7 @@ async def test_unique_submission(peer_client):
     """
     Tests that we only successfully send a submit only once
     """
-    peer, client = peer_client
+    peer, client, handlers = peer_client
     task = gts.sleeps(1, 42)
     # pylint: disable=no-member
     tdef = task.task_def
@@ -103,8 +104,8 @@ async def test_unique_submission(peer_client):
         submit_counter[0] += 1
     def _count_stat(*_):
         stat_counter[0] += 1
-    peer.stack.upper.upper.on_submit = _count
-    peer.stack.upper.upper.on_stat = _count_stat
+    handlers.on_submit = _count
+    handlers.on_stat = _count_stat
 
     bg_collect = asyncio.create_task(
         client.collect(task)

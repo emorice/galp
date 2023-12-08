@@ -247,7 +247,7 @@ class Exec(BaseMessage):
     verb: Literal['exec'] = field(default='exec', repr=False)
 
 ReplyValue = Annotated[
-        Done | Failed | Found | NotFound | Put | Ready,
+        Done | Failed | Found | NotFound | Put | Ready | Doing,
         Field(discriminator='verb')
         ]
 
