@@ -39,6 +39,7 @@ from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef, TaskSerializer, SerializedTask
 from galp.profiler import Profiler
 from galp.net_store import make_store_handlers
+from galp.req_rep import make_reply_handler
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -132,11 +133,21 @@ class WorkerProtocol:
         self.store = store
         self.script = cm.Script()
         self.dispatcher = ChainDispatcher(
-                NameDispatcher(self), # Exit, Illegal, NotFound
+                # Lifecycle messages: Exit, Illegal
+                NameDispatcher(self),
+                # Rest
                 make_type_dispatcher([
+                    # Request handlers: Get, Stat
                     *make_store_handlers(store),
-                    Handler(gm.Put, self.on_routed_put),
+                    # Request handlers: Exec
                     Handler(gm.Exec, self.on_routed_exec),
+                    # Reply handlers for Get: Put/NotFound
+                    make_reply_handler(
+                        make_type_dispatcher([
+                            Handler(gm.Put, self.on_routed_put),
+                            Handler(gm.NotFound, self.on_not_found),
+                            ])
+                        ),
                     ])
                 )
         self.serializer: TaskSerializer = TaskSerializer()
@@ -218,7 +229,7 @@ class WorkerProtocol:
             self.script.commands['GET', msg.name].done(serialized)
             )
 
-    def on_not_found(self, msg: gm.NotFound):
+    def on_not_found(self, _session, msg: gm.NotFound):
         """
         Propagate not found
         """

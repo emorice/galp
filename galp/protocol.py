@@ -224,42 +224,57 @@ class Protocol:
         else:
             logging.info(pattern, msg_log_str)
 
-@dataclass
-class NameDispatcher:
-    """
-    Dispatches galp messages to methods named after a `on_<type>` template
-    """
-    def __init__(self, upper):
-        self.upper = upper
 
-    def on_message(self, _session, msg: RoutedMessage
-            ) -> list[TransportMessage]:
-        """
-        Process a routed message by forwarding the body only to the on_ method
-        of matching name
-        """
-        method = getattr(self.upper, f'on_{msg.body.verb}', None)
-        if not method:
-            return self._on_unhandled(msg.body) or []
-        return method(msg.body)
-
-    def _on_unhandled(self, msg: gm.Message):
-        """
-        A message without an overriden callback was received.
-        """
-        logging.error("Unhandled GALP verb %s", msg.verb)
-
-M = TypeVar('M')
+M = TypeVar('M', bound=gm.Message)
 
 HandlerFunction: TypeAlias = Callable[[UpperSession, M], list[TransportMessage]]
 """
 Type of function that handles a specific message M and generate replies
 """
 
-DispatchFunction: TypeAlias = HandlerFunction[gm.BaseMessage]
+DispatchFunction: TypeAlias = HandlerFunction[gm.Message]
 """
 Type of function that can handle any of several messages
 """
+
+def make_name_dispatcher(upper) -> DispatchFunction:
+    """
+    Create a handler that dispatches on name
+    """
+    def on_message(_session, msg: gm.Message) -> list[TransportMessage]:
+        """
+        Process a routed message by forwarding the body only to the on_ method
+        of matching name
+        """
+        method = getattr(upper, f'on_{msg.verb}', None)
+        if not method:
+            logging.error("Unhandled GALP verb %s", msg.verb)
+            return []
+        return method(msg)
+    return on_message
+
+@dataclass
+class NameDispatcher:
+    """
+    Wrap a name_dispatcher into a Dispatcher class accepting RoutedMessage for
+    use with Protocol
+    """
+    def __init__(self, upper):
+        self.name_dispatch = make_name_dispatcher(upper)
+
+    def on_message(self, session, msg: RoutedMessage
+            ) -> list[TransportMessage]:
+        """
+        Process a routed message by forwarding the body only to the on_ method
+        of matching name
+        """
+        return self.name_dispatch(session, msg.body)
+
+    def _on_unhandled(self, msg: gm.Message):
+        """
+        A message without an overriden callback was received.
+        """
+        logging.error("Unhandled GALP verb %s", msg.verb)
 
 @dataclass
 class Handler(Generic[M]):
@@ -275,6 +290,23 @@ Replies: TypeAlias = gm.Message | Iterable[gm.Message] | None
 Allowed returned type of simple message handers
 """
 
+@dataclass
+class ReplySession:
+    """
+    Add request info to reply
+    """
+    lower: UpperSession
+    request: str
+
+    def write(self, value: gm.ReplyValue):
+        """
+        Wrap and write message
+        """
+        return self.lower.write(gm.Reply(
+            request=self.request,
+            value=value
+            ))
+
 def _as_message_list(messages: Replies) -> Iterable[gm.Message]:
     """
     Canonicallize a list of messages
@@ -286,15 +318,15 @@ def _as_message_list(messages: Replies) -> Iterable[gm.Message]:
             return [messages]
     return messages
 
-def make_reply_handler(handler: Callable[[M], Replies]) -> HandlerFunction:
+def make_request_handler(handler: Callable[[M], Replies]) -> HandlerFunction:
     """
     Chain a handler returning a galp.Message with message writing back to
-    oriignal sender
+    original sender
     """
     def on_message(session: UpperSession, msg: M) -> list[TransportMessage]:
         replies = handler(msg)
         if replies:
-            return [session.write(rep)
+            return [ReplySession(session, msg.verb).write(rep)
                     for rep in _as_message_list(replies)]
         return []
     return on_message
@@ -325,7 +357,7 @@ class ChainDispatcher:
     Dispatches messages to two handlers
     """
     name_dispatcher: NameDispatcher
-    type_dispatch: Callable[[UpperSession, gm.BaseMessage], list[TransportMessage]]
+    type_dispatch: DispatchFunction
 
     def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
             ) -> list[TransportMessage]:

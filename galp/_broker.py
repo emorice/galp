@@ -261,7 +261,7 @@ class CommonProtocol:
         if msg.forward:
             # Free resources for all messages indicating end of task
             if isinstance(gmsg,
-                    gm.Done | gm.Failed | gm.NotFound | gm.Found | gm.Put):
+                    gm.Done | gm.Failed | gm.Reply):
                 self.free_resources(session)
             # Forward as-is. Note that the lower layer forwards by default, so
             # really this just means returning nothing.

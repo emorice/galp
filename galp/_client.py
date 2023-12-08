@@ -22,8 +22,9 @@ import galp.task_types as gtt
 from galp import async_utils
 from galp.cache import CacheStack
 from galp.net_store import make_get_handler
-from galp.protocol import ( ProtocolEndException, make_stack, NameDispatcher,
-        ChainDispatcher, make_type_dispatcher)
+from galp.req_rep import make_reply_handler
+from galp.protocol import (ProtocolEndException, make_stack, NameDispatcher,
+        ChainDispatcher, make_type_dispatcher, make_name_dispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
@@ -64,7 +65,10 @@ class Client:
                 lambda name, router : ChainDispatcher(
                     NameDispatcher(self.protocol),
                     make_type_dispatcher([
-                        make_get_handler(store)
+                        make_get_handler(store),
+                        make_reply_handler(
+                            make_name_dispatcher(self.protocol)
+                            )
                         ])
                     ),
                 name='BK',

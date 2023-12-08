@@ -246,14 +246,23 @@ class Exec(BaseMessage):
 
     verb: Literal['exec'] = field(default='exec', repr=False)
 
+ReplyValue = Annotated[
+        Done | Failed | Found | NotFound | Put | Ready,
+        Field(discriminator='verb')
+        ]
+
 @dataclass(frozen=True)
-class Reply:
-    task_key: bytes
+class Reply(BaseMessage):
+    """
+    Wraps the result to a request, identifing said request
+    """
+    request: str
+    value: ReplyValue
 
     verb: Literal['reply'] = field(default='reply', repr=False)
 
 Message = Annotated[
         Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
-        | Fork | Put | Ready | PoolReady | Stat | Submit | Exec,
+        | Fork | Put | Ready | PoolReady | Stat | Submit | Exec | Reply,
         Field(discriminator='verb')
         ]
