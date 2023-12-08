@@ -233,14 +233,14 @@ class NameDispatcher:
         self.upper = upper
 
     def on_message(self, _session, msg: RoutedMessage
-            ) -> list[TransportMessage] | None:
+            ) -> list[TransportMessage]:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name
         """
         method = getattr(self.upper, f'on_{msg.body.verb}', None)
         if not method:
-            return self._on_unhandled(msg.body)
+            return self._on_unhandled(msg.body) or []
         return method(msg.body)
 
     def _on_unhandled(self, msg: gm.Message):
@@ -328,7 +328,7 @@ class ChainDispatcher:
     type_dispatch: Callable[[UpperSession, gm.BaseMessage], list[TransportMessage]]
 
     def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
-            ) -> list[TransportMessage] | None:
+            ) -> list[TransportMessage]:
         """
         Expose full message to submit handler
         """

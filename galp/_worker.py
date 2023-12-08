@@ -30,9 +30,9 @@ import galp.task_types as gtt
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException, UpperSession,
-        UpperForwardingSession,
-        RoutedMessage, Replies, make_stack, NameDispatcher,
-        make_type_dispatcher, ChainDispatcher)
+        UpperForwardingSession, TransportMessage,
+        RoutedMessage, make_stack, NameDispatcher,
+        make_type_dispatcher, ChainDispatcher, Handler)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -132,10 +132,12 @@ class WorkerProtocol:
         self.store = store
         self.script = cm.Script()
         self.dispatcher = ChainDispatcher(
-                NameDispatcher(self),
-                make_type_dispatcher(
-                    make_store_handlers(store)
-                    )
+                NameDispatcher(self), # Exit, Illegal, NotFound
+                make_type_dispatcher([
+                    *make_store_handlers(store),
+                    Handler(gm.Put, self.on_routed_put),
+                    Handler(gm.Exec, self.on_routed_exec),
+                    ])
                 )
         self.serializer: TaskSerializer = TaskSerializer()
 
@@ -155,16 +157,10 @@ class WorkerProtocol:
         raise ProtocolEndException('Incoming EXIT')
 
     def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
-            ) -> Replies | list[list[bytes]]:
+            ) -> list[TransportMessage]:
         """
         Expose full message to submit handler
         """
-        # We only send local messages
-        upper_session = session.forward_from(None)
-        if isinstance(msg.body, gm.Exec):
-            return self.on_routed_exec(upper_session, msg.body)
-        if isinstance(msg.body, gm.Put):
-            return self.on_routed_put(upper_session, msg.body)
         return self.dispatcher.on_message(session, msg)
 
     def on_routed_exec(self, session: UpperSession, msg: gm.Exec
