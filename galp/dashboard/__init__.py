@@ -10,7 +10,7 @@ from flask import Flask, render_template, abort
 
 import galp.config
 import galp.commands as cm
-from galp._client import BrokerProtocol
+from galp._client import BrokerProtocol, store_literals
 from galp.task_types import TaskSerializer, SerializedTask
 from galp.cache import CacheStack
 
@@ -115,11 +115,9 @@ def collect_kwargs(store, task):
                 )
             )
 
-    proto = BrokerProtocol(_schedule, cpus_per_task=1,
-            store=CacheStack(dirpath=None, serializer=serializer)
-            )
-
-    proto.add([task])
+    mem_store = CacheStack(dirpath=None, serializer=serializer)
+    store_literals(mem_store, [task])
+    proto = BrokerProtocol(_schedule, cpus_per_task=1, store=mem_store)
 
     ## Collect args from local and remote store. Since we don't pass any
     ## argument to the step, all arguments are injected, and therefore keyword arguments

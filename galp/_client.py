@@ -53,18 +53,18 @@ class Client:
 
     def __init__(self, endpoint: str, cpus_per_task: int | None = None):
         # Memory only native+serial cache
-        store = CacheStack(
+        self.store = CacheStack(
             dirpath=None,
             serializer=TaskSerializer)
         self.protocol = BrokerProtocol(
                 schedule=self.schedule, # callback to add tasks to the scheduling queue
                 cpus_per_task=cpus_per_task or 1,
-                store=store
+                store=self.store
                 )
         stack = make_stack(
                 lambda name, router : TypeDispatcher([
                     make_illegal_hanlder(), # Illegal
-                    make_get_handler(store), # Get
+                    make_get_handler(self.store), # Get
                     make_reply_handler(
                         # Found/NotFound/Done/Failed/Doing
                         make_name_dispatcher(self.protocol)
@@ -151,8 +151,8 @@ class Client:
 
         task_nodes = list(map(ensure_task_node, tasks))
 
-        # Update the task graph
-        self.protocol.add(task_nodes)
+        # Populate the store
+        store_literals(self.store, task_nodes)
 
         cmd_vals = await asyncio.wait_for(
             self.run_collection(task_nodes, return_exceptions=return_exceptions,
@@ -257,6 +257,31 @@ def make_illegal_hanlder():
         raise RuntimeError(f'ILLEGAL recevived: {msg.reason}')
     return Handler(gm.Illegal, on_illegal)
 
+def store_literals(store: CacheStack, tasks: list[TaskNode]):
+    """
+    Walk the graph and commit all the literal tasks encountered to the store
+    """
+    oset = {t.name: t for t in tasks}
+    cset: set[TaskName] = set()
+
+    while oset:
+        # Get a task
+        name, task_node = oset.popitem()
+        cset.add(name)
+
+        # Add the deps to the open set
+        for dep_node in task_node.dependencies:
+            dep_name = dep_node.name
+            if dep_name not in cset:
+                # The graph should be locally generated, and only contain
+                # true tasks not references
+                assert isinstance(dep_node, TaskNode)
+                oset[dep_name] = dep_node
+
+        # Store the embedded object if literal task
+        if isinstance(task_node.task_def, LiteralTaskDef):
+            store.put_native(name, task_node.data)
+
 class BrokerProtocol:
     """
     Main logic of the interaction of a client with a broker
@@ -283,42 +308,6 @@ class BrokerProtocol:
 
         # Serializer for Put handler, to be modularized away
         self.serializer: TaskSerializer = TaskSerializer()
-
-    def add(self, tasks: list[TaskNode]) -> None:
-        """
-        Browse the graph and add it to the tasks we're tracking, in an
-        idempotent way.
-
-        The client can keep references to any task passed to it directly or as
-        a dependency. Modifying tasks after there were added, directly or as
-        dependencies to any degree, results in undefined behaviour. Creating new
-        tasks depending on already added ones, however, is safe. In other words,
-        you can add new downstream steps, but not change the upstream part.
-
-        This justs updates the client's state, so it can never block and is a
-        sync function.
-        """
-
-        oset = {t.name: t for t in tasks}
-        cset: set[TaskName] = set()
-
-        while oset:
-            # Get a task
-            name, task_node = oset.popitem()
-            cset.add(name)
-
-            # Add the deps to the open set
-            for dep_node in task_node.dependencies:
-                dep_name = dep_node.name
-                if dep_name not in cset:
-                    # The graph should be locally generated, and only contain
-                    # true tasks not references
-                    assert isinstance(dep_node, TaskNode)
-                    oset[dep_name] = dep_node
-
-            # Store the embedded object if literal task
-            if isinstance(task_node.task_def, LiteralTaskDef):
-                self.store.put_native(name, task_node.data)
 
     def write_next(self, command: cm.InertCommand) -> gm.Message | None:
         """
