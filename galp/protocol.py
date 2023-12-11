@@ -285,21 +285,6 @@ class Handler(Generic[M]):
     handles: type[M]
     handler: HandlerFunction[M]
 
-Replies: TypeAlias = gm.Message | Iterable[gm.Message] | None
-"""
-Allowed returned type of simple message handers
-"""
-def _as_message_list(messages: Replies) -> Iterable[gm.Message]:
-    """
-    Canonicallize a list of messages
-    """
-    match messages:
-        case None:
-            return []
-        case gm.BaseMessage():
-            return [messages]
-    return messages
-
 def make_type_dispatcher(handlers: Iterable[Handler]) -> DispatchFunction:
     """
     Dispatches a message to a handler based on the type of the message
@@ -339,23 +324,3 @@ class TypeDispatcher:
         # forwarding information
         upper_session = session.forward_from(None)
         return self.type_dispatch(upper_session, msg.body)
-
-@dataclass
-class ChainDispatcher:
-    """
-    Dispatches messages to two handlers
-    """
-    name_dispatcher: NameDispatcher
-    type_dispatch: DispatchFunction
-
-    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
-            ) -> list[TransportMessage]:
-        """
-        Expose full message to submit handler
-        """
-        # We only send local messages
-        upper_session = session.forward_from(None)
-        replies = self.type_dispatch(upper_session, msg.body)
-        if replies:
-            return replies
-        return self.name_dispatcher.on_message(upper_session, msg)
