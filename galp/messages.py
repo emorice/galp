@@ -247,7 +247,7 @@ class Exec(BaseMessage):
     verb: Literal['exec'] = field(default='exec', repr=False)
 
 ReplyValue = Annotated[
-        Done | Failed | Found | NotFound | Put | Ready | Doing,
+        Done | Failed | Found | NotFound | Put | Doing,
         Field(discriminator='verb')
         ]
 
@@ -262,7 +262,7 @@ class Reply(BaseMessage):
     verb: Literal['reply'] = field(default='reply', repr=False)
 
 Message = Annotated[
-        Doing | Done | Exit | Exited | Failed | Found | Get | Illegal | NotFound
-        | Fork | Put | Ready | PoolReady | Stat | Submit | Exec | Reply,
+        Exit | Exited | Get | Illegal | Fork | Ready | PoolReady | Stat | Submit
+        | Exec | Reply,
         Field(discriminator='verb')
         ]
