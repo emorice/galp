@@ -124,6 +124,29 @@ def make_worker_init(config):
         return Worker(setup)
     return _make_worker
 
+def make_lifecycle_handlers():
+    """
+    Raises on EXIT/ILLEGAL
+    """
+    def on_illegal(_session, msg: gm.Illegal):
+        """
+        Terminate
+        """
+        logging.error('Received ILLEGAL, terminating: %s', msg.reason)
+        raise ProtocolEndException('Incoming ILLEGAL')
+
+    def on_exit(_session, msg: gm.Exit):
+        """
+        Terminate
+        """
+        del msg
+        logging.info('Received EXIT, terminating')
+        raise ProtocolEndException('Incoming EXIT')
+    return [
+            Handler(gm.Illegal, on_illegal),
+            Handler(gm.Exit, on_exit),
+            ]
+
 class WorkerProtocol:
     """
     Handler for messages from the broker
@@ -133,10 +156,12 @@ class WorkerProtocol:
         self.store = store
         self.script = cm.Script()
         self.dispatcher = ChainDispatcher(
-                # Lifecycle messages: Exit, Illegal
-                NameDispatcher(self),
+                # Obsolete
+                NameDispatcher(object()),
                 # Rest
                 make_type_dispatcher([
+                    # Lifecycle messages: Exit, Illegal
+                    *make_lifecycle_handlers(),
                     # Request handlers: Get, Stat
                     *make_store_handlers(store),
                     # Request handlers: Exec
@@ -151,21 +176,6 @@ class WorkerProtocol:
                     ])
                 )
         self.serializer: TaskSerializer = TaskSerializer()
-
-    def on_illegal(self, msg: gm.Illegal):
-        """
-        Terminate
-        """
-        logging.error('Received ILLEGAL, terminating: %s', msg.reason)
-        raise ProtocolEndException('Incoming ILLEGAL')
-
-    def on_exit(self, msg: gm.Exit):
-        """
-        Terminate
-        """
-        del msg
-        logging.info('Received EXIT, terminating')
-        raise ProtocolEndException('Incoming EXIT')
 
     def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
             ) -> list[TransportMessage]:

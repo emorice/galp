@@ -63,7 +63,7 @@ class Client:
                 )
         stack = make_stack(
                 lambda name, router : ChainDispatcher(
-                    NameDispatcher(self.protocol), # Dummy
+                    NameDispatcher(object()), # Dummy
                     make_type_dispatcher([
                         make_illegal_hanlder(), # Illegal
                         make_get_handler(store), # Get
