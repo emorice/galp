@@ -321,6 +321,26 @@ def make_type_dispatcher(handlers: Iterable[Handler]) -> DispatchFunction:
     return on_message
 
 @dataclass
+class TypeDispatcher:
+    """
+    Wrap a type_dispatcher into a Dispatcher class accepting RoutedMessage and
+    UpperForwardingSession to use with Protocol
+    """
+    def __init__(self, handlers: Iterable[Handler]):
+        self.type_dispatch = make_type_dispatcher(handlers)
+
+    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
+            ) -> list[TransportMessage]:
+        """
+        Process a routed message by forwarding the body only to the on_ method
+        of matching name
+        """
+        # We do not forwarding, so only generate local messages and discard
+        # forwarding information
+        upper_session = session.forward_from(None)
+        return self.type_dispatch(upper_session, msg.body)
+
+@dataclass
 class ChainDispatcher:
     """
     Dispatches messages to two handlers

@@ -30,9 +30,7 @@ import galp.task_types as gtt
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException, UpperSession,
-        UpperForwardingSession, TransportMessage,
-        RoutedMessage, make_stack, NameDispatcher,
-        make_type_dispatcher, ChainDispatcher, Handler)
+        make_stack, make_type_dispatcher, Handler, TypeDispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -155,34 +153,7 @@ class WorkerProtocol:
         self.worker = worker
         self.store = store
         self.script = cm.Script()
-        self.dispatcher = ChainDispatcher(
-                # Obsolete
-                NameDispatcher(object()),
-                # Rest
-                make_type_dispatcher([
-                    # Lifecycle messages: Exit, Illegal
-                    *make_lifecycle_handlers(),
-                    # Request handlers: Get, Stat
-                    *make_store_handlers(store),
-                    # Request handlers: Exec
-                    Handler(gm.Exec, self.on_routed_exec),
-                    # Reply handlers for Get: Put/NotFound
-                    make_reply_handler(
-                        make_type_dispatcher([
-                            Handler(gm.Put, self.on_routed_put),
-                            Handler(gm.NotFound, self.on_not_found),
-                            ])
-                        ),
-                    ])
-                )
         self.serializer: TaskSerializer = TaskSerializer()
-
-    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
-            ) -> list[TransportMessage]:
-        """
-        Expose full message to submit handler
-        """
-        return self.dispatcher.on_message(session, msg)
 
     def on_routed_exec(self, session: UpperSession, msg: gm.Exec
             ) -> list[list[bytes]]:
@@ -301,12 +272,27 @@ class Worker:
     execution logic.
     """
     def __init__(self, setup: dict):
+        protocol = WorkerProtocol(self, setup['store'])
+        dispatcher = TypeDispatcher([
+            # Lifecycle messages: Exit, Illegal
+            *make_lifecycle_handlers(),
+            # Request handlers: Get, Stat
+            *make_store_handlers(setup['store']),
+            # Request handlers: Exec
+            Handler(gm.Exec, protocol.on_routed_exec),
+            # Reply handlers for Get: Put/NotFound
+            make_reply_handler(
+                make_type_dispatcher([
+                    Handler(gm.Put, protocol.on_routed_put),
+                    Handler(gm.NotFound, protocol.on_not_found),
+                    ])
+                ),
+            ])
         stack = make_stack(
-                lambda name, router: WorkerProtocol(self,
-                    setup['store']),
+                lambda name, router: dispatcher,
                 name='BK', router=False
                 )
-        self.protocol : 'WorkerProtocol' = stack.upper
+        self.protocol : 'WorkerProtocol' = protocol
         self.endpoint = setup['endpoint']
         self.transport = ZmqAsyncTransport(
             stack,
