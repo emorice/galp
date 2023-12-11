@@ -281,7 +281,7 @@ class Worker:
             # Request handlers: Exec
             Handler(gm.Exec, protocol.on_routed_exec),
             # Reply handlers for Get: Put/NotFound
-            make_reply_handler(
+            make_reply_handler(protocol.script,
                 make_type_dispatcher([
                     Handler(gm.Put, protocol.on_routed_put),
                     Handler(gm.NotFound, protocol.on_not_found),

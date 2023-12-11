@@ -65,7 +65,7 @@ class Client:
                 lambda name, router : TypeDispatcher([
                     make_illegal_hanlder(), # Illegal
                     make_get_handler(self.store), # Get
-                    make_reply_handler(
+                    make_reply_handler(self.protocol.script,
                         # Found/NotFound/Done/Failed/Doing
                         make_name_dispatcher(self.protocol)
                         )

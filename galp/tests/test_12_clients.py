@@ -123,7 +123,7 @@ async def test_unique_submission(peer_client):
             # Process a second SUBMIT and reply DOING
             await peer.recv_message()
             logging.info('Mock processing')
-            await peer.send_message(Reply('sub', Doing(name=task.name))) # pylint: disable=no-member
+            await peer.send_message(Reply('submit', Doing(name=task.name))) # pylint: disable=no-member
 
             # We should not receive any further message, at least until we add status
             # update to the protocol
