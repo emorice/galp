@@ -24,7 +24,7 @@ from galp.cache import CacheStack
 from galp.net_store import make_get_handler
 from galp.req_rep import make_reply_handler
 from galp.protocol import (ProtocolEndException, make_stack, NameDispatcher,
-        ChainDispatcher, make_type_dispatcher, make_name_dispatcher)
+        ChainDispatcher, make_type_dispatcher, make_name_dispatcher, Handler)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
@@ -63,10 +63,12 @@ class Client:
                 )
         stack = make_stack(
                 lambda name, router : ChainDispatcher(
-                    NameDispatcher(self.protocol),
+                    NameDispatcher(self.protocol), # Dummy
                     make_type_dispatcher([
-                        make_get_handler(store),
+                        make_illegal_hanlder(), # Illegal
+                        make_get_handler(store), # Get
                         make_reply_handler(
+                            # Found/NotFound/Done/Failed/Doing
                             make_name_dispatcher(self.protocol)
                             )
                         ])
@@ -245,6 +247,18 @@ class Client:
         # Issue 84: this work because End is only raised after collect is done,
         # but that's bad style.
         return [c.val for c in commands]
+
+
+def make_illegal_hanlder():
+    """
+    Raise when peer replies with Illegal
+
+    Mostly useful for debugging
+    """
+    def on_illegal(_session, msg: gm.Illegal):
+        """Should never happen"""
+        raise RuntimeError(f'ILLEGAL recevived: {msg.reason}')
+    return Handler(gm.Illegal, on_illegal)
 
 class BrokerProtocol:
     """
@@ -468,11 +482,6 @@ class BrokerProtocol:
             self.schedule_new(
                 command.done(msg)
                 )
-
-    def on_illegal(self, msg: gm.Illegal):
-        """Should never happen"""
-        raise RuntimeError(f'ILLEGAL recevived: {msg.reason}')
-
     def schedule_new(self, commands: Iterable[cm.InertCommand]) -> None:
         """
         Transfer the command queue to the scheduler
