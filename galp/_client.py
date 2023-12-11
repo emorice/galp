@@ -65,10 +65,11 @@ class Client:
                 lambda name, router : TypeDispatcher([
                     make_illegal_hanlder(), # Illegal
                     make_get_handler(self.store), # Get
-                    make_reply_handler(self.protocol.script,
-                        # Found/NotFound/Done/Failed/Doing
-                        make_name_dispatcher(self.protocol)
-                        )
+                    make_reply_handler(self.protocol.script, None, { # Reply
+                            'GET': self.protocol.on_get_reply,
+                            'STAT': self.protocol.on_stat_reply,
+                            'SUBMIT': self.protocol.on_submit_reply,
+                            })
                     ]),
                 name='BK',
                 router=False
@@ -373,101 +374,50 @@ class BrokerProtocol:
 
     # Protocol callbacks
     # ==================
-    def on_put(self, msg: gm.Put):
+
+    def on_get_reply(self, get_command, msg: gm.Put | gm.NotFound):
         """
-        Fulfill promise.
-
-        If the object has parts (children), the recursive rget promise is
-        responsible for issuing the corresponsing new requests.
+        Handle get replies
         """
-        # Inject serializer
-        serialized = SerializedTask(self.serializer, msg.data, msg.children)
-        # Mark as done and sets result
-        self.schedule_new(
-            self.script.commands['GET', msg.name].done(serialized)
-            )
+        match msg:
+            case gm.Put():
+                # Inject serializer
+                serialized = SerializedTask(self.serializer, msg.data, msg.children)
+                # Mark as done and sets result
+                self.schedule_new(get_command.done(serialized))
+            case gm.NotFound():
+                logging.error('TASK RESULT FETCH FAILED: %s', msg.name)
+                reps = get_command.failed('NOTFOUND')
+                assert not reps
 
-    def on_done(self, msg: gm.Done) -> None:
-        """Given that done_task just finished, mark it as done, letting the
-        command system schedule any dependent ready to be submitted, schedule
-        GETs for final tasks, etc.
+    def on_submit_reply(self, sub_command, msg: gm.Done | gm.Failed | gm.Doing):
         """
-        task_def = msg.task_def
-        name = task_def.name
-
-        # trigger downstream commands
-        command = self.script.commands.get(('SUBMIT', name))
-        if command:
-            self.schedule_new(
-                command.done(msg.result)
-                )
-
-        command = self.script.commands.get(('STAT', name))
-        if command:
-            self.schedule_new(
-                command.done(msg)
-                )
-
-    def on_doing(self, msg: gm.Doing):
+        Handle get replies
         """
-        Just updates statistics.
+        match msg:
+            case gm.Doing():
+                self.run_count[msg.name] += 1
+                self._started[msg.name] = True
+            case gm.Done():
+                self.schedule_new(sub_command.done(msg.result))
+            case gm.Failed():
+                task_def = msg.task_def
+                err_msg = f'Failed to execute task {task_def}, check worker logs'
+                logging.error('TASK FAILED: %s', err_msg)
 
-        This has the side effect of preventing further submit retries to be
-        sent.
+                # Mark fetch command as failed if pending
+                reps = sub_command.failed(err_msg)
+                assert not reps
+
+                # This is not a fatal error to the client, by default processing of
+                # messages for other ongoing tasks is still permitted.
+
+    def on_stat_reply(self, stat_command, msg: gm.Found | gm.Done | gm.NotFound):
         """
-        self.run_count[msg.name] += 1
-        self._started[msg.name] = True
-
-    def on_failed(self, msg: gm.Failed):
+        Handle stat replies
         """
-        Mark a task and all its dependents as failed.
-        """
-        task_def = msg.task_def
-        err_msg = f'Failed to execute task {task_def}, check worker logs'
-        logging.error('TASK FAILED: %s', err_msg)
+        self.schedule_new(stat_command.done(msg))
 
-        # Mark fetch command as failed if pending
-        reps = self.script.commands['SUBMIT', task_def.name].failed(err_msg)
-        assert not reps
-
-        # This is not a fatal error to the client, by default processing of
-        # messages for other ongoing tasks is still permitted.
-
-    def on_not_found(self, msg: gm.NotFound):
-        """
-        Mark a fetch as failed, or a stat as unfruitful. Here no propagation
-        logic is neeeded, it's already handled by the command dependencies.
-        """
-
-        name = msg.name
-
-        # Mark GET command as failed if issued
-        command = self.script.commands.get(('GET', name))
-        if command:
-            logging.error('TASK RESULT FETCH FAILED: %s', name)
-            reps = command.failed('NOTFOUND')
-            assert not reps
-
-        # Mark STAT command as done
-        command = self.script.commands.get(('STAT', name))
-        if command:
-            self.schedule_new(
-                command.done(msg)
-                )
-
-    def on_found(self, msg: gm.Found):
-        """
-        Mark STAT as completed
-        """
-        task_def = msg.task_def
-        name = task_def.name
-
-        # Mark STAT command as done
-        command = self.script.commands.get(('STAT', name))
-        if command:
-            self.schedule_new(
-                command.done(msg)
-                )
     def schedule_new(self, commands: Iterable[cm.InertCommand]) -> None:
         """
         Transfer the command queue to the scheduler

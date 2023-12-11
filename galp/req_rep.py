@@ -9,7 +9,7 @@ from typing import Callable, TypeAlias, TypeVar
 from galp.protocol import (DispatchFunction, Handler, TransportMessage,
     UpperSession, HandlerFunction)
 from galp.messages import Reply, ReplyValue, Message
-from galp.commands import Script
+from galp.commands import Script, PrimitiveProxy
 
 @dataclass
 class ReplySession:
@@ -42,7 +42,10 @@ def make_request_handler(handler: RequestHandler[M]) -> HandlerFunction:
     return on_message
 
 
-def make_reply_handler(script: Script, dispatch: DispatchFunction):
+ReplyHandler: TypeAlias = Callable[[PrimitiveProxy, ReplyValue], list[TransportMessage]]
+
+def make_reply_handler(script: Script, dispatch: DispatchFunction | None,
+        handlers: dict[str, ReplyHandler] | None = None):
     """
     Make handler for all replies
     """
@@ -51,11 +54,16 @@ def make_reply_handler(script: Script, dispatch: DispatchFunction):
         Handle a reply
         """
         # Here will be the code to generally extract the promise
-        promise_id = (msg.request.upper(), msg.value.name)
+        verb = msg.request.upper()
+        promise_id = (verb, msg.value.name)
         command = script.commands.get(promise_id)
         if not command:
             logging.error('Dropping answer to missing promise %s', promise_id)
             return []
-        # Dispatch
-        return dispatch(session, msg.value)
+        # Try dispatch based on request verb:
+        if handlers and verb in handlers:
+            return handlers[verb](command, msg.value)
+        # Fallback to legacy value-type dispatching
+        if dispatch:
+            return dispatch(session, msg.value)
     return Handler(Reply, _on_reply)
