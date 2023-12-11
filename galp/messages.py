@@ -4,20 +4,21 @@ Models for Galp messages
 Not in actual use yet
 """
 
-from typing import Literal, Annotated, TypeVar
+from typing import Literal, Annotated, TypeVar, TypeAlias
 from dataclasses import field, dataclass
 from pydantic import Field
 
 from . import task_types as gtt
 from .task_types import TaskName, TaskDef, CoreTaskDef, TaskRef
 
-M = TypeVar('M', bound='BaseMessage')
-
 @dataclass(frozen=True)
 class BaseMessage:
     """
     Base class for messages
     """
+
+# Replies
+# ========
 
 @dataclass(frozen=True)
 class Doing(BaseMessage):
@@ -46,25 +47,12 @@ class Done(BaseMessage):
 
     verb: Literal['done'] = field(default='done', repr=False)
 
-@dataclass(frozen=True)
-class Exit(BaseMessage):
-    """
-    A message asking a peer to leave the system
-    """
-    verb: Literal['exit'] = field(default='exit', repr=False)
-
-@dataclass(frozen=True)
-class Exited(BaseMessage):
-    """
-    Signals that a peer (unexpectedly) exited. This is typically sent by an
-    other peer that detected the kill event
-
-    Attributes:
-        peer: the local id (pid) of the exited peer
-    """
-    peer: str
-
-    verb: Literal['exited'] = field(default='exited', repr=False)
+    @property
+    def name(self) -> TaskName:
+        """
+        Task name
+        """
+        return self.task_def.name
 
 @dataclass(frozen=True)
 class Failed(BaseMessage):
@@ -78,6 +66,13 @@ class Failed(BaseMessage):
 
     verb: Literal['failed'] = field(default='failed', repr=False)
 
+    @property
+    def name(self) -> TaskName:
+        """
+        Task name
+        """
+        return self.task_def.name
+
 @dataclass(frozen=True)
 class Found(BaseMessage):
     """
@@ -90,36 +85,12 @@ class Found(BaseMessage):
 
     verb: Literal['found'] = field(default='found', repr=False)
 
-@dataclass(frozen=True)
-class Get(BaseMessage):
-    """
-    A message asking for an already computed resource
-
-    Attributes:
-        name: the task name
-    """
-    name: TaskName
-
-    verb: Literal['get'] = field(default='get', repr=False)
-
     @property
-    def task_key(self) -> bytes:
+    def name(self) -> TaskName:
         """
-        Unique request identifier
+        Task name
         """
-        return f'{self.verb}:{self.name.hex()}'.encode('ascii')
-
-@dataclass(frozen=True)
-class Illegal(BaseMessage):
-    """
-    A message notifying that a previously sent message was malformed
-
-    Attributes:
-        reason: an error message
-    """
-    reason:str
-
-    verb: Literal['illegal'] = field(default='illegal', repr=False)
+        return self.task_def.name
 
 @dataclass(frozen=True)
 class NotFound(BaseMessage):
@@ -149,6 +120,49 @@ class Put(BaseMessage):
     children: list[TaskRef]
 
     verb: Literal['put'] = field(default='put', repr=False)
+
+ReplyValue = Annotated[
+        Done | Failed | Found | NotFound | Put | Doing,
+        Field(discriminator='verb')
+        ]
+
+# Messages
+# ========
+
+# Lifecycle
+# ----------
+
+@dataclass(frozen=True)
+class Exit(BaseMessage):
+    """
+    A message asking a peer to leave the system
+    """
+    verb: Literal['exit'] = field(default='exit', repr=False)
+
+@dataclass(frozen=True)
+class Exited(BaseMessage):
+    """
+    Signals that a peer (unexpectedly) exited. This is typically sent by an
+    other peer that detected the kill event
+
+    Attributes:
+        peer: the local id (pid) of the exited peer
+    """
+    peer: str
+
+    verb: Literal['exited'] = field(default='exited', repr=False)
+
+@dataclass(frozen=True)
+class Illegal(BaseMessage):
+    """
+    A message notifying that a previously sent message was malformed
+
+    Attributes:
+        reason: an error message
+    """
+    reason:str
+
+    verb: Literal['illegal'] = field(default='illegal', repr=False)
 
 @dataclass(frozen=True)
 class Fork(BaseMessage):
@@ -187,19 +201,30 @@ class PoolReady(BaseMessage):
 
     verb: Literal['pool_ready'] = field(default='pool_ready', repr=False)
 
-class Request(BaseMessage):
+# Requests
+# --------
+
+@dataclass(frozen=True)
+class Get(BaseMessage):
     """
-    Base class for request messages
+    A message asking for an already computed resource
+
+    Attributes:
+        name: the task name
     """
+    name: TaskName
+
+    verb: Literal['get'] = field(default='get', repr=False)
+
     @property
     def task_key(self) -> bytes:
         """
         Unique request identifier
         """
-        raise NotImplementedError
+        return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
 @dataclass(frozen=True)
-class Stat(Request):
+class Stat(BaseMessage):
     """
     A message asking if a task is defined or executed
 
@@ -212,6 +237,9 @@ class Stat(Request):
 
     @property
     def task_key(self) -> bytes:
+        """
+        Unique request identifier
+        """
         return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
 @dataclass(frozen=True)
@@ -235,6 +263,17 @@ class Submit(BaseMessage):
         """
         return f'{self.verb}:{self.task_def.name.hex()}'.encode('ascii')
 
+    @property
+    def name(self) -> TaskName:
+        """
+        Unify name with get/stat
+        """
+        return self.task_def.name
+
+Request: TypeAlias = Get | Stat | Submit
+
+# Req-rep wrappers
+# ----------------
 
 @dataclass(frozen=True)
 class Exec(BaseMessage):
@@ -245,11 +284,6 @@ class Exec(BaseMessage):
     resources: gtt.Resources
 
     verb: Literal['exec'] = field(default='exec', repr=False)
-
-ReplyValue = Annotated[
-        Done | Failed | Found | NotFound | Put | Doing,
-        Field(discriminator='verb')
-        ]
 
 @dataclass(frozen=True)
 class Reply(BaseMessage):
