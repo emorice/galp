@@ -24,7 +24,7 @@ from galp.cache import CacheStack
 from galp.net_store import make_get_handler
 from galp.req_rep import make_reply_handler
 from galp.protocol import (ProtocolEndException, make_stack, TypeDispatcher,
-        make_name_dispatcher, Handler, TransportMessage)
+        Handler, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
@@ -65,7 +65,7 @@ class Client:
                 lambda name, router : TypeDispatcher([
                     make_illegal_hanlder(), # Illegal
                     make_get_handler(self.store), # Get
-                    make_reply_handler(self.protocol.script, None, { # Reply
+                    make_reply_handler(self.protocol.script, { # Reply
                             'GET': self.protocol.on_get_reply,
                             'STAT': self.protocol.on_stat_reply,
                             'SUBMIT': self.protocol.on_submit_reply,

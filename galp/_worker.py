@@ -30,7 +30,7 @@ import galp.task_types as gtt
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException, UpperSession,
-        make_stack, make_type_dispatcher, Handler, TypeDispatcher)
+        make_stack, Handler, TypeDispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -203,21 +203,17 @@ class WorkerProtocol:
             ))
         return replies
 
-    def on_routed_put(self, session: UpperSession, msg: gm.Put):
+    def on_get_reply(self, get_command, msg: gm.Put | gm.NotFound
+            ) -> list[cm.InertCommand]:
         """
         Mark the promise as done and pass result
         """
-        serialized = SerializedTask(self.serializer, msg.data, msg.children)
-        return self.new_commands_to_replies(session,
-            self.script.commands['GET', msg.name].done(serialized)
-            )
-
-    def on_not_found(self, _session, msg: gm.NotFound):
-        """
-        Propagate not found
-        """
-        reps = self.script.commands['GET', msg.name].failed('NOTFOUND')
-        assert not reps
+        match msg:
+            case gm.Put():
+                serialized = SerializedTask(self.serializer, msg.data, msg.children)
+                return get_command.done(serialized)
+            case gm.NotFound():
+                return get_command.failed('NOTFOUND')
 
     def new_commands_to_replies(self, session: UpperSession, commands: list[cm.InertCommand]
             ) -> list[list[bytes]]:
@@ -282,11 +278,8 @@ class Worker:
             Handler(gm.Exec, protocol.on_routed_exec),
             # Reply handlers for Get: Put/NotFound
             make_reply_handler(protocol.script,
-                make_type_dispatcher([
-                    Handler(gm.Put, protocol.on_routed_put),
-                    Handler(gm.NotFound, protocol.on_not_found),
-                    ])
-                ),
+                { 'GET': protocol.on_get_reply },
+                protocol.new_commands_to_replies)
             ])
         stack = make_stack(
                 lambda name, router: dispatcher,

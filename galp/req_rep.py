@@ -44,10 +44,8 @@ def make_request_handler(handler: RequestHandler[M]) -> HandlerFunction:
 
 ReplyHandler: TypeAlias = Callable[[PrimitiveProxy, ReplyValue], list[InertCommand]]
 
-def make_reply_handler(script: Script, dispatch: DispatchFunction | None,
-        handlers: dict[str, ReplyHandler] | None = None,
-        handle_new: Callable[[UpperSession, list[InertCommand]], list[TransportMessage]] | None = None
-        ):
+def make_reply_handler(script: Script, handlers: dict[str, ReplyHandler],
+        handle_new: Callable[[UpperSession, list[InertCommand]], list[TransportMessage]]):
     """
     Make handler for all replies
     """
@@ -63,13 +61,9 @@ def make_reply_handler(script: Script, dispatch: DispatchFunction | None,
             logging.error('Dropping answer to missing promise %s', promise_id)
             return []
         # Try dispatch based on request verb:
-        if handlers and verb in handlers:
+        if verb in handlers:
             news = handlers[verb](command, msg.value)
-            if not handle_new:
-                raise TypeError('No handler for new primitives !')
             return handle_new(session, news)
-        # Fallback to legacy value-type dispatching
-        if dispatch:
-            return dispatch(session, msg.value)
-        raise TypeError('No handlers')
+        logging.error('No handler for reply to %s', verb)
+        return []
     return Handler(Reply, _on_reply)
