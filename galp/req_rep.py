@@ -9,7 +9,7 @@ from typing import Callable, TypeAlias, TypeVar
 from galp.protocol import (DispatchFunction, Handler, TransportMessage,
     UpperSession, HandlerFunction)
 from galp.messages import Reply, ReplyValue, Message
-from galp.commands import Script, PrimitiveProxy
+from galp.commands import Script, PrimitiveProxy, InertCommand
 
 @dataclass
 class ReplySession:
@@ -42,10 +42,12 @@ def make_request_handler(handler: RequestHandler[M]) -> HandlerFunction:
     return on_message
 
 
-ReplyHandler: TypeAlias = Callable[[PrimitiveProxy, ReplyValue], list[TransportMessage]]
+ReplyHandler: TypeAlias = Callable[[PrimitiveProxy, ReplyValue], list[InertCommand]]
 
 def make_reply_handler(script: Script, dispatch: DispatchFunction | None,
-        handlers: dict[str, ReplyHandler] | None = None):
+        handlers: dict[str, ReplyHandler] | None = None,
+        handle_new: Callable[[UpperSession, list[InertCommand]], list[TransportMessage]] | None = None
+        ):
     """
     Make handler for all replies
     """
@@ -53,7 +55,7 @@ def make_reply_handler(script: Script, dispatch: DispatchFunction | None,
         """
         Handle a reply
         """
-        # Here will be the code to generally extract the promise
+        # Extract the promise
         verb = msg.request.upper()
         promise_id = (verb, msg.value.name)
         command = script.commands.get(promise_id)
@@ -62,8 +64,12 @@ def make_reply_handler(script: Script, dispatch: DispatchFunction | None,
             return []
         # Try dispatch based on request verb:
         if handlers and verb in handlers:
-            return handlers[verb](command, msg.value)
+            news = handlers[verb](command, msg.value)
+            if not handle_new:
+                raise TypeError('No handler for new primitives !')
+            return handle_new(session, news)
         # Fallback to legacy value-type dispatching
         if dispatch:
             return dispatch(session, msg.value)
+        raise TypeError('No handlers')
     return Handler(Reply, _on_reply)

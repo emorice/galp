@@ -109,7 +109,7 @@ def collect_kwargs(store, task):
             serialized = store.get_serial(name)
             proto.store.put_serial(name, serialized)
         buf, children = proto.store.get_serial(name)
-        proto.schedule_new(
+        proto.schedule_new(None,
             proto.script.commands[command.key].done(
                 SerializedTask(serializer, buf, children)
                 )
@@ -128,7 +128,7 @@ def collect_kwargs(store, task):
         cmd = cm.rget(tin.name)
         # This is recursive through _schedule, and will only return when no more
         # commands are issued
-        proto.schedule_new(
+        proto.schedule_new(None,
             cm.advance_all(proto.script, cm.get_leaves([cmd]))
             )
         if not isinstance(cmd.val, cm.Done):

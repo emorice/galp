@@ -24,7 +24,7 @@ from galp.cache import CacheStack
 from galp.net_store import make_get_handler
 from galp.req_rep import make_reply_handler
 from galp.protocol import (ProtocolEndException, make_stack, TypeDispatcher,
-        make_name_dispatcher, Handler)
+        make_name_dispatcher, Handler, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
@@ -69,7 +69,7 @@ class Client:
                             'GET': self.protocol.on_get_reply,
                             'STAT': self.protocol.on_stat_reply,
                             'SUBMIT': self.protocol.on_submit_reply,
-                            })
+                            }, self.protocol.schedule_new)
                     ]),
                 name='BK',
                 router=False
@@ -234,7 +234,7 @@ class Client:
 
         try:
             _, cmds = script.callback(collect, _end)
-            self.protocol.schedule_new(cmds)
+            self.protocol.schedule_new(None, cmds)
 
             await async_utils.run(
                 self.process_scheduled(),
@@ -364,7 +364,7 @@ class BrokerProtocol:
             return gm.Get(name=name)
 
         # Found, mark command as done and pass on children
-        self.schedule_new(
+        self.schedule_new(None,
             self.script.commands['GET', name].done(
                 SerializedTask(self.serializer, data, children)
                 )
@@ -375,7 +375,7 @@ class BrokerProtocol:
     # Protocol callbacks
     # ==================
 
-    def on_get_reply(self, get_command, msg: gm.Put | gm.NotFound):
+    def on_get_reply(self, get_command, msg: gm.Put | gm.NotFound) -> list[cm.InertCommand]:
         """
         Handle get replies
         """
@@ -384,13 +384,13 @@ class BrokerProtocol:
                 # Inject serializer
                 serialized = SerializedTask(self.serializer, msg.data, msg.children)
                 # Mark as done and sets result
-                self.schedule_new(get_command.done(serialized))
+                return get_command.done(serialized)
             case gm.NotFound():
                 logging.error('TASK RESULT FETCH FAILED: %s', msg.name)
-                reps = get_command.failed('NOTFOUND')
-                assert not reps
+                return get_command.failed('NOTFOUND')
 
-    def on_submit_reply(self, sub_command, msg: gm.Done | gm.Failed | gm.Doing):
+    def on_submit_reply(self, sub_command, msg: gm.Done | gm.Failed | gm.Doing
+            ) -> list[cm.InertCommand]:
         """
         Handle get replies
         """
@@ -398,29 +398,30 @@ class BrokerProtocol:
             case gm.Doing():
                 self.run_count[msg.name] += 1
                 self._started[msg.name] = True
+                return []
             case gm.Done():
-                self.schedule_new(sub_command.done(msg.result))
+                return sub_command.done(msg.result)
             case gm.Failed():
                 task_def = msg.task_def
                 err_msg = f'Failed to execute task {task_def}, check worker logs'
                 logging.error('TASK FAILED: %s', err_msg)
 
                 # Mark fetch command as failed if pending
-                reps = sub_command.failed(err_msg)
-                assert not reps
-
-                # This is not a fatal error to the client, by default processing of
-                # messages for other ongoing tasks is still permitted.
+                return sub_command.failed(err_msg)
 
     def on_stat_reply(self, stat_command, msg: gm.Found | gm.Done | gm.NotFound):
         """
         Handle stat replies
         """
-        self.schedule_new(stat_command.done(msg))
+        return stat_command.done(msg)
 
-    def schedule_new(self, commands: Iterable[cm.InertCommand]) -> None:
+    def schedule_new(self, _session, commands: Iterable[cm.InertCommand]
+            ) -> list[TransportMessage]:
         """
-        Transfer the command queue to the scheduler
+        Transfer the command queue to the scheduler, and therefore only return
+        an empty list of immediate messages. Session argument is just for compat
+        with worker code and can be set to None.
         """
         for command in commands:
             self.schedule(command)
+        return []
