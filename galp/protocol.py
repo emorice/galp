@@ -82,12 +82,19 @@ class UpperForwardingSession:
         """
         return self.lower.uid
 
+ForwardingHandler: TypeAlias = Callable[
+        [UpperForwardingSession, RoutedMessage], list[TransportMessage]
+        ]
+"""
+Handler that has some awareness of forwarding
+"""
+
 @dataclass
 class Stack:
     """
     Handling side of a network stack
     """
-    upper: 'Protocol'
+    upper: ForwardingHandler
     lib_upper: 'Protocol' # Only for legacy transport iface
     root: LowerProtocol
     base_session: UpperSession
@@ -101,7 +108,7 @@ class Stack:
         """
         return self.base_session.write(msg)
 
-def make_stack(make_upper_protocol, name, router) -> Stack:
+def make_stack(app_handler: ForwardingHandler, name, router) -> Stack:
     """
     Factory function to assemble the handler stack
 
@@ -110,8 +117,7 @@ def make_stack(make_upper_protocol, name, router) -> Stack:
         stack to be given to the transport
     """
     # Handlers
-    app_upper = make_upper_protocol(name, router)
-    lib_upper = Protocol(name, app_upper)
+    lib_upper = Protocol(name, app_handler)
     app_lower = lib_upper # Not yet exposed to app
     lib_lower = InvalidMessageDispatcher(
             LowerProtocol(router, app_lower)
@@ -121,7 +127,8 @@ def make_stack(make_upper_protocol, name, router) -> Stack:
     _lower_base_session = make_local_session(router)
     base_session = UpperSession(_lower_base_session)
 
-    return Stack(app_upper, lib_upper, lib_lower, base_session)
+    return Stack(app_handler, lib_upper, lib_lower, base_session)
+
 
 class Protocol:
     """
@@ -133,12 +140,12 @@ class Protocol:
     message is received, and should usually be overriden unless the verb is to
     be ignored (with a warning).
     """
-    def __init__(self, name, upper=None):
+    def __init__(self, name, upper: ForwardingHandler):
         """
         This should eventually be split into a layer object that receives the
         upper layer and a session object that receives the lower session
         """
-        # Reference to application-defined handlers
+        # Reference to application-defined handler
         self.upper = upper
 
         # For logging
@@ -195,7 +202,7 @@ class Protocol:
         self._log_message(rmsg, is_incoming=True)
 
         # We should not need to call write_message here.
-        return self.upper.on_message(session, rmsg) or []
+        return self.upper(session, rmsg) or []
 
     # Logging
 
@@ -253,28 +260,23 @@ def make_name_dispatcher(upper) -> DispatchFunction:
         return method(msg)
     return on_message
 
-@dataclass
-class NameDispatcher:
+def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
     """
-    Wrap a name_dispatcher into a Dispatcher class accepting RoutedMessage for
-    use with Protocol
+    Wraps a Dispatcher accepting an UpperSession/Message
+    into one accepting an UpperForwardingSession/RoutedMessage and discarding
+    forwarding information
     """
-    def __init__(self, upper):
-        self.name_dispatch = make_name_dispatcher(upper)
-
-    def on_message(self, session, msg: RoutedMessage
+    def on_message(session: UpperForwardingSession, msg: RoutedMessage
             ) -> list[TransportMessage]:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name
         """
-        return self.name_dispatch(session, msg.body)
-
-    def _on_unhandled(self, msg: gm.Message):
-        """
-        A message without an overriden callback was received.
-        """
-        logging.error("Unhandled GALP verb %s", msg.verb)
+        # We do not forwarding, so only generate local messages and discard
+        # forwarding information
+        upper_session = session.forward_from(None)
+        return dispatch(upper_session, msg.body)
+    return on_message
 
 @dataclass
 class Handler(Generic[M]):
@@ -304,23 +306,3 @@ def make_type_dispatcher(handlers: Iterable[Handler]) -> DispatchFunction:
         #logging.error('No handler for %s', msg)
         return []
     return on_message
-
-@dataclass
-class TypeDispatcher:
-    """
-    Wrap a type_dispatcher into a Dispatcher class accepting RoutedMessage and
-    UpperForwardingSession to use with Protocol
-    """
-    def __init__(self, handlers: Iterable[Handler]):
-        self.type_dispatch = make_type_dispatcher(handlers)
-
-    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
-            ) -> list[TransportMessage]:
-        """
-        Process a routed message by forwarding the body only to the on_ method
-        of matching name
-        """
-        # We do not forwarding, so only generate local messages and discard
-        # forwarding information
-        upper_session = session.forward_from(None)
-        return self.type_dispatch(upper_session, msg.body)

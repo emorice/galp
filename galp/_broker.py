@@ -15,7 +15,7 @@ import galp.messages as gm
 import galp.task_types as gtt
 
 from galp.protocol import (RoutedMessage, UpperSession,
-    make_stack, UpperForwardingSession)
+    make_stack, UpperForwardingSession, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
 from galp.req_rep import ReplySession
@@ -25,14 +25,11 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     Load-balancing client-to-worker and a worker-to-broker loops
     """
     def __init__(self, endpoint, n_cpus):
-        stack = make_stack(
-                lambda name, router: CommonProtocol(max_cpus=n_cpus),
-                name='CW', router=True
-                )
-        self.proto = stack.upper
+        self.proto = CommonProtocol(max_cpus=n_cpus)
+        stack = make_stack(self.proto.on_message,
+                name='CW', router=True)
         self.transport = ZmqAsyncTransport(
-            stack,
-            endpoint, zmq.ROUTER, bind=True)
+            stack, endpoint, zmq.ROUTER, bind=True)
 
     async def run(self):
         """
@@ -258,7 +255,11 @@ class CommonProtocol:
         # We'll send the request to the worker when it send us a READY
         return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage):
+    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
+            ) -> list[TransportMessage]:
+        """
+        Handles all mesages going through broker
+        """
         gmsg = msg.body
 
         # Forward handler: we insert a hook here to detect when workers finish
@@ -292,4 +293,5 @@ class CommonProtocol:
             return self.on_request(session, gmsg)
 
         # If we reach this point, we received a message we know nothing about
-        return self.on_unhandled(gmsg)
+        logging.error('Unknown message %s', gmsg)
+        return []

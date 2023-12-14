@@ -30,7 +30,7 @@ import galp.task_types as gtt
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException, UpperSession,
-        make_stack, Handler, TypeDispatcher)
+        make_stack, Handler, make_local_handler, make_type_dispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -269,7 +269,7 @@ class Worker:
     """
     def __init__(self, setup: dict):
         protocol = WorkerProtocol(self, setup['store'])
-        dispatcher = TypeDispatcher([
+        handler = make_local_handler(make_type_dispatcher([
             # Lifecycle messages: Exit, Illegal
             *make_lifecycle_handlers(),
             # Request handlers: Get, Stat
@@ -280,16 +280,11 @@ class Worker:
             make_reply_handler(protocol.script,
                 { 'GET': protocol.on_get_reply },
                 protocol.new_commands_to_replies)
-            ])
-        stack = make_stack(
-                lambda name, router: dispatcher,
-                name='BK', router=False
-                )
+            ]))
         self.protocol : 'WorkerProtocol' = protocol
-        self.endpoint = setup['endpoint']
         self.transport = ZmqAsyncTransport(
-            stack,
-            self.endpoint, zmq.DEALER # pylint: disable=no-member
+            make_stack(handler, name='BK', router=False),
+            setup['endpoint'], zmq.DEALER # pylint: disable=no-member
             )
         self.step_dir = setup['steps']
         self.profiler = Profiler(setup.get('profile'))

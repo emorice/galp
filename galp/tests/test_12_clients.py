@@ -12,7 +12,7 @@ from async_timeout import timeout
 import galp
 import galp.tests.steps as gts
 import galp.task_types as gtt
-from galp.protocol import make_stack, NameDispatcher
+from galp.protocol import make_stack, make_local_handler, make_name_dispatcher
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.messages import Doing, Submit, NotFound, Reply
 
@@ -29,7 +29,7 @@ async def peer_client():
     mock_handler = type('Mock', (), {})()
     peer = ZmqAsyncTransport(
             make_stack(
-                lambda name, router: NameDispatcher(mock_handler),
+                make_local_handler(make_name_dispatcher(mock_handler)),
                 'CL', False),
         endpoint, zmq.DEALER, bind=True) # pylint: disable=no-member
 
