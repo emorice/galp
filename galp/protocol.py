@@ -11,7 +11,7 @@ import galp.messages as gm
 from galp.lower_protocol import (
         LowerProtocol, IllegalRequestError, Session,
         ForwardingSession, InvalidMessageDispatcher,
-        make_local_session, TransportMessage
+        make_local_session, TransportMessage, RoutedHandler
         )
 from galp.serializer import dump_model, load_model, DeserializeError
 
@@ -24,8 +24,9 @@ class ProtocolEndException(Exception):
     and the transport should be closed
     """
 
-# High-level protocol
-# ===================
+# Core-layer data structures
+# ==========================
+# (most of it really what galp.messages declares)
 
 @dataclass
 class RoutedMessage:
@@ -35,6 +36,9 @@ class RoutedMessage:
     """
     forward: bool
     body: gm.Message
+
+# Core-layer writers
+# ==================
 
 @dataclass
 class UpperSession:
@@ -78,12 +82,125 @@ class UpperForwardingSession:
         """
         return self.lower.uid
 
+# Core-layer handlers
+# ===================
+
 ForwardingHandler: TypeAlias = Callable[
         [UpperForwardingSession, RoutedMessage], list[TransportMessage]
         ]
 """
-Handler that has some awareness of forwarding
+Type of the next-layer ("application") handler that has some awareness of
+forwarding and some control over it, in order to accomodate the needs of both
+"end peers" (client, worker, pool) and broker.
 """
+
+_UpperRoutedHandler: TypeAlias = Callable[
+        [UpperForwardingSession, bool, list[bytes]], list[TransportMessage]
+        ]
+"""
+Internal intermediary hanlder type
+"""
+def _handle_illegal(upper: _UpperRoutedHandler) -> RoutedHandler:
+    """
+    Wraps a handler to catch IllegalRequestError and reply with a gm.Illegal
+    message. Also wraps the session to accept galp message as replies
+    """
+    def on_message(session: ForwardingSession, is_forward: bool, msg_body: list[bytes]
+            ) -> Iterable[TransportMessage]:
+        # Wrap session
+        upper_session = UpperForwardingSession(session)
+
+        try:
+            return upper(upper_session, is_forward, msg_body)
+        # Obsolete pathway
+        except IllegalRequestError as exc:
+            return [upper_session
+                    .forward_from(None)
+                    .write(gm.Illegal(reason=exc.reason))
+                    ]
+    return on_message
+
+def _log_message(msg: RoutedMessage, proto_name: str) -> None:
+    # Extra addr is either an additional forward segment when receiving, or
+    # additional source segment when sending, and characterizes a forwarded
+    # message
+    verb = msg.body.verb.upper()
+    match msg.body:
+        case gm.Submit() | gm.Found():
+            arg = str(msg.body.task_def.name)
+        case _:
+            arg = getattr(msg.body, 'name', '')
+
+    msg_log_str = (
+        f"{proto_name +' ' if proto_name else ''}"
+        f" {verb} {arg}"
+        )
+
+    pattern = '<- %s' #if is_incoming else '-> %s'
+
+    if msg.forward:
+        logging.debug(pattern, msg_log_str)
+    else:
+        logging.info(pattern, msg_log_str)
+
+def _add_log_message(proto_name: str, upper: ForwardingHandler) -> ForwardingHandler:
+    """
+    Insert a logging routine in the handling stack
+    """
+    def on_message(session: UpperForwardingSession, msg: RoutedMessage
+            ) -> list[TransportMessage]:
+        _log_message(msg, proto_name)
+        return upper(session, msg)
+    return on_message
+
+def _parse_core_message(upper: ForwardingHandler) -> _UpperRoutedHandler:
+    """
+    Deserialize the core galp.message in the payload.
+
+    Raises IllegalRequestError on deserialization or validation problems
+    """
+    def on_message(session: UpperForwardingSession, is_forward: bool, msg_body: list[bytes]
+            ) -> list[TransportMessage]:
+        # Deserialize the payload
+        msg_obj: gm.Message
+        try:
+            match msg_body:
+                case [payload]:
+                    # pydantic magic, see
+                    # https://github.com/python/mypy/issues/9773 for context
+                    # about why it's hard to type this
+                    msg_obj = load_model(gm.Message, payload) # type: ignore[arg-type]
+                case [payload, data]:
+                    msg_obj = load_model(gm.Message, payload, data=data) # type: ignore[arg-type]
+                case _:
+                    raise IllegalRequestError('Wrong number of frames')
+        except DeserializeError as exc:
+            raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
+
+        # Build legacy routed message object, to be removed
+        rmsg = RoutedMessage(forward=is_forward, body=msg_obj)
+
+        return upper(session, rmsg) or []
+    return on_message
+
+def handle_core(upper: ForwardingHandler, proto_name: str) -> RoutedHandler:
+    """
+    Chains the three parts of the core handlers:
+     * Error handling on the outside
+     * Parsing the core payload
+     * Logging the message between the parsing and the application handler
+    """
+    return _handle_illegal(
+            _parse_core_message(
+                _add_log_message(proto_name,
+                    upper
+                    )
+                )
+            )
+
+# Stack
+# =====
+# Utilities to bind layers together
 
 @dataclass
 class Stack:
@@ -111,118 +228,21 @@ def make_stack(app_handler: ForwardingHandler, name, router) -> Stack:
         stack to be given to the transport
     """
     # Handlers
-    lib_upper = Protocol(name, app_handler)
-    lib_lower = InvalidMessageDispatcher(
-            LowerProtocol(router, lib_upper.on_message)
+    core_handler = handle_core(app_handler, name)
+    routing_handler = InvalidMessageDispatcher(
+            LowerProtocol(router, core_handler)
             )
 
     # Writers
     _lower_base_session = make_local_session(router)
     base_session = UpperSession(_lower_base_session)
 
-    return Stack(lib_lower, base_session)
+    return Stack(routing_handler, base_session)
 
-class Protocol:
-    """
-    Helper class gathering methods solely concerned with parsing and building
-    messages, but not with what to do with them.
-
-    Methods named after a verb (`get`) build and send a message.
-    Methods starting with `on_` and a verb (`on_get`) are called when such a
-    message is received, and should usually be overriden unless the verb is to
-    be ignored (with a warning).
-    """
-    def __init__(self, name, upper: ForwardingHandler):
-        """
-        This should eventually be split into a layer object that receives the
-        upper layer and a session object that receives the lower session
-        """
-        # Reference to application-defined handler
-        self.upper = upper
-
-        # For logging
-        self.proto_name = name
-
-    #  Recv methods
-    # ==================
-
-    def on_message(self, session: ForwardingSession, is_forward: bool, msg_body: list[bytes]
-            ) -> Iterable[TransportMessage]:
-        """
-        Message handler that call's Protocol default handler
-        and catches IllegalRequestError
-        """
-        # Wrap session
-        upper_session = UpperForwardingSession(session)
-
-        try:
-            return self.on_message_unsafe(upper_session, is_forward, msg_body)
-        # Obsolete pathway
-        except IllegalRequestError as exc:
-            return [upper_session
-                    .forward_from(None)
-                    .write(gm.Illegal(reason=exc.reason))
-                    ]
-
-    def on_message_unsafe(self, session: UpperForwardingSession, is_forward, msg_body: list[bytes]
-            ) -> list[TransportMessage]:
-        """Parse given message, calling callbacks as needed.
-
-        Returns:
-            Whatever the final handler for this message returned.
-        """
-
-        # Deserialize the payload
-        msg_obj: gm.Message
-        try:
-            match msg_body:
-                case [payload]:
-                    # pydantic magic, see
-                    # https://github.com/python/mypy/issues/9773 for context
-                    # about why it's hard to type this
-                    msg_obj = load_model(gm.Message, payload) # type: ignore[arg-type]
-                case [payload, data]:
-                    msg_obj = load_model(gm.Message, payload, data=data) # type: ignore[arg-type]
-                case _:
-                    raise IllegalRequestError('Wrong number of frames')
-        except DeserializeError as exc:
-            raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
-
-        # Build legacy routed message object, to be removed
-        rmsg = RoutedMessage(forward=is_forward, body=msg_obj)
-
-        self._log_message(rmsg, is_incoming=True)
-
-        # We should not need to call write_message here.
-        return self.upper(session, rmsg) or []
-
-    # Logging
-
-    def _log_message(self, msg: RoutedMessage, is_incoming: bool) -> None:
-
-        # Addr is the one expected on any routed communication
-        # Extra addr is either an additional forward segment when receiving, or
-        # additional source segment when sending, and characterizes a forwarded
-        # message
-        verb = msg.body.verb.upper()
-        match msg.body:
-            case gm.Submit() | gm.Found():
-                arg = str(msg.body.task_def.name)
-            case _:
-                arg = getattr(msg.body, 'name', '')
-
-        msg_log_str = (
-            f"{self.proto_name +' ' if self.proto_name else ''}"
-            f" {verb} {arg}"
-            )
-
-        pattern = '<- %s' if is_incoming else '-> %s'
-
-        if msg.forward:
-            logging.debug(pattern, msg_log_str)
-        else:
-            logging.info(pattern, msg_log_str)
-
+# Dispatch-layer handlers
+# =======================
+# Functions to help applications combine modular handlers into a generic handler
+# suitable for the core-layer
 
 M = TypeVar('M', bound=gm.Message)
 
@@ -233,24 +253,9 @@ Type of function that handles a specific message M and generate replies
 
 DispatchFunction: TypeAlias = HandlerFunction[gm.Message]
 """
-Type of function that can handle any of several messages
+Type of function that can handle any of several messages, but differs from the
+core-layer expected handler by being blind to forwarding
 """
-
-def make_name_dispatcher(upper) -> DispatchFunction:
-    """
-    Create a handler that dispatches on name
-    """
-    def on_message(_session, msg: gm.Message) -> list[TransportMessage]:
-        """
-        Process a routed message by forwarding the body only to the on_ method
-        of matching name
-        """
-        method = getattr(upper, f'on_{msg.verb}', None)
-        if not method:
-            #logging.error("Unhandled GALP verb %s", msg.verb)
-            return []
-        return method(msg)
-    return on_message
 
 def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
     """
@@ -268,6 +273,22 @@ def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
         # forwarding information
         upper_session = session.forward_from(None)
         return dispatch(upper_session, msg.body)
+    return on_message
+
+def make_name_dispatcher(upper) -> DispatchFunction:
+    """
+    Create a handler that dispatches on name
+    """
+    def on_message(_session, msg: gm.Message) -> list[TransportMessage]:
+        """
+        Process a routed message by forwarding the body only to the on_ method
+        of matching name
+        """
+        method = getattr(upper, f'on_{msg.verb}', None)
+        if not method:
+            #logging.error("Unhandled GALP verb %s", msg.verb)
+            return []
+        return method(msg)
     return on_message
 
 @dataclass
