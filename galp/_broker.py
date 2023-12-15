@@ -26,8 +26,9 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
     def __init__(self, endpoint, n_cpus):
         self.proto = CommonProtocol(max_cpus=n_cpus)
-        stack = make_stack(self.proto.on_message,
-                name='CW', router=True)
+        stack = make_stack(self.proto.on_local,
+                name='CW', router=True,
+                on_forward=self.proto.on_forward)
         self.transport = ZmqAsyncTransport(
             stack, endpoint, zmq.ROUTER, bind=True)
 
@@ -255,26 +256,27 @@ class CommonProtocol:
         # We'll send the request to the worker when it send us a READY
         return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_message(self, session: UpperForwardingSession, msg: RoutedMessage
+    def on_forward(self, session: UpperForwardingSession, msg: RoutedMessage
             ) -> list[TransportMessage]:
         """
-        Handles all mesages going through broker
+        Handles only messages forwarded through broker
         """
         gmsg = msg.body
+        # Free resources for all messages indicating end of task
+        if isinstance(gmsg, gm.Reply):
+            if not isinstance(gmsg.value, gm.Doing):
+                self.free_resources(session)
+        # Forward as-is. Note that the lower layer forwards by default, so
+        # really this just means returning nothing.
+        logging.debug('Forwarding %s', gmsg.verb)
+        return []
 
-        # Forward handler: we insert a hook here to detect when workers finish
-        # tasks and free the corresponding resources.
-        if msg.forward:
-            # Free resources for all messages indicating end of task
-            if isinstance(gmsg, gm.Reply):
-                if not isinstance(gmsg.value, gm.Doing):
-                    self.free_resources(session)
-            # Forward as-is. Note that the lower layer forwards by default, so
-            # really this just means returning nothing.
-            logging.debug('Forwarding %s', gmsg.verb)
-            return []
-
-        # From this point, handler for local message (no forward field)
+    def on_local(self, session: UpperForwardingSession, msg: RoutedMessage
+            ) -> list[TransportMessage]:
+        """
+        Handles local messages received by the broker
+        """
+        gmsg = msg.body
 
         # Record joining peers and forward pre allocated requests
         if isinstance(gmsg, gm.Ready):

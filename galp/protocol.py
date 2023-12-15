@@ -219,7 +219,9 @@ class Stack:
         """
         return self.base_session.write(msg)
 
-def make_stack(app_handler: ForwardingHandler, name, router) -> Stack:
+def make_stack(app_handler: ForwardingHandler, name: str, router: bool,
+        on_forward: ForwardingHandler | None = None
+        ) -> Stack:
     """
     Factory function to assemble the handler stack
 
@@ -229,8 +231,12 @@ def make_stack(app_handler: ForwardingHandler, name, router) -> Stack:
     """
     # Handlers
     core_handler = handle_core(app_handler, name)
+    if on_forward:
+        forward_core_handler = handle_core(on_forward, name)
+    else:
+        forward_core_handler = None
     routing_handler = InvalidMessageDispatcher(
-            LowerProtocol(router, core_handler)
+            LowerProtocol(router, core_handler, forward_core_handler)
             )
 
     # Writers

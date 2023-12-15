@@ -172,21 +172,22 @@ class LowerProtocol:
     protocol.
     """
 
-    def __init__(self, router: bool, upper: RoutedHandler):
+    def __init__(self, router: bool, upper: RoutedHandler,
+            upper_forward: RoutedHandler | None):
         """
         Args:
-            name: short string to include in log messages.
             router: True if sending function should move a routing id in the
                 first routing segment. Default False.
         """
         self.router = router
         self.upper = upper
+        self.upper_forward = upper_forward
 
     # Main public methods
     # ===================
 
     def on_message(self, session: Session, msg_parts: list[bytes]
-                   ) -> list[list[bytes]]:
+                   ) -> Iterable[list[bytes]]:
         """
         Parses the routing part of a GALP message,
         then calls the upper protocol with the parsed message.
@@ -202,6 +203,7 @@ class LowerProtocol:
         payload, routes = self._parse_lower(msg_parts)
 
         incoming_route, forward_route = routes
+        is_forward = bool(forward_route)
 
         forward = LowerSession(session, self.router,
                                Routes(incoming_route, forward_route)
@@ -209,12 +211,13 @@ class LowerProtocol:
         reply = ForwardingSession(session, self.router, incoming_route)
         out = []
 
-        if forward_route:
+        if is_forward:
             out.append(forward.write(payload))
+            if self.upper_forward:
+                out.extend(self.upper_forward(reply, is_forward, payload))
+            return out
 
-        out.extend(self.upper(reply, bool(forward_route), payload))
-
-        return out
+        return self.upper(reply, is_forward, payload)
 
     def on_invalid(self, session: Session, exc: IllegalRequestError) -> list[list[bytes]]:
         """
