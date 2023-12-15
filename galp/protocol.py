@@ -94,9 +94,7 @@ class Stack:
     """
     Handling side of a network stack
     """
-    upper: ForwardingHandler
-    lib_upper: 'Protocol' # Only for legacy transport iface
-    root: LowerProtocol
+    root: InvalidMessageDispatcher
     base_session: UpperSession
 
     def write_local(self, msg: gm.Message) -> TransportMessage:
@@ -127,8 +125,7 @@ def make_stack(app_handler: ForwardingHandler, name, router) -> Stack:
     _lower_base_session = make_local_session(router)
     base_session = UpperSession(_lower_base_session)
 
-    return Stack(app_handler, lib_upper, lib_lower, base_session)
-
+    return Stack(lib_lower, base_session)
 
 class Protocol:
     """
