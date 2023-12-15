@@ -127,7 +127,7 @@ def make_local_session(is_router: bool) -> Session:
 # ======================
 
 RoutedHandler: TypeAlias = Callable[
-        [ForwardingSession, bool, list[bytes]], Iterable[TransportMessage]
+        [ForwardingSession, list[bytes]], Iterable[TransportMessage]
         ]
 """
 Type of the next-layer ("routed" layer, once the "routing" is parsed) handler to
@@ -214,10 +214,10 @@ class LowerProtocol:
         if is_forward:
             out.append(forward.write(payload))
             if self.upper_forward:
-                out.extend(self.upper_forward(reply, is_forward, payload))
+                out.extend(self.upper_forward(reply, payload))
             return out
 
-        return self.upper(reply, is_forward, payload)
+        return self.upper(reply, payload)
 
     def on_invalid(self, session: Session, exc: IllegalRequestError) -> list[list[bytes]]:
         """

@@ -14,7 +14,7 @@ import zmq
 import galp.messages as gm
 import galp.task_types as gtt
 
-from galp.protocol import (RoutedMessage, UpperSession,
+from galp.protocol import (UpperSession,
     make_stack, UpperForwardingSession, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
@@ -256,44 +256,41 @@ class CommonProtocol:
         # We'll send the request to the worker when it send us a READY
         return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_forward(self, session: UpperForwardingSession, msg: RoutedMessage
+    def on_forward(self, session: UpperForwardingSession, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles only messages forwarded through broker
         """
-        gmsg = msg.body
         # Free resources for all messages indicating end of task
-        if isinstance(gmsg, gm.Reply):
-            if not isinstance(gmsg.value, gm.Doing):
+        if isinstance(msg, gm.Reply):
+            if not isinstance(msg.value, gm.Doing):
                 self.free_resources(session)
         # Forward as-is. Note that the lower layer forwards by default, so
         # really this just means returning nothing.
-        logging.debug('Forwarding %s', gmsg.verb)
+        logging.debug('Forwarding %s', msg.verb)
         return []
 
-    def on_local(self, session: UpperForwardingSession, msg: RoutedMessage
+    def on_local(self, session: UpperForwardingSession, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles local messages received by the broker
         """
-        gmsg = msg.body
-
         # Record joining peers and forward pre allocated requests
-        if isinstance(gmsg, gm.Ready):
-            return self.on_ready(session, gmsg)
+        if isinstance(msg, gm.Ready):
+            return self.on_ready(session, msg)
 
-        if isinstance(gmsg, gm.PoolReady):
-            return self.on_pool_ready(session, gmsg)
+        if isinstance(msg, gm.PoolReady):
+            return self.on_pool_ready(session, msg)
 
         # Similarly, record dead peers and forward failures
-        if isinstance(gmsg, gm.Exited):
-            return self.on_exited(gmsg)
+        if isinstance(msg, gm.Exited):
+            return self.on_exited(msg)
 
         # Else, we may have to forward or queue the message. We decide based on
         # the verb whether this should be ultimately sent to a worker
-        if isinstance(gmsg, gm.Stat | gm.Submit | gm.Get):
-            return self.on_request(session, gmsg)
+        if isinstance(msg, gm.Stat | gm.Submit | gm.Get):
+            return self.on_request(session, msg)
 
         # If we reach this point, we received a message we know nothing about
-        logging.error('Unknown message %s', gmsg)
+        logging.error('Unknown message %s', msg)
         return []

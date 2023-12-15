@@ -24,19 +24,6 @@ class ProtocolEndException(Exception):
     and the transport should be closed
     """
 
-# Core-layer data structures
-# ==========================
-# (most of it really what galp.messages declares)
-
-@dataclass
-class RoutedMessage:
-    """
-    A message with a flag indicating if it is locally addressed or being
-    forwarded
-    """
-    forward: bool
-    body: gm.Message
-
 # Core-layer writers
 # ==================
 
@@ -86,7 +73,7 @@ class UpperForwardingSession:
 # ===================
 
 ForwardingHandler: TypeAlias = Callable[
-        [UpperForwardingSession, RoutedMessage], list[TransportMessage]
+        [UpperForwardingSession, gm.Message], list[TransportMessage]
         ]
 """
 Type of the next-layer ("application") handler that has some awareness of
@@ -95,7 +82,7 @@ forwarding and some control over it, in order to accomodate the needs of both
 """
 
 _UpperRoutedHandler: TypeAlias = Callable[
-        [UpperForwardingSession, bool, list[bytes]], list[TransportMessage]
+        [UpperForwardingSession, list[bytes]], list[TransportMessage]
         ]
 """
 Internal intermediary hanlder type
@@ -105,13 +92,13 @@ def _handle_illegal(upper: _UpperRoutedHandler) -> RoutedHandler:
     Wraps a handler to catch IllegalRequestError and reply with a gm.Illegal
     message. Also wraps the session to accept galp message as replies
     """
-    def on_message(session: ForwardingSession, is_forward: bool, msg_body: list[bytes]
+    def on_message(session: ForwardingSession, msg_body: list[bytes]
             ) -> Iterable[TransportMessage]:
         # Wrap session
         upper_session = UpperForwardingSession(session)
 
         try:
-            return upper(upper_session, is_forward, msg_body)
+            return upper(upper_session, msg_body)
         # Obsolete pathway
         except IllegalRequestError as exc:
             return [upper_session
@@ -120,16 +107,16 @@ def _handle_illegal(upper: _UpperRoutedHandler) -> RoutedHandler:
                     ]
     return on_message
 
-def _log_message(msg: RoutedMessage, proto_name: str) -> None:
+def _log_message(msg: gm.Message, proto_name: str) -> None:
     # Extra addr is either an additional forward segment when receiving, or
     # additional source segment when sending, and characterizes a forwarded
     # message
-    verb = msg.body.verb.upper()
-    match msg.body:
+    verb = msg.verb.upper()
+    match msg:
         case gm.Submit() | gm.Found():
-            arg = str(msg.body.task_def.name)
+            arg = str(msg.task_def.name)
         case _:
-            arg = getattr(msg.body, 'name', '')
+            arg = getattr(msg, 'name', '')
 
     msg_log_str = (
         f"{proto_name +' ' if proto_name else ''}"
@@ -138,16 +125,13 @@ def _log_message(msg: RoutedMessage, proto_name: str) -> None:
 
     pattern = '<- %s' #if is_incoming else '-> %s'
 
-    if msg.forward:
-        logging.debug(pattern, msg_log_str)
-    else:
-        logging.info(pattern, msg_log_str)
+    logging.info(pattern, msg_log_str)
 
 def _add_log_message(proto_name: str, upper: ForwardingHandler) -> ForwardingHandler:
     """
     Insert a logging routine in the handling stack
     """
-    def on_message(session: UpperForwardingSession, msg: RoutedMessage
+    def on_message(session: UpperForwardingSession, msg: gm.Message,
             ) -> list[TransportMessage]:
         _log_message(msg, proto_name)
         return upper(session, msg)
@@ -159,7 +143,7 @@ def _parse_core_message(upper: ForwardingHandler) -> _UpperRoutedHandler:
 
     Raises IllegalRequestError on deserialization or validation problems
     """
-    def on_message(session: UpperForwardingSession, is_forward: bool, msg_body: list[bytes]
+    def on_message(session: UpperForwardingSession, msg_body: list[bytes]
             ) -> list[TransportMessage]:
         # Deserialize the payload
         msg_obj: gm.Message
@@ -177,10 +161,7 @@ def _parse_core_message(upper: ForwardingHandler) -> _UpperRoutedHandler:
         except DeserializeError as exc:
             raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
 
-        # Build legacy routed message object, to be removed
-        rmsg = RoutedMessage(forward=is_forward, body=msg_obj)
-
-        return upper(session, rmsg) or []
+        return upper(session, msg_obj) or []
     return on_message
 
 def handle_core(upper: ForwardingHandler, proto_name: str) -> RoutedHandler:
@@ -266,11 +247,10 @@ core-layer expected handler by being blind to forwarding
 def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
     """
     Wraps a Dispatcher accepting an UpperSession/Message
-    into one accepting an UpperForwardingSession/RoutedMessage and discarding
+    into one accepting an UpperForwardingSession/Message and discarding
     forwarding information
     """
-    def on_message(session: UpperForwardingSession, msg: RoutedMessage
-            ) -> list[TransportMessage]:
+    def on_message(session: UpperForwardingSession, msg: gm.Message) -> list[TransportMessage]:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name
@@ -278,7 +258,7 @@ def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
         # We do not forwarding, so only generate local messages and discard
         # forwarding information
         upper_session = session.forward_from(None)
-        return dispatch(upper_session, msg.body)
+        return dispatch(upper_session, msg)
     return on_message
 
 def make_name_dispatcher(upper) -> DispatchFunction:
