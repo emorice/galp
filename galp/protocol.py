@@ -11,7 +11,7 @@ import galp.messages as gm
 from galp.lower_protocol import (
         LowerProtocol, IllegalRequestError, Session,
         ForwardingSession, InvalidMessageDispatcher,
-        make_local_session
+        make_local_session, TransportMessage
         )
 from galp.serializer import dump_model, load_model, DeserializeError
 
@@ -30,15 +30,11 @@ class ProtocolEndException(Exception):
 @dataclass
 class RoutedMessage:
     """
-    A message with its routes
+    A message with a flag indicating if it is locally addressed or being
+    forwarded
     """
     forward: bool
     body: gm.Message
-
-TransportMessage: TypeAlias = list[bytes]
-"""
-Type of messages expected by the transport
-"""
 
 @dataclass
 class UpperSession:
@@ -116,9 +112,8 @@ def make_stack(app_handler: ForwardingHandler, name, router) -> Stack:
     """
     # Handlers
     lib_upper = Protocol(name, app_handler)
-    app_lower = lib_upper # Not yet exposed to app
     lib_lower = InvalidMessageDispatcher(
-            LowerProtocol(router, app_lower)
+            LowerProtocol(router, lib_upper.on_message)
             )
 
     # Writers

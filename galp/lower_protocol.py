@@ -3,8 +3,12 @@ Implementation of the lower level of GALP, handles routing.
 """
 
 from dataclasses import dataclass
+from typing import TypeAlias, Callable, Iterable
 
 import logging
+
+# Routing-layer data structures
+# =============================
 
 Route = list[bytes]
 """
@@ -20,14 +24,13 @@ class Routes:
     incoming: Route
     forward: Route
 
-PlainMessage = tuple[tuple[Route, Route], list[bytes]]
+# Routing-layer writers
+# =====================
 
-class IllegalRequestError(Exception):
-    """Base class for all badly formed requests, should trigger sending an ILLEGAL
-    message back"""
-    def __init__(self, reason: str):
-        super().__init__()
-        self.reason = reason
+TransportMessage: TypeAlias = list[bytes]
+"""
+Type of messages expected by the transport, also somewhat ZMQ-specific
+"""
 
 @dataclass
 class Session:
@@ -63,29 +66,6 @@ class Session:
         if self.lower_session:
             return self.lower_session.write(current)
         return current
-
-class InvalidMessageDispatcher:
-    """
-    Mixin class to provide error handling around `on_message`
-
-    The only effective function is to provide a way to abort handling in
-    the message handler to let the invalid handler take the relay.
-
-    The default invalid handler logs the error and suppresses the message
-    without attempting to generate any kind of message back.
-    """
-    def __init__(self, upper):
-        self.upper = upper
-
-    def on_message(self, session: Session, msg_parts: list[bytes]
-            ) -> list[list[bytes]]:
-        """
-        Public handler for messages, including invalid message handling.
-        """
-        try:
-            return self.upper.on_message(session, msg_parts)
-        except IllegalRequestError as exc:
-            return self.upper.on_invalid(session, exc)
 
 @dataclass
 class LowerSession(Session):
@@ -137,6 +117,53 @@ class ForwardingSession:
         """
         return tuple(self.forward)
 
+def make_local_session(is_router: bool) -> Session:
+    """
+    Create a default-addressing session
+    """
+    return LowerSession(None, is_router, Routes(incoming=Route(), forward=Route()))
+
+# Routing-layer handlers
+# ======================
+
+RoutedHandler: TypeAlias = Callable[
+        [ForwardingSession, bool, list[bytes]], Iterable[TransportMessage]
+        ]
+"""
+Type of the next-layer ("routed" layer, once the "routing" is parsed) handler to
+be injected.
+"""
+
+class IllegalRequestError(Exception):
+    """Base class for all badly formed requests, should trigger sending an ILLEGAL
+    message back"""
+    def __init__(self, reason: str):
+        super().__init__()
+        self.reason = reason
+
+class InvalidMessageDispatcher:
+    """
+    Mixin class to provide error handling around `on_message`
+
+    The only effective function is to provide a way to abort handling in
+    the message handler to let the invalid handler take the relay.
+
+    The default invalid handler logs the error and suppresses the message
+    without attempting to generate any kind of message back.
+    """
+    def __init__(self, upper):
+        self.upper = upper
+
+    def on_message(self, session: Session, msg_parts: list[bytes]
+            ) -> list[list[bytes]]:
+        """
+        Public handler for messages, including invalid message handling.
+        """
+        try:
+            return self.upper.on_message(session, msg_parts)
+        except IllegalRequestError as exc:
+            return self.upper.on_invalid(session, exc)
+
 class LowerProtocol:
     """
     Lower half of a galp protocol handler.
@@ -145,7 +172,7 @@ class LowerProtocol:
     protocol.
     """
 
-    def __init__(self, router: bool, upper):
+    def __init__(self, router: bool, upper: RoutedHandler):
         """
         Args:
             name: short string to include in log messages.
@@ -185,7 +212,7 @@ class LowerProtocol:
         if forward_route:
             out.append(forward.write(payload))
 
-        out.extend(self.upper.on_message(reply, bool(forward_route), payload))
+        out.extend(self.upper(reply, bool(forward_route), payload))
 
         return out
 
@@ -221,9 +248,3 @@ class LowerProtocol:
         msg = msg[1:]
 
         return msg, route
-
-def make_local_session(is_router: bool) -> Session:
-    """
-    Create a default-addressing session
-    """
-    return LowerSession(None, is_router, Routes(incoming=Route(), forward=Route()))
