@@ -8,6 +8,7 @@ from galp.protocol import ProtocolEndException
 from galp.lower_protocol import Session
 import galp.messages as gm
 
+
 class ZmqAsyncTransport:
     """
     Args:
@@ -20,7 +21,7 @@ class ZmqAsyncTransport:
     """
     def __init__(self, stack, endpoint, socket_type, bind=False):
         self.stack = stack
-        self.protocol = stack.root
+        self.handler = stack.handler
 
         self.endpoint = endpoint
 
@@ -70,7 +71,7 @@ class ZmqAsyncTransport:
         type accepted by protocol.write_message.
         """
         zmq_msg = await self.socket.recv_multipart()
-        return self.protocol.on_message(self.session, zmq_msg)
+        return self.handler(self.session, zmq_msg)
 
     async def listen_reply_loop(self) -> None:
         """Simple processing loop

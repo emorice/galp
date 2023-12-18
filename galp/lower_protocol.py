@@ -117,7 +117,7 @@ class ForwardingSession:
         """
         return tuple(self.forward)
 
-def make_local_session(is_router: bool) -> Session:
+def make_local_session(is_router: bool) -> LowerSession:
     """
     Create a default-addressing session
     """
@@ -125,6 +125,14 @@ def make_local_session(is_router: bool) -> Session:
 
 # Routing-layer handlers
 # ======================
+
+TransportHandler: TypeAlias = Callable[
+        [Session, list[bytes]], Iterable[TransportMessage]
+        ]
+"""
+Type of handler implemented by this layer and intended to be passed to the
+transport
+"""
 
 RoutedHandler: TypeAlias = Callable[
         [ForwardingSession, list[bytes]], Iterable[TransportMessage]
@@ -141,113 +149,91 @@ class IllegalRequestError(Exception):
         super().__init__()
         self.reason = reason
 
-class InvalidMessageDispatcher:
+def _handle_illegal(upper: TransportHandler) -> TransportHandler:
     """
-    Mixin class to provide error handling around `on_message`
+    Wraps a handler to catch IllegalRequestError, log, then suppress them.
 
-    The only effective function is to provide a way to abort handling in
-    the message handler to let the invalid handler take the relay.
-
-    The default invalid handler logs the error and suppresses the message
-    without attempting to generate any kind of message back.
+    At this level, we don't send error messages back.
     """
-    def __init__(self, upper):
-        self.upper = upper
-
-    def on_message(self, session: Session, msg_parts: list[bytes]
-            ) -> list[list[bytes]]:
-        """
-        Public handler for messages, including invalid message handling.
-        """
+    def on_message(session: Session, msg: list[bytes]
+            ) -> Iterable[TransportMessage]:
         try:
-            return self.upper.on_message(session, msg_parts)
+            return upper(session, msg)
         except IllegalRequestError as exc:
-            return self.upper.on_invalid(session, exc)
+            logging.warning('Supressing malformed incoming message: %s', exc.reason)
+            return []
+    return on_message
 
-class LowerProtocol:
+def _parse_lower(msg: list[bytes]) -> tuple[list[bytes], tuple[Route, Route]]:
     """
-    Lower half of a galp protocol handler.
+    Parses and returns the routing part of `msg`, and body.
 
-    Handles routing and co, exposes only the pre-split message to the upper
-    protocol.
+    Can be overloaded to handle different routing strategies.
     """
+    route_parts = []
+    while msg and msg[0]:
+        route_parts.append(msg[0])
+        msg = msg[1:]
+    # Whatever was found is treated as the route. If it's malformed, we
+    # cannot know, and we cannot send answers anywhere else.
+    route = route_parts[:1], route_parts[1:]
 
-    def __init__(self, router: bool, upper: RoutedHandler,
-            upper_forward: RoutedHandler | None):
-        """
-        Args:
-            router: True if sending function should move a routing id in the
-                first routing segment. Default False.
-        """
-        self.router = router
-        self.upper = upper
-        self.upper_forward = upper_forward
+    # Discard empty frame
+    if not msg or  msg[0]:
+        raise IllegalRequestError('Missing empty delimiter frame')
+    msg = msg[1:]
 
-    # Main public methods
-    # ===================
+    return msg, route
 
-    def on_message(self, session: Session, msg_parts: list[bytes]
+def _handle_routing(router: bool, upper: RoutedHandler,
+            upper_forward: RoutedHandler | None) -> TransportHandler:
+    """
+    Parses the routing part of a GALP message,
+    then calls the upper protocol with the parsed message.
+
+    This creates two sessions: one associated with the original recipient
+    (forward session), and one associated with the original sender (reply
+    session). By default, the forward session is used immediately to forward
+    the incoming message, and only the reply session is exposed to the layer
+    above. Messages are automatically forwarded without further action from
+    the higher handlers ; however, interrupting the handler with, say, a
+    validation error would cause the forwarded message to be dropped too.
+
+    Args:
+        router: True if sending function should move a routing id in the
+            first routing segment. Default False.
+    """
+    def on_message(session: Session, msg_parts: list[bytes]
                    ) -> Iterable[list[bytes]]:
-        """
-        Parses the routing part of a GALP message,
-        then calls the upper protocol with the parsed message.
-
-        This creates two sessions: one associated with the original recipient
-        (forward session), and one associated with the original sender (reply
-        session). By default, the forward session is used immediately to forward
-        the incoming message, and only the reply session is exposed to the layer
-        above. Messages are automatically forwarded without further action from
-        the higher handlers ; however, interrupting the handler with, say, a
-        validation error would cause the forwarded message to be dropped too.
-        """
-        payload, routes = self._parse_lower(msg_parts)
+        payload, routes = _parse_lower(msg_parts)
 
         incoming_route, forward_route = routes
         is_forward = bool(forward_route)
 
-        forward = LowerSession(session, self.router,
+        forward = LowerSession(session, router,
                                Routes(incoming_route, forward_route)
                                )
-        reply = ForwardingSession(session, self.router, incoming_route)
+        reply = ForwardingSession(session, router, incoming_route)
         out = []
 
         if is_forward:
             out.append(forward.write(payload))
-            if self.upper_forward:
-                out.extend(self.upper_forward(reply, payload))
+            if upper_forward:
+                out.extend(upper_forward(reply, payload))
             return out
 
-        return self.upper(reply, payload)
+        return upper(reply, payload)
+    return on_message
 
-    def on_invalid(self, session: Session, exc: IllegalRequestError) -> list[list[bytes]]:
-        """
-        Handler for invalid messages
-        """
-        _ = session
-        logging.warning('Supressing malformed incoming message: %s', exc.reason)
-        return []
-
-
-    # Internal parsing utilities
-    # ==========================
-
-    def _parse_lower(self, msg: list[bytes]) -> tuple[list[bytes], tuple[Route, Route]]:
-        """
-        Parses and returns the routing part of `msg`, and body.
-
-        Can be overloaded to handle different routing strategies.
-        """
-        route_parts = []
-        while msg and msg[0]:
-            route_parts.append(msg[0])
-            msg = msg[1:]
-        # Whatever was found is treated as the route. If it's malformed, we
-        # cannot know, and we cannot send answers anywhere else.
-        route = route_parts[:1], route_parts[1:]
-
-        # Discard empty frame
-        if not msg or  msg[0]:
-            raise IllegalRequestError('Missing empty delimiter frame')
-        msg = msg[1:]
-
-        return msg, route
+def handle_routing(router: bool,
+        upper_local: RoutedHandler,
+        upper_forward: RoutedHandler | None
+        ) -> TransportHandler:
+    """
+    Stack the routing-layer handlers
+    """
+    return _handle_illegal(
+            _handle_routing(router,
+                upper_local, upper_forward
+                )
+            )

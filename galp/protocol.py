@@ -8,11 +8,9 @@ from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
 from dataclasses import dataclass
 
 import galp.messages as gm
-from galp.lower_protocol import (
-        LowerProtocol, IllegalRequestError, Session,
-        ForwardingSession, InvalidMessageDispatcher,
-        make_local_session, TransportMessage, RoutedHandler
-        )
+from galp.lower_protocol import (IllegalRequestError, LowerSession,
+        ForwardingSession, make_local_session, TransportMessage, RoutedHandler,
+        TransportHandler, handle_routing)
 from galp.serializer import dump_model, load_model, DeserializeError
 
 # Errors and exceptions
@@ -32,7 +30,7 @@ class UpperSession:
     """
     Session encapsulating a galp message to be sent
     """
-    lower_session: Session
+    lower_session: LowerSession
 
     def write(self, message: gm.BaseMessage) -> TransportMessage:
         """
@@ -188,7 +186,7 @@ class Stack:
     """
     Handling side of a network stack
     """
-    root: InvalidMessageDispatcher
+    handler: TransportHandler
     base_session: UpperSession
 
     def write_local(self, msg: gm.Message) -> TransportMessage:
@@ -216,9 +214,7 @@ def make_stack(app_handler: ForwardingHandler, name: str, router: bool,
         forward_core_handler = handle_core(on_forward, name)
     else:
         forward_core_handler = None
-    routing_handler = InvalidMessageDispatcher(
-            LowerProtocol(router, core_handler, forward_core_handler)
-            )
+    routing_handler = handle_routing(router, core_handler, forward_core_handler)
 
     # Writers
     _lower_base_session = make_local_session(router)
