@@ -45,27 +45,12 @@ class UpperSession:
             frames.append(message.data)
         return self.lower_session.write(frames)
 
-@dataclass
-class UpperForwardingSession:
-    """
-    Wrapper class for forwarding session that stacks galp serialization
-    """
-    lower: ForwardingSession
-
-    def forward_from(self, origin: 'UpperForwardingSession | None') -> UpperSession:
-        """
-        Wrapper around forward_from that wraps the result in a UpperSession
-        """
-        return UpperSession(self.lower.forward_from(
-            origin.lower if origin is not None else None)
-            )
-
-    @property
-    def uid(self):
-        """
-        Hashable identifier
-        """
-        return self.lower.uid
+UpperForwardingSession: TypeAlias = ForwardingSession[UpperSession]
+"""
+A session, resulting from the injection of core serializing logic into the
+routing layer, that exposes an interface for control of forwarding, which
+results in sessions accepting core galp messages
+"""
 
 # Core-layer handlers
 # ===================
@@ -90,10 +75,10 @@ def _handle_illegal(upper: _UpperRoutedHandler) -> RoutedHandler:
     Wraps a handler to catch IllegalRequestError and reply with a gm.Illegal
     message. Also wraps the session to accept galp message as replies
     """
-    def on_message(session: ForwardingSession, msg_body: list[bytes]
+    def on_message(session: UpperForwardingSession, msg_body: list[bytes]
             ) -> Iterable[TransportMessage]:
         # Wrap session
-        upper_session = UpperForwardingSession(session)
+        upper_session = session
 
         try:
             return upper(upper_session, msg_body)
@@ -214,7 +199,10 @@ def make_stack(app_handler: ForwardingHandler, name: str, router: bool,
         forward_core_handler = handle_core(on_forward, name)
     else:
         forward_core_handler = None
-    routing_handler = handle_routing(router, core_handler, forward_core_handler)
+    routing_handler = handle_routing(router,
+            core_handler, forward_core_handler,
+            UpperSession
+            )
 
     # Writers
     _lower_base_session = make_local_session(router)

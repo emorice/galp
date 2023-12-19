@@ -3,7 +3,7 @@ Implementation of the lower level of GALP, handles routing.
 """
 
 from dataclasses import dataclass
-from typing import TypeAlias, Callable, Iterable
+from typing import TypeAlias, Callable, Iterable, Generic, TypeVar
 
 import logging
 
@@ -71,6 +71,8 @@ class Session:
 class LowerSession(Session):
     """
     Keeps track of routing information of a peer and origin to address messages
+
+    This should be internal, since it's modular session and not type safe.
     """
     is_router: bool
     routes: Routes
@@ -87,17 +89,27 @@ class LowerSession(Session):
             return [next_hop, *self.routes.incoming, *forward_route, b'']
         return [*self.routes.incoming, *self.routes.forward, b'']
 
+UpperSessionT = TypeVar('UpperSessionT')
+"""
+Generic type of the session of the layer above. The actual type gets injected,
+and this is then the type the users sees. This way the layers stays decoupled,
+but it is still impossible for the user to mix layers improperly.
+"""
+
 @dataclass
-class ForwardingSession:
+class ForwardingSession(Generic[UpperSessionT]):
     """
     Session encapsulating a destination but letting the user fill in the origin
     part of the message
+
+    This is what is exposed to the user, and must be type safe.
     """
     lower: Session
     is_router: bool
     forward: Route
+    make_upper: Callable[[LowerSession], UpperSessionT]
 
-    def forward_from(self, origin: 'ForwardingSession | None'):
+    def forward_from(self, origin: 'ForwardingSession | None') -> UpperSessionT:
         """
         Creates a session to send galp messages
 
@@ -106,8 +118,10 @@ class ForwardingSession:
             be sent. If None, means the message was locally generated.
         """
         nat_origin = Route() if origin is None else origin.forward
-        return LowerSession(self.lower, self.is_router,
-                Routes(incoming=nat_origin, forward=self.forward)
+        return self.make_upper(
+                LowerSession(self.lower, self.is_router,
+                    Routes(incoming=nat_origin, forward=self.forward)
+                )
                 )
 
     @property
@@ -186,7 +200,8 @@ def _parse_lower(msg: list[bytes]) -> tuple[list[bytes], tuple[Route, Route]]:
     return msg, route
 
 def _handle_routing(router: bool, upper: RoutedHandler,
-            upper_forward: RoutedHandler | None) -> TransportHandler:
+            upper_forward: RoutedHandler | None,
+            make_upper_session: Callable[[LowerSession], UpperSessionT]) -> TransportHandler:
     """
     Parses the routing part of a GALP message,
     then calls the upper protocol with the parsed message.
@@ -213,7 +228,7 @@ def _handle_routing(router: bool, upper: RoutedHandler,
         forward = LowerSession(session, router,
                                Routes(incoming_route, forward_route)
                                )
-        reply = ForwardingSession(session, router, incoming_route)
+        reply = ForwardingSession(session, router, incoming_route, make_upper_session)
         out = []
 
         if is_forward:
@@ -227,13 +242,15 @@ def _handle_routing(router: bool, upper: RoutedHandler,
 
 def handle_routing(router: bool,
         upper_local: RoutedHandler,
-        upper_forward: RoutedHandler | None
+        upper_forward: RoutedHandler | None,
+        make_upper_session: Callable[[LowerSession], UpperSessionT]
         ) -> TransportHandler:
     """
     Stack the routing-layer handlers
     """
     return _handle_illegal(
             _handle_routing(router,
-                upper_local, upper_forward
+                upper_local, upper_forward,
+                make_upper_session
                 )
             )
