@@ -85,7 +85,7 @@ def _handle_illegal(upper: _UpperRoutedHandler) -> RoutedHandler:
         # Obsolete pathway
         except IllegalRequestError as exc:
             return [upper_session
-                    .forward_from(None)
+                    .reply_from(None)
                     .write(gm.Illegal(reason=exc.reason))
                     ]
     return on_message
@@ -241,7 +241,7 @@ def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
         """
         # We do not forwarding, so only generate local messages and discard
         # forwarding information
-        upper_session = session.forward_from(None)
+        upper_session = session.reply_from(None)
         return dispatch(upper_session, msg)
     return on_message
 

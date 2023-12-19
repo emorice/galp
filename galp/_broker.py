@@ -97,7 +97,7 @@ class CommonProtocol:
 
         # Fill in the worker route in original request
         return [session
-                .forward_from(pending_alloc.client)
+                .reply_from(pending_alloc.client)
                 .write(pending_alloc.msg)
                 ]
 
@@ -111,7 +111,7 @@ class CommonProtocol:
         # resources
         # We already set the forward-address to None since we will never need to
         # forward anything to pool.
-        self.pool = pool.forward_from(None)
+        self.pool = pool.reply_from(None)
         # Adapt the list of cpus to the requested number of max cpus by dropping
         # or repeting some as needed
         cpus = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
@@ -158,7 +158,7 @@ class CommonProtocol:
 
         # Note that we set the incoming to empty, which equals re-interpreting
         # the message as addressed to us
-        chan = alloc.client.forward_from(None)
+        chan = alloc.client.reply_from(None)
         orig_msg = alloc.msg
 
         match orig_msg:
@@ -248,7 +248,7 @@ class CommonProtocol:
 
             # We build the message and return it to transport
             return [worker
-                    .forward_from(session)
+                    .reply_from(session)
                     .write(new_msg)
                     ]
 

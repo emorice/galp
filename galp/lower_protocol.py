@@ -109,7 +109,7 @@ class ForwardingSession(Generic[UpperSessionT]):
     forward: Route
     make_upper: Callable[[LowerSession], UpperSessionT]
 
-    def forward_from(self, origin: 'ForwardingSession | None') -> UpperSessionT:
+    def reply_from(self, origin: 'ForwardingSession | None') -> UpperSessionT:
         """
         Creates a session to send galp messages
 
