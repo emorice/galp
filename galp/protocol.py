@@ -69,27 +69,23 @@ RoutedHandler: TypeAlias = GenRoutedHandler[UpperSession]
 Specific type of handler that we are implementing here and injecting into the
 layer below, with the template type of the sessions we expect filled in.
 """
-def _handle_illegal(upper: RoutedHandler) -> RoutedHandler:
+
+def _handle_illegal(session: ReplyFromSession,
+                    upper: Callable[[], Iterable[TransportMessage]]
+                    ) -> Iterable[TransportMessage]:
     """
     Wraps a handler to catch IllegalRequestError and reply with a gm.Illegal
-    message. Also wraps the session to accept galp message as replies
+    message.
     """
-    def on_message(session: ReplyFromSession, msg_body: list[bytes]
-            ) -> Iterable[TransportMessage]:
-        try:
-            return upper(session, msg_body)
-        # Obsolete pathway
-        except IllegalRequestError as exc:
-            return [session
-                    .reply_from(None)
-                    .write(gm.Illegal(reason=exc.reason))
-                    ]
-    return on_message
+    try:
+        return upper()
+    except IllegalRequestError as exc:
+        return [session
+                .reply_from(None)
+                .write(gm.Illegal(reason=exc.reason))
+                ]
 
 def _log_message(msg: gm.Message, proto_name: str) -> None:
-    # Extra addr is either an additional forward segment when receiving, or
-    # additional source segment when sending, and characterizes a forwarded
-    # message
     verb = msg.verb.upper()
     match msg:
         case gm.Submit() | gm.Found():
@@ -106,42 +102,25 @@ def _log_message(msg: gm.Message, proto_name: str) -> None:
 
     logging.info(pattern, msg_log_str)
 
-def _add_log_message(proto_name: str, upper: ForwardingHandler) -> ForwardingHandler:
-    """
-    Insert a logging routine in the handling stack
-    """
-    def on_message(session: ReplyFromSession, msg: gm.Message,
-            ) -> list[TransportMessage]:
-        _log_message(msg, proto_name)
-        return upper(session, msg)
-    return on_message
-
-def _parse_core_message(upper: ForwardingHandler) -> RoutedHandler:
+def _parse_core_message(msg_body: list[bytes]) -> gm.Message:
     """
     Deserialize the core galp.message in the payload.
 
     Raises IllegalRequestError on deserialization or validation problems
     """
-    def on_message(session: ReplyFromSession, msg_body: list[bytes]
-            ) -> list[TransportMessage]:
-        # Deserialize the payload
-        msg_obj: gm.Message
-        try:
-            match msg_body:
-                case [payload]:
-                    # pydantic magic, see
-                    # https://github.com/python/mypy/issues/9773 for context
-                    # about why it's hard to type this
-                    msg_obj = load_model(gm.Message, payload) # type: ignore[arg-type]
-                case [payload, data]:
-                    msg_obj = load_model(gm.Message, payload, data=data) # type: ignore[arg-type]
-                case _:
-                    raise IllegalRequestError('Wrong number of frames')
-        except DeserializeError as exc:
-            raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
-
-        return upper(session, msg_obj) or []
-    return on_message
+    try:
+        match msg_body:
+            case [payload]:
+                # pydantic magic, see
+                # https://github.com/python/mypy/issues/9773 for context
+                # about why it's hard to type this
+                return load_model(gm.Message, payload) # type: ignore[arg-type]
+            case [payload, data]:
+                return load_model(gm.Message, payload, data=data) # type: ignore[arg-type]
+            case _:
+                raise IllegalRequestError('Wrong number of frames')
+    except DeserializeError as exc:
+        raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
 
 def handle_core(upper: ForwardingHandler, proto_name: str) -> RoutedHandler:
     """
@@ -150,13 +129,14 @@ def handle_core(upper: ForwardingHandler, proto_name: str) -> RoutedHandler:
      * Parsing the core payload
      * Logging the message between the parsing and the application handler
     """
-    return _handle_illegal(
-            _parse_core_message(
-                _add_log_message(proto_name,
-                    upper
-                    )
-                )
-            )
+    def on_message(session: ReplyFromSession, msg: list[bytes]
+                   ) -> Iterable[TransportMessage]:
+        def _unsafe_handle():
+            msg_obj = _parse_core_message(msg)
+            _log_message(msg_obj, proto_name)
+            return upper(session, msg_obj)
+        return _handle_illegal(session, _unsafe_handle)
+    return on_message
 
 # Stack
 # =====
