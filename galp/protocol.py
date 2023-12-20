@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import galp.messages as gm
 from galp.lower_protocol import (IllegalRequestError, LowerSession,
-        ForwardingSession, make_local_session, TransportMessage, RoutedHandler,
+        GenReplyFromSession, make_local_session, TransportMessage, GenRoutedHandler,
         TransportHandler, handle_routing)
 from galp.serializer import dump_model, load_model, DeserializeError
 
@@ -45,7 +45,7 @@ class UpperSession:
             frames.append(message.data)
         return self.lower_session.write(frames)
 
-UpperForwardingSession: TypeAlias = ForwardingSession[UpperSession]
+ReplyFromSession: TypeAlias = GenReplyFromSession[UpperSession]
 """
 A session, resulting from the injection of core serializing logic into the
 routing layer, that exposes an interface for control of forwarding, which
@@ -56,7 +56,7 @@ results in sessions accepting core galp messages
 # ===================
 
 ForwardingHandler: TypeAlias = Callable[
-        [UpperForwardingSession, gm.Message], list[TransportMessage]
+        [ReplyFromSession, gm.Message], list[TransportMessage]
         ]
 """
 Type of the next-layer ("application") handler that has some awareness of
@@ -64,27 +64,23 @@ forwarding and some control over it, in order to accomodate the needs of both
 "end peers" (client, worker, pool) and broker.
 """
 
-_UpperRoutedHandler: TypeAlias = Callable[
-        [UpperForwardingSession, list[bytes]], list[TransportMessage]
-        ]
+RoutedHandler: TypeAlias = GenRoutedHandler[UpperSession]
 """
-Internal intermediary hanlder type
+Specific type of handler that we are implementing here and injecting into the
+layer below, with the template type of the sessions we expect filled in.
 """
-def _handle_illegal(upper: _UpperRoutedHandler) -> RoutedHandler:
+def _handle_illegal(upper: RoutedHandler) -> RoutedHandler:
     """
     Wraps a handler to catch IllegalRequestError and reply with a gm.Illegal
     message. Also wraps the session to accept galp message as replies
     """
-    def on_message(session: UpperForwardingSession, msg_body: list[bytes]
+    def on_message(session: ReplyFromSession, msg_body: list[bytes]
             ) -> Iterable[TransportMessage]:
-        # Wrap session
-        upper_session = session
-
         try:
-            return upper(upper_session, msg_body)
+            return upper(session, msg_body)
         # Obsolete pathway
         except IllegalRequestError as exc:
-            return [upper_session
+            return [session
                     .reply_from(None)
                     .write(gm.Illegal(reason=exc.reason))
                     ]
@@ -114,19 +110,19 @@ def _add_log_message(proto_name: str, upper: ForwardingHandler) -> ForwardingHan
     """
     Insert a logging routine in the handling stack
     """
-    def on_message(session: UpperForwardingSession, msg: gm.Message,
+    def on_message(session: ReplyFromSession, msg: gm.Message,
             ) -> list[TransportMessage]:
         _log_message(msg, proto_name)
         return upper(session, msg)
     return on_message
 
-def _parse_core_message(upper: ForwardingHandler) -> _UpperRoutedHandler:
+def _parse_core_message(upper: ForwardingHandler) -> RoutedHandler:
     """
     Deserialize the core galp.message in the payload.
 
     Raises IllegalRequestError on deserialization or validation problems
     """
-    def on_message(session: UpperForwardingSession, msg_body: list[bytes]
+    def on_message(session: ReplyFromSession, msg_body: list[bytes]
             ) -> list[TransportMessage]:
         # Deserialize the payload
         msg_obj: gm.Message
@@ -231,10 +227,10 @@ core-layer expected handler by being blind to forwarding
 def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
     """
     Wraps a Dispatcher accepting an UpperSession/Message
-    into one accepting an UpperForwardingSession/Message and discarding
+    into one accepting an ReplyFromSession/Message and discarding
     forwarding information
     """
-    def on_message(session: UpperForwardingSession, msg: gm.Message) -> list[TransportMessage]:
+    def on_message(session: ReplyFromSession, msg: gm.Message) -> list[TransportMessage]:
         """
         Process a routed message by forwarding the body only to the on_ method
         of matching name

@@ -15,7 +15,7 @@ import galp.messages as gm
 import galp.task_types as gtt
 
 from galp.protocol import (UpperSession,
-    make_stack, UpperForwardingSession, TransportMessage)
+    make_stack, ReplyFromSession, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
 from galp.req_rep import ReplySession
@@ -49,7 +49,7 @@ class Allocation:
     claim: gtt.ResourceClaim
     resources: Resources
     msg: gm.BaseMessage
-    client: UpperForwardingSession
+    client: ReplyFromSession
     task_id: bytes
 
 class CommonProtocol:
@@ -58,11 +58,11 @@ class CommonProtocol:
     """
     def __init__(self, max_cpus: int):
         # List of idle workers, by resources
-        self.idle_workers: defaultdict[gtt.ResourceClaim, list[UpperForwardingSession]]
+        self.idle_workers: defaultdict[gtt.ResourceClaim, list[ReplyFromSession]]
         self.idle_workers = defaultdict(lambda : [])
 
         # Internal routing id indexed by self-identifiers
-        self.session_from_peer : dict[str, UpperForwardingSession] = {}
+        self.session_from_peer : dict[str, ReplyFromSession] = {}
 
         # Total resources
         self.max_cpus = max_cpus
@@ -77,7 +77,7 @@ class CommonProtocol:
         # Tasks currently running on a worker
         self.alloc_from_wuid: dict[Any, Allocation] = {}
 
-    def on_ready(self, session: UpperForwardingSession, msg: gm.Ready):
+    def on_ready(self, session: ReplyFromSession, msg: gm.Ready):
         """
         Register worker route and forward initial worker mission
         """
@@ -101,7 +101,7 @@ class CommonProtocol:
                 .write(pending_alloc.msg)
                 ]
 
-    def on_pool_ready(self, pool: UpperForwardingSession, msg: gm.PoolReady):
+    def on_pool_ready(self, pool: ReplyFromSession, msg: gm.PoolReady):
         """
         Register pool route and resources
         """
@@ -117,7 +117,7 @@ class CommonProtocol:
         cpus = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
         self.resources = Resources(cpus)
 
-    def free_resources(self, session: UpperForwardingSession, reuse=True) -> None:
+    def free_resources(self, session: ReplyFromSession, reuse=True) -> None:
         """
         Add a worker to the idle list after clearing the current task
         information and freeing resources
@@ -186,7 +186,7 @@ class CommonProtocol:
             return msg.resources
         return gtt.ResourceClaim(cpus=1)
 
-    def on_request(self, session: UpperForwardingSession, msg: gm.Stat | gm.Submit | gm.Get):
+    def on_request(self, session: ReplyFromSession, msg: gm.Stat | gm.Submit | gm.Get):
         """
         Assign a worker
         """
@@ -256,7 +256,7 @@ class CommonProtocol:
         # We'll send the request to the worker when it send us a READY
         return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_forward(self, session: UpperForwardingSession, msg: gm.Message
+    def on_forward(self, session: ReplyFromSession, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles only messages forwarded through broker
@@ -270,7 +270,7 @@ class CommonProtocol:
         logging.debug('Forwarding %s', msg.verb)
         return []
 
-    def on_local(self, session: UpperForwardingSession, msg: gm.Message
+    def on_local(self, session: ReplyFromSession, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles local messages received by the broker

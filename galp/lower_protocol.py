@@ -97,7 +97,7 @@ but it is still impossible for the user to mix layers improperly.
 """
 
 @dataclass
-class ForwardingSession(Generic[UpperSessionT]):
+class GenReplyFromSession(Generic[UpperSessionT]):
     """
     Session encapsulating a destination but letting the user fill in the origin
     part of the message
@@ -109,7 +109,7 @@ class ForwardingSession(Generic[UpperSessionT]):
     forward: Route
     make_upper: Callable[[LowerSession], UpperSessionT]
 
-    def reply_from(self, origin: 'ForwardingSession | None') -> UpperSessionT:
+    def reply_from(self, origin: 'GenReplyFromSession | None') -> UpperSessionT:
         """
         Creates a session to send galp messages
 
@@ -148,8 +148,8 @@ Type of handler implemented by this layer and intended to be passed to the
 transport
 """
 
-RoutedHandler: TypeAlias = Callable[
-        [ForwardingSession, list[bytes]], Iterable[TransportMessage]
+GenRoutedHandler: TypeAlias = Callable[
+        [GenReplyFromSession[UpperSessionT], list[bytes]], Iterable[TransportMessage]
         ]
 """
 Type of the next-layer ("routed" layer, once the "routing" is parsed) handler to
@@ -199,8 +199,8 @@ def _parse_lower(msg: list[bytes]) -> tuple[list[bytes], tuple[Route, Route]]:
 
     return msg, route
 
-def _handle_routing(router: bool, upper: RoutedHandler,
-            upper_forward: RoutedHandler | None,
+def _handle_routing(router: bool, upper: GenRoutedHandler,
+            upper_forward: GenRoutedHandler | None,
             make_upper_session: Callable[[LowerSession], UpperSessionT]) -> TransportHandler:
     """
     Parses the routing part of a GALP message,
@@ -228,7 +228,7 @@ def _handle_routing(router: bool, upper: RoutedHandler,
         forward = LowerSession(session, router,
                                Routes(incoming_route, forward_route)
                                )
-        reply = ForwardingSession(session, router, incoming_route, make_upper_session)
+        reply = GenReplyFromSession(session, router, incoming_route, make_upper_session)
         out = []
 
         if is_forward:
@@ -241,8 +241,8 @@ def _handle_routing(router: bool, upper: RoutedHandler,
     return on_message
 
 def handle_routing(router: bool,
-        upper_local: RoutedHandler,
-        upper_forward: RoutedHandler | None,
+        upper_local: GenRoutedHandler,
+        upper_forward: GenRoutedHandler | None,
         make_upper_session: Callable[[LowerSession], UpperSessionT]
         ) -> TransportHandler:
     """
