@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import galp.messages as gm
 from galp.lower_protocol import (IllegalRequestError, LowerSession,
         GenReplyFromSession, make_local_session, TransportMessage, GenRoutedHandler,
-        AppSessionT, TransportHandler, handle_routing)
+        AppSessionT, TransportHandler, handle_routing, GenForwardSessions)
 from galp.serializer import dump_model, load_model, DeserializeError
 
 # Errors and exceptions
@@ -51,6 +51,7 @@ A session, resulting from the injection of core serializing logic into the
 routing layer, that exposes an interface for control of forwarding, which
 results in sessions accepting core galp messages
 """
+ForwardSessions: TypeAlias = GenForwardSessions[UpperSession]
 
 # Core-layer handlers
 # ===================
@@ -161,7 +162,7 @@ class Stack:
         return self.base_session.write(msg)
 
 def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, router: bool,
-        on_forward: ForwardingHandler[ReplyFromSession] | None = None
+        on_forward: ForwardingHandler[ForwardSessions] | None = None
         ) -> Stack:
     """
     Factory function to assemble the handler stack

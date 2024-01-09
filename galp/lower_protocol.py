@@ -131,6 +131,16 @@ class GenReplyFromSession(Generic[UpperSessionT]):
         """
         return tuple(self.forward)
 
+@dataclass
+class GenForwardSessions(Generic[UpperSessionT]):
+    """
+    Pair of sessions exposed to app on forward.
+
+    The two sessions represent the sender of the message, and its recipient
+    """
+    origin: GenReplyFromSession[UpperSessionT]
+    dest: UpperSessionT
+
 def make_local_session(is_router: bool) -> LowerSession:
     """
     Create a default-addressing session
@@ -179,7 +189,7 @@ More specific type of next-layer handler for the local case.
 """
 
 GenForwardHandler: TypeAlias = GenRoutedHandler[UpperSessionT,
-        GenReplyFromSession[UpperSessionT]]
+        GenForwardSessions[UpperSessionT]]
 """
 More specific type of next-layer handler for the forward case.
 """
@@ -227,8 +237,8 @@ def _parse_lower(msg: list[bytes]) -> tuple[list[bytes], tuple[Route, Route]]:
 
     return msg, route
 
-def _handle_routing(router: bool, upper: GenLocalHandler,
-            upper_forward: GenForwardHandler | None,
+def _handle_routing(router: bool, upper: GenLocalHandler[UpperSessionT],
+            upper_forward: GenForwardHandler[UpperSessionT] | None,
             make_upper_session: Callable[[LowerSession], UpperSessionT]) -> TransportHandler:
     """
     Parses the routing part of a GALP message,
@@ -253,16 +263,17 @@ def _handle_routing(router: bool, upper: GenLocalHandler,
         incoming_route, forward_route = routes
         is_forward = bool(forward_route)
 
-        forward = LowerSession(session, router,
+        lower_forward = LowerSession(session, router,
                                Routes(incoming_route, forward_route)
                                )
         reply = GenReplyFromSession(session, router, incoming_route, make_upper_session)
+        forward = GenForwardSessions(origin=reply, dest=make_upper_session(lower_forward))
         out = []
 
         if is_forward:
-            out.append(forward.write(payload))
+            out.append(lower_forward.write(payload))
             if upper_forward:
-                out.extend(upper_forward(reply, reply, payload))
+                out.extend(upper_forward(reply, forward, payload))
             return out
 
         return upper(reply, reply, payload)

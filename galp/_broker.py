@@ -15,7 +15,7 @@ import galp.messages as gm
 import galp.task_types as gtt
 
 from galp.protocol import (UpperSession,
-    make_stack, ReplyFromSession, TransportMessage)
+    make_stack, ReplyFromSession, ForwardSessions, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
 from galp.req_rep import ReplySession
@@ -24,7 +24,7 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
     Load-balancing client-to-worker and a worker-to-broker loops
     """
-    def __init__(self, endpoint, n_cpus):
+    def __init__(self, endpoint: str, n_cpus: int) -> None:
         self.proto = CommonProtocol(max_cpus=n_cpus)
         stack = make_stack(self.proto.on_local,
                 name='CW', router=True,
@@ -256,7 +256,7 @@ class CommonProtocol:
         # We'll send the request to the worker when it send us a READY
         return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_forward(self, session: ReplyFromSession, msg: gm.Message
+    def on_forward(self, sessions: ForwardSessions, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles only messages forwarded through broker
@@ -264,7 +264,7 @@ class CommonProtocol:
         # Free resources for all messages indicating end of task
         if isinstance(msg, gm.Reply):
             if not isinstance(msg.value, gm.Doing):
-                self.free_resources(session)
+                self.free_resources(sessions.origin)
         # Forward as-is. Note that the lower layer forwards by default, so
         # really this just means returning nothing.
         logging.debug('Forwarding %s', msg.verb)
