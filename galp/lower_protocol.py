@@ -149,8 +149,16 @@ transport
 """
 
 GenRoutedHandler: TypeAlias = Callable[
-        [GenReplyFromSession[UpperSessionT], list[bytes]], Iterable[TransportMessage]
-        ]
+        [
+            # Session used by upper parser to send back parsing error messages
+            GenReplyFromSession[UpperSessionT],
+            # Session used by app handler to send other responses or forward
+            GenReplyFromSession[UpperSessionT],
+            # Payload
+            list[bytes]
+            ],
+        # Messages to be sent in reaction
+        Iterable[TransportMessage]]
 """
 Type of the next-layer ("routed" layer, once the "routing" is parsed) handler to
 be injected.
@@ -234,10 +242,10 @@ def _handle_routing(router: bool, upper: GenRoutedHandler,
         if is_forward:
             out.append(forward.write(payload))
             if upper_forward:
-                out.extend(upper_forward(reply, payload))
+                out.extend(upper_forward(reply, reply, payload))
             return out
 
-        return upper(reply, payload)
+        return upper(reply, reply, payload)
     return on_message
 
 def handle_routing(router: bool,

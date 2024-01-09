@@ -129,12 +129,12 @@ def handle_core(upper: ForwardingHandler, proto_name: str) -> RoutedHandler:
      * Parsing the core payload
      * Logging the message between the parsing and the application handler
     """
-    def on_message(session: ReplyFromSession, msg: list[bytes]
+    def on_message(session: ReplyFromSession, next_session: ReplyFromSession, msg: list[bytes]
                    ) -> Iterable[TransportMessage]:
         def _unsafe_handle():
             msg_obj = _parse_core_message(msg)
             _log_message(msg_obj, proto_name)
-            return upper(session, msg_obj)
+            return upper(next_session, msg_obj)
         return _handle_illegal(session, _unsafe_handle)
     return on_message
 
