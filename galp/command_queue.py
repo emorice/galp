@@ -11,7 +11,7 @@ class CommandQueue:
     """
     A queue of active commands that need periodic re-issuing
     """
-    def __init__(self, retry_interval: float=0.2):
+    def __init__(self, retry_interval: float=0.5):
         self.asap_queue : deque[cm.InertCommand] = deque()
         self.retry_queue : deque[tuple[cm.InertCommand, float]] = deque()
         self.retry_interval = retry_interval

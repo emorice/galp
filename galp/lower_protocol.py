@@ -246,11 +246,8 @@ def _handle_routing(router: bool, upper: GenLocalHandler[UpperSessionT],
 
     This creates two sessions: one associated with the original recipient
     (forward session), and one associated with the original sender (reply
-    session). By default, the forward session is used immediately to forward
-    the incoming message, and only the reply session is exposed to the layer
-    above. Messages are automatically forwarded without further action from
-    the higher handlers ; however, interrupting the handler with, say, a
-    validation error would cause the forwarded message to be dropped too.
+    session). Generating the outgoing forwarded message is up to the forward
+    handler.
 
     Args:
         router: True if sending function should move a routing id in the
@@ -268,13 +265,11 @@ def _handle_routing(router: bool, upper: GenLocalHandler[UpperSessionT],
                                )
         reply = GenReplyFromSession(session, router, incoming_route, make_upper_session)
         forward = GenForwardSessions(origin=reply, dest=make_upper_session(lower_forward))
-        out = []
 
         if is_forward:
-            out.append(lower_forward.write(payload))
             if upper_forward:
-                out.extend(upper_forward(reply, forward, payload))
-            return out
+                return upper_forward(reply, forward, payload)
+            return []
 
         return upper(reply, reply, payload)
     return on_message

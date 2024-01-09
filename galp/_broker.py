@@ -265,10 +265,9 @@ class CommonProtocol:
         if isinstance(msg, gm.Reply):
             if not isinstance(msg.value, gm.Doing):
                 self.free_resources(sessions.origin)
-        # Forward as-is. Note that the lower layer forwards by default, so
-        # really this just means returning nothing.
+        # Forward as-is.
         logging.debug('Forwarding %s', msg.verb)
-        return []
+        return [sessions.dest.write(msg)]
 
     def on_local(self, session: ReplyFromSession, msg: gm.Message
             ) -> list[TransportMessage]:
