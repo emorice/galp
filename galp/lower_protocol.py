@@ -139,7 +139,7 @@ class GenForwardSessions(Generic[UpperSessionT]):
     The two sessions represent the sender of the message, and its recipient
     """
     origin: GenReplyFromSession[UpperSessionT]
-    dest: UpperSessionT
+    dest: GenReplyFromSession[UpperSessionT]
 
 def make_local_session(is_router: bool) -> LowerSession:
     """
@@ -260,15 +260,13 @@ def _handle_routing(router: bool, upper: GenLocalHandler[UpperSessionT],
         incoming_route, forward_route = routes
         is_forward = bool(forward_route)
 
-        lower_forward = LowerSession(session, router,
-                               Routes(incoming_route, forward_route)
-                               )
         reply = GenReplyFromSession(session, router, incoming_route, make_upper_session)
-        forward = GenForwardSessions(origin=reply, dest=make_upper_session(lower_forward))
+        forward = GenReplyFromSession(session, router, forward_route, make_upper_session)
+        both = GenForwardSessions(origin=reply, dest=forward)
 
         if is_forward:
             if upper_forward:
-                return upper_forward(reply, forward, payload)
+                return upper_forward(reply, both, payload)
             return []
 
         return upper(reply, reply, payload)

@@ -267,7 +267,7 @@ class CommonProtocol:
                 self.free_resources(sessions.origin)
         # Forward as-is.
         logging.debug('Forwarding %s', msg.verb)
-        return [sessions.dest.write(msg)]
+        return [sessions.dest.reply_from(sessions.origin).write(msg)]
 
     def on_local(self, session: ReplyFromSession, msg: gm.Message
             ) -> list[TransportMessage]:
