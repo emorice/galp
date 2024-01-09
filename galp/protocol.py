@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import galp.messages as gm
 from galp.lower_protocol import (IllegalRequestError, LowerSession,
         GenReplyFromSession, make_local_session, TransportMessage, GenRoutedHandler,
-        TransportHandler, handle_routing)
+        AppSessionT, TransportHandler, handle_routing)
 from galp.serializer import dump_model, load_model, DeserializeError
 
 # Errors and exceptions
@@ -56,7 +56,7 @@ results in sessions accepting core galp messages
 # ===================
 
 ForwardingHandler: TypeAlias = Callable[
-        [ReplyFromSession, gm.Message], list[TransportMessage]
+        [AppSessionT, gm.Message], list[TransportMessage]
         ]
 """
 Type of the next-layer ("application") handler that has some awareness of
@@ -64,9 +64,9 @@ forwarding and some control over it, in order to accomodate the needs of both
 "end peers" (client, worker, pool) and broker.
 """
 
-RoutedHandler: TypeAlias = GenRoutedHandler[UpperSession]
+RoutedHandler: TypeAlias = GenRoutedHandler[UpperSession, AppSessionT]
 """
-Specific type of handler that we are implementing here and injecting into the
+Specific types of handler that we are implementing here and injecting into the
 layer below, with the template type of the sessions we expect filled in.
 """
 
@@ -122,14 +122,15 @@ def _parse_core_message(msg_body: list[bytes]) -> gm.Message:
     except DeserializeError as exc:
         raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
 
-def handle_core(upper: ForwardingHandler, proto_name: str) -> RoutedHandler:
+def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
+        ) -> RoutedHandler[AppSessionT]:
     """
     Chains the three parts of the core handlers:
      * Error handling on the outside
      * Parsing the core payload
      * Logging the message between the parsing and the application handler
     """
-    def on_message(session: ReplyFromSession, next_session: ReplyFromSession, msg: list[bytes]
+    def on_message(session: ReplyFromSession, next_session: AppSessionT, msg: list[bytes]
                    ) -> Iterable[TransportMessage]:
         def _unsafe_handle():
             msg_obj = _parse_core_message(msg)
@@ -159,8 +160,8 @@ class Stack:
         """
         return self.base_session.write(msg)
 
-def make_stack(app_handler: ForwardingHandler, name: str, router: bool,
-        on_forward: ForwardingHandler | None = None
+def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, router: bool,
+        on_forward: ForwardingHandler[ReplyFromSession] | None = None
         ) -> Stack:
     """
     Factory function to assemble the handler stack

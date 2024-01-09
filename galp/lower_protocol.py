@@ -148,12 +148,19 @@ Type of handler implemented by this layer and intended to be passed to the
 transport
 """
 
+AppSessionT = TypeVar('AppSessionT')
+"""
+Generic type of the session, or collection thereof, passed to the final app
+handler. In practice this type is almost always known, but a few bits of code
+benefit from treating it as a generic.
+"""
+
 GenRoutedHandler: TypeAlias = Callable[
         [
             # Session used by upper parser to send back parsing error messages
             GenReplyFromSession[UpperSessionT],
             # Session used by app handler to send other responses or forward
-            GenReplyFromSession[UpperSessionT],
+            AppSessionT, #GenReplyFromSession[UpperSessionT],
             # Payload
             list[bytes]
             ],
@@ -161,7 +168,20 @@ GenRoutedHandler: TypeAlias = Callable[
         Iterable[TransportMessage]]
 """
 Type of the next-layer ("routed" layer, once the "routing" is parsed) handler to
-be injected.
+be injected. This is generic in the upper session type (that is, the kind of
+messages that can be sent) and the type of session passed to the app handler.
+"""
+
+GenLocalHandler: TypeAlias = GenRoutedHandler[UpperSessionT,
+        GenReplyFromSession[UpperSessionT]]
+"""
+More specific type of next-layer handler for the local case.
+"""
+
+GenForwardHandler: TypeAlias = GenRoutedHandler[UpperSessionT,
+        GenReplyFromSession[UpperSessionT]]
+"""
+More specific type of next-layer handler for the forward case.
 """
 
 class IllegalRequestError(Exception):
@@ -207,8 +227,8 @@ def _parse_lower(msg: list[bytes]) -> tuple[list[bytes], tuple[Route, Route]]:
 
     return msg, route
 
-def _handle_routing(router: bool, upper: GenRoutedHandler,
-            upper_forward: GenRoutedHandler | None,
+def _handle_routing(router: bool, upper: GenLocalHandler,
+            upper_forward: GenForwardHandler | None,
             make_upper_session: Callable[[LowerSession], UpperSessionT]) -> TransportHandler:
     """
     Parses the routing part of a GALP message,
@@ -249,8 +269,8 @@ def _handle_routing(router: bool, upper: GenRoutedHandler,
     return on_message
 
 def handle_routing(router: bool,
-        upper_local: GenRoutedHandler,
-        upper_forward: GenRoutedHandler | None,
+        upper_local: GenLocalHandler,
+        upper_forward: GenForwardHandler | None,
         make_upper_session: Callable[[LowerSession], UpperSessionT]
         ) -> TransportHandler:
     """
