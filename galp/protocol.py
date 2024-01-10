@@ -8,10 +8,11 @@ from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
 from dataclasses import dataclass
 
 import galp.messages as gm
-from galp.lower_protocol import (IllegalRequestError, LowerSession,
-        GenReplyFromSession, make_local_session, TransportMessage, GenRoutedHandler,
-        AppSessionT, TransportHandler, handle_routing, GenForwardSessions)
-from galp.serializer import dump_model, load_model, DeserializeError
+from galp.lower_protocol import (IllegalRequestError, GenReplyFromSession,
+        make_local_session, TransportMessage, GenRoutedHandler, AppSessionT,
+        TransportHandler, handle_routing, GenForwardSessions)
+from galp.serializer import load_model, DeserializeError
+from galp.upper_session import UpperSession
 
 # Errors and exceptions
 # =====================
@@ -21,29 +22,6 @@ class ProtocolEndException(Exception):
     Exception thrown by a handler to signal that no more messages are expected
     and the transport should be closed
     """
-
-# Core-layer writers
-# ==================
-
-@dataclass
-class UpperSession:
-    """
-    Session encapsulating a galp message to be sent
-    """
-    lower_session: LowerSession
-
-    def write(self, message: gm.BaseMessage) -> TransportMessage:
-        """
-        Write a complete message from a galp message object.
-
-        Route is specified through the lower_session attribute.
-        """
-        frames = [
-                dump_model(message, exclude={'data'})
-                ]
-        if hasattr(message, 'data'):
-            frames.append(message.data)
-        return self.lower_session.write(frames)
 
 ReplyFromSession: TypeAlias = GenReplyFromSession[UpperSession]
 """
@@ -179,12 +157,12 @@ def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, rout
         forward_core_handler = None
     routing_handler = handle_routing(router,
             core_handler, forward_core_handler,
-            UpperSession
+            lambda lower: UpperSession(lower.write)
             )
 
     # Writers
     _lower_base_session = make_local_session(router)
-    base_session = UpperSession(_lower_base_session)
+    base_session = UpperSession(_lower_base_session.write)
 
     return Stack(routing_handler, base_session)
 

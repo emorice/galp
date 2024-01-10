@@ -5,9 +5,8 @@ Using ØMQ as a transport for Galp protoclols
 import zmq
 
 from galp.protocol import ProtocolEndException
-from galp.lower_protocol import Session
+from galp.writer import TransportMessage
 import galp.messages as gm
-
 
 class ZmqAsyncTransport:
     """
@@ -33,8 +32,6 @@ class ZmqAsyncTransport:
         else:
             self.socket.connect(endpoint)
 
-        self.session = Session(None) # Not actually used yet
-
     def __del__(self):
         self.socket.close()
 
@@ -48,13 +45,13 @@ class ZmqAsyncTransport:
         """
         await self.send_raw(self.stack.write_local(msg))
 
-    async def send_raw(self, msg: list[bytes]) -> None:
+    async def send_raw(self, msg: TransportMessage) -> None:
         """
         Send a message as-is
         """
         await self.socket.send_multipart(msg)
 
-    async def send_messages(self, messages: list[list[bytes]]):
+    async def send_messages(self, messages: list[TransportMessage]):
         """
         Wrapper of send_raw accepting None to several messages
         """
@@ -63,7 +60,7 @@ class ZmqAsyncTransport:
         for message in messages:
             await self.send_raw(message)
 
-    async def recv_message(self) -> list[list[bytes]]:
+    async def recv_message(self) -> list[TransportMessage]:
         """
         Waits for one message, then call handlers when it arrives.
 
@@ -71,7 +68,7 @@ class ZmqAsyncTransport:
         type accepted by protocol.write_message.
         """
         zmq_msg = await self.socket.recv_multipart()
-        return self.handler(self.session, zmq_msg)
+        return self.handler(lambda msg: msg, zmq_msg)
 
     async def listen_reply_loop(self) -> None:
         """Simple processing loop
