@@ -8,9 +8,11 @@ from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
 from dataclasses import dataclass
 
 import galp.messages as gm
-from galp.lower_protocol import (IllegalRequestError, GenReplyFromSession,
-        make_local_session, TransportMessage, GenRoutedHandler, AppSessionT,
-        TransportHandler, handle_routing, GenForwardSessions)
+from galp.writer import TransportMessage
+from galp.lower_sessions import (make_local_session, ReplyFromSession,
+        ForwardSessions)
+from galp.lower_protocol import (IllegalRequestError, RoutedHandler,
+        AppSessionT, TransportHandler, handle_routing)
 from galp.serializer import load_model, DeserializeError
 from galp.upper_session import UpperSession
 
@@ -23,14 +25,6 @@ class ProtocolEndException(Exception):
     and the transport should be closed
     """
 
-ReplyFromSession: TypeAlias = GenReplyFromSession[UpperSession]
-"""
-A session, resulting from the injection of core serializing logic into the
-routing layer, that exposes an interface for control of forwarding, which
-results in sessions accepting core galp messages
-"""
-ForwardSessions: TypeAlias = GenForwardSessions[UpperSession]
-
 # Core-layer handlers
 # ===================
 
@@ -41,12 +35,6 @@ ForwardingHandler: TypeAlias = Callable[
 Type of the next-layer ("application") handler that has some awareness of
 forwarding and some control over it, in order to accomodate the needs of both
 "end peers" (client, worker, pool) and broker.
-"""
-
-RoutedHandler: TypeAlias = GenRoutedHandler[UpperSession, AppSessionT]
-"""
-Specific types of handler that we are implementing here and injecting into the
-layer below, with the template type of the sessions we expect filled in.
 """
 
 def _handle_illegal(session: ReplyFromSession,
@@ -155,10 +143,7 @@ def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, rout
         forward_core_handler = handle_core(on_forward, name)
     else:
         forward_core_handler = None
-    routing_handler = handle_routing(router,
-            core_handler, forward_core_handler,
-            lambda lower: UpperSession(lower.write)
-            )
+    routing_handler = handle_routing(router, core_handler, forward_core_handler)
 
     # Writers
     _lower_base_session = make_local_session(router)
