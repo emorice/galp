@@ -82,8 +82,6 @@ def _parse_core_message(msg_body: list[bytes]) -> gm.Message:
                 # https://github.com/python/mypy/issues/9773 for context
                 # about why it's hard to type this
                 return load_model(gm.Message, payload) # type: ignore[arg-type]
-            case [payload, data]:
-                return load_model(gm.Message, payload, data=data) # type: ignore[arg-type]
             case _:
                 raise IllegalRequestError('Wrong number of frames')
     except DeserializeError as exc:

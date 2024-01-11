@@ -134,27 +134,25 @@ def serialize_child(index):
         index.to_bytes(4, 'little')
         )
 
-def dump_model(model: Any, exclude: set[str] | None = None) -> bytes:
+def dump_model(model: Any) -> bytes:
     """
     Serialize pydantic model or dataclass with msgpack
 
     Args:
         model: the dataclass or pydantic model to dump
-        exclude: set of fields to exclude from the serialization
     """
     if hasattr(model, 'model_dump'):
-        dump = model.model_dump(exclude=exclude)
+        dump = model.model_dump()
     else:
         dump = (
                 RootModel[type(model)] # type: ignore[misc] # pydantic magic
-                (model).model_dump(exclude=exclude)
+                (model).model_dump()
                 )
     return msgpack.dumps(dump)
 
 T = TypeVar('T', bound=BaseModel)
 
-def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
-        ) -> T:
+def load_model(model_type: type[T], payload: bytes) -> T:
     """
     Load a msgpack-serialized pydantic model
 
@@ -163,8 +161,6 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
     Args:
         model_type: The pydantic model class of the object to create
         payload: The msgpack-encoded buffer with the object data
-        extra_fieds: attributes to add to the decoded payload before validation,
-            intended to add out-of-band fields to the structure.
 
     Raises:
         DeserializeError on any failed deserialization or validation.
@@ -173,7 +169,6 @@ def load_model(model_type: type[T], payload: bytes, **extra_fields: Any
         doc = msgpack.loads(payload)
         if not isinstance(doc, dict):
             raise TypeError
-        doc.update(extra_fields)
     # Per msgpack docs:
     # "unpack may raise exception other than subclass of UnpackException.
     # If you want to catch all error, catch Exception instead.:

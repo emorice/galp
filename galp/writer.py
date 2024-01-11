@@ -14,3 +14,9 @@ Type of messages expected by the transport, also somewhat ZMQ-specific
 """
 
 Writer: TypeAlias = Callable[[list[bytes]], TransportMessage]
+
+def add_frames(write_lower: Writer, frames: list[bytes]) -> Writer:
+    """
+    Concatenate a frame to a message
+    """
+    return lambda payload: write_lower(frames + payload)
