@@ -69,7 +69,7 @@ def _log_message(msg: gm.Message, proto_name: str) -> None:
 
     logging.info(pattern, msg_log_str)
 
-def _parse_core_message(msg_body: list[bytes]) -> gm.Message:
+def parse_core_message(msg_body: list[bytes]) -> gm.Message:
     """
     Deserialize the core galp.message in the payload.
 
@@ -77,11 +77,11 @@ def _parse_core_message(msg_body: list[bytes]) -> gm.Message:
     """
     try:
         match msg_body:
-            case [payload]:
-                # pydantic magic, see
-                # https://github.com/python/mypy/issues/9773 for context
-                # about why it's hard to type this
-                return load_model(gm.Message, payload) # type: ignore[arg-type]
+            case [verb, payload]:
+                cls = gm.msr.get_type(verb)
+                if cls is None:
+                    raise IllegalRequestError(f'Bad message: {verb!r}')
+                return load_model(cls, payload)
             case _:
                 raise IllegalRequestError('Wrong number of frames')
     except DeserializeError as exc:
@@ -98,7 +98,7 @@ def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
     def on_message(session: ReplyFromSession, next_session: AppSessionT, msg: list[bytes]
                    ) -> Iterable[TransportMessage]:
         def _unsafe_handle():
-            msg_obj = _parse_core_message(msg)
+            msg_obj = parse_core_message(msg)
             _log_message(msg_obj, proto_name)
             return upper(next_session, msg_obj)
         return _handle_illegal(session, _unsafe_handle)
@@ -217,7 +217,7 @@ def make_type_dispatcher(handlers: Iterable[Handler]) -> DispatchFunction:
         hdl.handles: hdl.handler
         for hdl in handlers
         }
-    def on_message(session: UpperSession, msg: gm.BaseMessage
+    def on_message(session: UpperSession, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Dispatches

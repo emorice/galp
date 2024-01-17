@@ -18,7 +18,8 @@ import galp.worker
 import galp.messages as gm
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.protocol import make_stack, make_local_handler, make_name_dispatcher
-from galp.serializer import dump_model, load_model
+from galp.upper_session import dump_message
+from galp.protocol import parse_core_message
 from galp.async_utils import background
 
 class Pool:
@@ -83,7 +84,7 @@ class Pool:
         """
         Starts a worker.
         """
-        self.forkserver_socket.send(dump_model(fork_msg))
+        self.forkserver_socket.send_multipart(dump_message(fork_msg))
         b_pid = self.forkserver_socket.recv()
         pid = int.from_bytes(b_pid, 'little')
 
@@ -174,7 +175,7 @@ def forkserver(config):
         cpus = psutil.Process().cpu_affinity()
 
     while True:
-        msg = load_model(gm.Message, socket.recv())
+        msg = parse_core_message(socket.recv_multipart())
         match msg:
             case gm.Fork():
                 _config = dict(config, mission=msg.mission,
@@ -210,7 +211,7 @@ async def run_forkserver(config):
     try:
         yield socket
     finally:
-        socket.send(dump_model(gm.Exit()))
+        socket.send_multipart(dump_message(gm.Exit()))
         thread.join()
 
 def on_signal(sig, pool):

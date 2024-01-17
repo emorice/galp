@@ -48,7 +48,7 @@ class Allocation:
     """
     claim: gtt.ResourceClaim
     resources: Resources
-    msg: gm.BaseMessage
+    msg: gm.Message
     client: ReplyFromSession
     task_id: bytes
 
@@ -178,7 +178,7 @@ class CommonProtocol:
             )
         return None
 
-    def calc_resource_claim(self, msg: gm.BaseMessage) -> gtt.ResourceClaim:
+    def calc_resource_claim(self, msg: gm.Message) -> gtt.ResourceClaim:
         """
         Determine resources requested by a request
         """
@@ -219,7 +219,7 @@ class CommonProtocol:
 
         # For Submits, the worker will need to know the details of the
         # allocation, so wrap the original message
-        new_msg: gm.BaseMessage
+        new_msg: gm.Message
         if isinstance(msg, gm.Submit):
             new_msg = gm.Exec(submit=msg, resources=resources)
         else:

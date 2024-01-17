@@ -8,6 +8,12 @@ from galp.messages import Message
 from galp.writer import TransportMessage, Writer, add_frames
 from galp.serializer import dump_model
 
+def dump_message(message: Message) -> list[bytes]:
+    """
+    Serialize a message
+    """
+    return [message.verb.encode('ascii'), dump_model(message)]
+
 @dataclass
 class UpperSession:
     """
@@ -22,6 +28,5 @@ class UpperSession:
         Route is specified through the lower_session attribute.
         """
         return add_frames(
-                self.write_lower,
-                [dump_model(message)]
+                self.write_lower, dump_message(message)
                 )([])

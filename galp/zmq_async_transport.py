@@ -35,7 +35,7 @@ class ZmqAsyncTransport:
     def __del__(self):
         self.socket.close()
 
-    async def send_message(self, msg: gm.BaseMessage) -> None:
+    async def send_message(self, msg: gm.Message) -> None:
         """
         Passes msg to the protocol to be serialized, then sends it.
 

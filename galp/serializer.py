@@ -13,7 +13,7 @@ import logging
 import msgpack # type: ignore[import] # Issue 85
 import dill # type: ignore[import] # Issue 85
 
-from pydantic import BaseModel, ValidationError, TypeAdapter, RootModel
+from pydantic import ValidationError, TypeAdapter, RootModel
 
 from galp import serialize
 from galp.serialize import DeserializeError
@@ -150,13 +150,14 @@ def dump_model(model: Any) -> bytes:
                 )
     return msgpack.dumps(dump)
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar('T')
 
 def load_model(model_type: type[T], payload: bytes) -> T:
     """
     Load a msgpack-serialized pydantic model
 
-    Also works on union of models (though the call won't type check).
+    Also works on dataclasses, or union of models (though for unions the call
+    won't type check because an union is not a Type).
 
     Args:
         model_type: The pydantic model class of the object to create

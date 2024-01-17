@@ -4,24 +4,18 @@ Models for Galp messages
 Not in actual use yet
 """
 
-from typing import Literal, Annotated, TypeVar, TypeAlias
+from typing import Literal, Annotated, TypeAlias
 from dataclasses import field, dataclass
 from pydantic import Field
 
 from . import task_types as gtt
 from .task_types import TaskName, TaskDef, CoreTaskDef, TaskRef
 
-@dataclass(frozen=True)
-class BaseMessage:
-    """
-    Base class for messages
-    """
-
 # Replies
 # ========
 
 @dataclass(frozen=True)
-class Doing(BaseMessage):
+class Doing:
     """
     A message signaling that a task has been allocated or started
 
@@ -33,7 +27,7 @@ class Doing(BaseMessage):
     verb: Literal['doing'] = field(default='doing', repr=False)
 
 @dataclass(frozen=True)
-class Done(BaseMessage):
+class Done:
     """
     A message signaling that a task has been succesful run
 
@@ -55,7 +49,7 @@ class Done(BaseMessage):
         return self.task_def.name
 
 @dataclass(frozen=True)
-class Failed(BaseMessage):
+class Failed:
     """
     Signals that the execution of task has failed
 
@@ -74,7 +68,7 @@ class Failed(BaseMessage):
         return self.task_def.name
 
 @dataclass(frozen=True)
-class Found(BaseMessage):
+class Found:
     """
     A message notifying that a task was registered, but not yet executed
 
@@ -93,7 +87,7 @@ class Found(BaseMessage):
         return self.task_def.name
 
 @dataclass(frozen=True)
-class NotFound(BaseMessage):
+class NotFound:
     """
     A message indicating that no trace of a task was found
 
@@ -105,7 +99,7 @@ class NotFound(BaseMessage):
     verb: Literal['not_found'] = field(default='not_found', repr=False)
 
 @dataclass(frozen=True)
-class Put(BaseMessage):
+class Put:
     """
     A message sending a serialized task result
 
@@ -129,18 +123,65 @@ ReplyValue = Annotated[
 # Messages
 # ========
 
+@dataclass(frozen=True)
+class Message:
+    """
+    Base class for messages
+    """
+
+class MessageRegistry:
+    """
+    Associate message classes with unique keys that can be used to mux and
+    demux them when serializing and deserializing messages
+    """
+    def __init__(self) -> None:
+        self.types: dict[bytes, type[Message]] = {}
+
+    def register(self, key: str):
+        """
+        Register a key to indicate a message type when serializing
+
+        While keys are bytes, for convenience this accepts string and
+        ascii-encodes them
+        """
+        b_key = key.encode('ascii')
+        def _register(cls: type[Message]):
+            if b_key in self.types:
+                raise ValueError(f'Message type key {key} is already used for '
+                        + str(self.types[b_key]))
+            self.types[b_key] = cls
+            return cls
+        return _register
+
+    def reg_verb(self, cls):
+        """
+        Like register for classes with the key already specified by the 'verb'
+        attribute, transition helper function
+        """
+        return self.register(cls.verb)(cls)
+
+    def get_type(self, key: bytes) -> type[Message] | None:
+        """
+        Returns the type associated with a key
+        """
+        return self.types.get(key)
+
+msr = MessageRegistry()
+
 # Lifecycle
 # ----------
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Exit(BaseMessage):
+class Exit(Message):
     """
     A message asking a peer to leave the system
     """
     verb: Literal['exit'] = field(default='exit', repr=False)
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Exited(BaseMessage):
+class Exited(Message):
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
     other peer that detected the kill event
@@ -152,8 +193,9 @@ class Exited(BaseMessage):
 
     verb: Literal['exited'] = field(default='exited', repr=False)
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Illegal(BaseMessage):
+class Illegal(Message):
     """
     A message notifying that a previously sent message was malformed
 
@@ -164,8 +206,9 @@ class Illegal(BaseMessage):
 
     verb: Literal['illegal'] = field(default='illegal', repr=False)
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Fork(BaseMessage):
+class Fork(Message):
     """
     A message asking for a new peer, compatible with some resource claim, to be
     created.
@@ -175,8 +218,9 @@ class Fork(BaseMessage):
 
     verb: Literal['fork'] = field(default='fork', repr=False)
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Ready(BaseMessage):
+class Ready(Message):
     """
     A message advertising a worker joining the system
 
@@ -189,8 +233,9 @@ class Ready(BaseMessage):
 
     verb: Literal['ready'] = field(default='ready', repr=False)
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class PoolReady(BaseMessage):
+class PoolReady(Message):
     """
     A message advertising a pool (forkserver) joining the system
 
@@ -204,8 +249,9 @@ class PoolReady(BaseMessage):
 # Requests
 # --------
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Get(BaseMessage):
+class Get(Message):
     """
     A message asking for an already computed resource
 
@@ -223,8 +269,9 @@ class Get(BaseMessage):
         """
         return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Stat(BaseMessage):
+class Stat(Message):
     """
     A message asking if a task is defined or executed
 
@@ -242,8 +289,9 @@ class Stat(BaseMessage):
         """
         return f'{self.verb}:{self.name.hex()}'.encode('ascii')
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Submit(BaseMessage):
+class Submit(Message):
     """
     A message asking for a task to be executed
 
@@ -275,8 +323,9 @@ Request: TypeAlias = Get | Stat | Submit
 # Req-rep wrappers
 # ----------------
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Exec(BaseMessage):
+class Exec(Message):
     """
     A message wrapping a Submit with a resource allocation
     """
@@ -285,8 +334,9 @@ class Exec(BaseMessage):
 
     verb: Literal['exec'] = field(default='exec', repr=False)
 
+@msr.reg_verb
 @dataclass(frozen=True)
-class Reply(BaseMessage):
+class Reply(Message):
     """
     Wraps the result to a request, identifing said request
     """
@@ -294,9 +344,3 @@ class Reply(BaseMessage):
     value: ReplyValue
 
     verb: Literal['reply'] = field(default='reply', repr=False)
-
-Message = Annotated[
-        Exit | Exited | Get | Illegal | Fork | Ready | PoolReady | Stat | Submit
-        | Exec | Reply,
-        Field(discriminator='verb')
-        ]

@@ -41,11 +41,12 @@ def load_message(msg: list[bytes]) -> gm.Message:
     """
     Deserialize message body
     """
-    assert len(msg) == 2 # null, payload
-    return TypeAdapter(gm.Message).validate_python({
-        'forward': [], 'incoming': [],
-        **msgpack.loads(msg[-1])
-        }) # type: ignore[return-value] # magic
+    assert len(msg) == 3 # null, verb, payload
+    cls = gm.msr.get_type(msg[1])
+    assert cls
+    return TypeAdapter(cls).validate_python(
+        msgpack.loads(msg[-1])
+        )
 
 def zmq_recv_message(socket) -> gm.Message:
     """
