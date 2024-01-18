@@ -6,9 +6,9 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, TypeAlias, TypeVar
 
-from galp.protocol import (DispatchFunction, Handler, TransportMessage,
+from galp.protocol import (Handler, TransportMessage,
     UpperSession, HandlerFunction)
-from galp.messages import Reply, ReplyValue, Message
+from galp.messages import Reply, ReplyValue, Request
 from galp.commands import Script, PrimitiveProxy, InertCommand
 
 @dataclass
@@ -28,7 +28,7 @@ class ReplySession:
             value=value
             ))
 
-M = TypeVar('M', bound=Message)
+M = TypeVar('M', bound=Request)
 
 RequestHandler: TypeAlias = Callable[[ReplySession, M], list[TransportMessage]]
 
