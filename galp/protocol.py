@@ -4,7 +4,7 @@ GALP protocol implementation
 
 import logging
 
-from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
+from typing import TypeAlias, Iterable, TypeVar, Generic, Callable, Protocol, Any
 from dataclasses import dataclass
 
 import galp.messages as gm
@@ -47,6 +47,7 @@ def _handle_illegal(session: ReplyFromSession,
     try:
         return upper()
     except IllegalRequestError as exc:
+        logging.exception('Bad request')
         return [session
                 .reply_from(None)
                 .write(gm.Illegal(reason=exc.reason))
@@ -69,6 +70,61 @@ def _log_message(msg: gm.Message, proto_name: str) -> None:
 
     logging.info(pattern, msg_log_str)
 
+T = TypeVar('T')
+
+class DefaultLoader(Protocol): # pylint: disable=too-few-public-methods
+    """Generic callable signature for a universal object loader"""
+    def __call__(self, cls: type[T]) -> Callable[[list[bytes]], T]: ...
+
+class Loaders:
+    """
+    Thin wrapper around a dictionary that maps types to a method to load them
+    from buffers. This class is used because even if the functionality is a
+    trivial defaultdict, the type signature is quite more elaborate.
+    """
+    def __init__(self, default_loader: DefaultLoader):
+        self._loaders: dict[type, Callable[[list[bytes]], Any]] = {}
+        self._default_loader = default_loader
+
+    def __setitem__(self, cls: type[T], loader: Callable[[list[bytes]], T]
+            ) -> None:
+        self._loaders[cls] = loader
+
+    def __getitem__(self, cls: type[T]) -> Callable[[list[bytes]], T]:
+        loader = self._loaders.get(cls)
+        if loader is None:
+            return self._default_loader(cls)
+        return loader
+
+def _default_loader(cls: type[T]) -> Callable[[list[bytes]], T]:
+    """
+    Fallback to loading a message consisting of a single frame by using the
+    general pydantic validating constructor for e.g. dataclasses
+    """
+    def _load(frames: list[bytes]) -> T:
+        match frames:
+            case [frame]:
+                return load_model(cls, frame)
+            case _:
+                raise IllegalRequestError('Wrong number of frames')
+    return _load
+
+def _reply_loader(frames: list[bytes]) -> gm.Reply:
+    """
+    Constructs a Reply
+    """
+    match frames:
+        case [core_frame, value_frame]:
+            return gm.Reply(
+                request=load_model(str, core_frame),
+                value=load_model(gm.ReplyValue, value_frame) # type: ignore[arg-type]
+                )
+        case _:
+            raise IllegalRequestError('Wrong number of frames')
+
+_message_loader = Loaders(_default_loader)
+_message_loader[gm.Reply] = _reply_loader
+
 def parse_core_message(msg_body: list[bytes]) -> gm.Message:
     """
     Deserialize the core galp.message in the payload.
@@ -77,11 +133,11 @@ def parse_core_message(msg_body: list[bytes]) -> gm.Message:
     """
     try:
         match msg_body:
-            case [verb, payload]:
+            case [verb, *frames]:
                 cls = gm.Message.message_get_type(verb)
                 if cls is None:
                     raise IllegalRequestError(f'Bad message: {verb!r}')
-                return load_model(cls, payload)
+                return _message_loader[cls](frames)
             case _:
                 raise IllegalRequestError('Wrong number of frames')
     except DeserializeError as exc:

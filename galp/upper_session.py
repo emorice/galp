@@ -3,16 +3,33 @@ Core-layer writer
 """
 
 from dataclasses import dataclass
+from functools import singledispatch
 
-from galp.messages import Message
+from galp.messages import Message, Reply
 from galp.writer import TransportMessage, Writer, add_frames
 from galp.serializer import dump_model
+
+@singledispatch
+def dump_message_data(message: Message) -> list[bytes]:
+    """
+    Dump a message, without the type identification frame
+
+    Fallback is to use pydantic to serialize the class, assuming it's a
+    dataclass
+
+    For replies, the value is handled as a separate frame
+    """
+    return [dump_model(message)]
+
+@dump_message_data.register
+def _(message: Reply) -> list[bytes]:
+    return [dump_model(message.request), dump_model(message.value)]
 
 def dump_message(message: Message) -> list[bytes]:
     """
     Serialize a message
     """
-    return [message.message_get_key(), dump_model(message)]
+    return [message.message_get_key(), *dump_message_data(message)]
 
 @dataclass
 class UpperSession:
