@@ -168,8 +168,6 @@ def load_model(model_type: type[T], payload: bytes) -> T:
     """
     try:
         doc = msgpack.loads(payload)
-        if not isinstance(doc, dict):
-            raise TypeError
     # Per msgpack docs:
     # "unpack may raise exception other than subclass of UnpackException.
     # If you want to catch all error, catch Exception instead.:

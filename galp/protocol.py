@@ -131,17 +131,17 @@ def parse_core_message(msg_body: list[bytes]) -> gm.Message:
 
     Raises IllegalRequestError on deserialization or validation problems
     """
-    try:
-        match msg_body:
-            case [verb, *frames]:
-                cls = gm.Message.message_get_type(verb)
-                if cls is None:
-                    raise IllegalRequestError(f'Bad message: {verb!r}')
+    match msg_body:
+        case [verb, *frames]:
+            cls = gm.Message.message_get_type(verb)
+            if cls is None:
+                raise IllegalRequestError(f'Bad message: {verb!r}')
+            try:
                 return _message_loader[cls](frames)
-            case _:
-                raise IllegalRequestError('Wrong number of frames')
-    except DeserializeError as exc:
-        raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
+            except DeserializeError as exc:
+                raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
+        case _:
+            raise IllegalRequestError('Wrong number of frames')
 
 def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
         ) -> RoutedHandler[AppSessionT]:
