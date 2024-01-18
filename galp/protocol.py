@@ -53,7 +53,7 @@ def _handle_illegal(session: ReplyFromSession,
                 ]
 
 def _log_message(msg: gm.Message, proto_name: str) -> None:
-    verb = msg.verb.upper()
+    verb = msg.message_get_key()
     match msg:
         case gm.Submit() | gm.Found():
             arg = str(msg.task_def.name)
@@ -62,7 +62,7 @@ def _log_message(msg: gm.Message, proto_name: str) -> None:
 
     msg_log_str = (
         f"{proto_name +' ' if proto_name else ''}"
-        f" {verb} {arg}"
+        f" {verb!r} {arg}"
         )
 
     pattern = '<- %s' #if is_incoming else '-> %s'
@@ -78,7 +78,7 @@ def parse_core_message(msg_body: list[bytes]) -> gm.Message:
     try:
         match msg_body:
             case [verb, payload]:
-                cls = gm.msr.get_type(verb)
+                cls = gm.Message.message_get_type(verb)
                 if cls is None:
                     raise IllegalRequestError(f'Bad message: {verb!r}')
                 return load_model(cls, payload)
@@ -193,7 +193,7 @@ def make_name_dispatcher(upper) -> DispatchFunction:
         Process a routed message by forwarding the body only to the on_ method
         of matching name
         """
-        method = getattr(upper, f'on_{msg.verb}', None)
+        method = getattr(upper, f'on_{msg.message_get_key().decode("ascii")}', None)
         if not method:
             #logging.error("Unhandled GALP verb %s", msg.verb)
             return []

@@ -123,65 +123,83 @@ ReplyValue = Annotated[
 # Messages
 # ========
 
-@dataclass(frozen=True)
-class Message:
-    """
-    Base class for messages
-    """
-
 class MessageRegistry:
     """
     Associate message classes with unique keys that can be used to mux and
     demux them when serializing and deserializing messages
     """
     def __init__(self) -> None:
-        self.types: dict[bytes, type[Message]] = {}
+        self.types: 'dict[bytes, type[Message]]' = {}
+        self.keys: 'dict[type[Message], bytes]' = {}
 
     def register(self, key: str):
         """
         Register a key to indicate a message type when serializing
 
         While keys are bytes, for convenience this accepts string and
-        ascii-encodes them
+        ascii-encodes them. This always use the lower case string, so that
+        registering two messages that differ only by case would also fail.
         """
-        b_key = key.encode('ascii')
-        def _register(cls: type[Message]):
+        b_key = key.lower().encode('ascii')
+        def _register(cls: 'type[Message]'):
             if b_key in self.types:
                 raise ValueError(f'Message type key {key} is already used for '
                         + str(self.types[b_key]))
             self.types[b_key] = cls
+            self.keys[cls] = b_key
             return cls
         return _register
 
-    def reg_verb(self, cls):
-        """
-        Like register for classes with the key already specified by the 'verb'
-        attribute, transition helper function
-        """
-        return self.register(cls.verb)(cls)
-
-    def get_type(self, key: bytes) -> type[Message] | None:
+    def get_type(self, key: bytes) -> 'type[Message] | None':
         """
         Returns the type associated with a key
         """
         return self.types.get(key)
 
-msr = MessageRegistry()
+    def get_key(self, cls: 'type[Message]') -> bytes:
+        """
+        Returns the key associated with a type.
+        """
+        return self.keys[cls]
+
+class Message:
+    """
+    Base class for messages. Through init_subclass, forces subclasses to
+    register a unique key used for communication
+    """
+    _message_registry = MessageRegistry()
+
+    def __init_subclass__(cls, /, key: str, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        # Transitional. Since init_subclass is called before the call to
+        # dataclass, verb is still a Field object here
+        cls._message_registry.register(key)(cls)
+
+    @classmethod
+    def message_get_key(cls) -> bytes:
+        """
+        Get the unique key associated with a class
+        """
+        return cls._message_registry.get_key(cls)
+
+    @classmethod
+    def message_get_type(cls, key: bytes) -> 'type[Message] | None':
+        """
+        Get the class associated with unique key
+        """
+        return cls._message_registry.get_type(key)
 
 # Lifecycle
 # ----------
 
-@msr.reg_verb
 @dataclass(frozen=True)
-class Exit(Message):
+class Exit(Message, key='exit'):
     """
     A message asking a peer to leave the system
     """
-    verb: Literal['exit'] = field(default='exit', repr=False)
 
-@msr.reg_verb
 @dataclass(frozen=True)
-class Exited(Message):
+class Exited(Message, key='exited'):
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
     other peer that detected the kill event
@@ -191,11 +209,8 @@ class Exited(Message):
     """
     peer: str
 
-    verb: Literal['exited'] = field(default='exited', repr=False)
-
-@msr.reg_verb
 @dataclass(frozen=True)
-class Illegal(Message):
+class Illegal(Message, key='illegal'):
     """
     A message notifying that a previously sent message was malformed
 
@@ -204,11 +219,8 @@ class Illegal(Message):
     """
     reason:str
 
-    verb: Literal['illegal'] = field(default='illegal', repr=False)
-
-@msr.reg_verb
 @dataclass(frozen=True)
-class Fork(Message):
+class Fork(Message, key='fork'):
     """
     A message asking for a new peer, compatible with some resource claim, to be
     created.
@@ -216,11 +228,8 @@ class Fork(Message):
     mission: bytes
     resources: gtt.ResourceClaim
 
-    verb: Literal['fork'] = field(default='fork', repr=False)
-
-@msr.reg_verb
 @dataclass(frozen=True)
-class Ready(Message):
+class Ready(Message, key='ready'):
     """
     A message advertising a worker joining the system
 
@@ -231,11 +240,8 @@ class Ready(Message):
     local_id: str
     mission: bytes
 
-    verb: Literal['ready'] = field(default='ready', repr=False)
-
-@msr.reg_verb
 @dataclass(frozen=True)
-class PoolReady(Message):
+class PoolReady(Message, key='poolReady'):
     """
     A message advertising a pool (forkserver) joining the system
 
@@ -244,14 +250,11 @@ class PoolReady(Message):
     """
     cpus: list[int]
 
-    verb: Literal['pool_ready'] = field(default='pool_ready', repr=False)
-
 # Requests
 # --------
 
-@msr.reg_verb
 @dataclass(frozen=True)
-class Get(Message):
+class Get(Message, key='get'):
     """
     A message asking for an already computed resource
 
@@ -260,18 +263,17 @@ class Get(Message):
     """
     name: TaskName
 
-    verb: Literal['get'] = field(default='get', repr=False)
-
     @property
     def task_key(self) -> bytes:
         """
         Unique request identifier
         """
-        return f'{self.verb}:{self.name.hex()}'.encode('ascii')
+        return f'get:{self.name.hex()}'.encode('ascii')
 
-@msr.reg_verb
+    verb = 'get'
+
 @dataclass(frozen=True)
-class Stat(Message):
+class Stat(Message, key='stat'):
     """
     A message asking if a task is defined or executed
 
@@ -280,18 +282,17 @@ class Stat(Message):
     """
     name: TaskName
 
-    verb: Literal['stat'] = field(default='stat', repr=False)
-
     @property
     def task_key(self) -> bytes:
         """
         Unique request identifier
         """
-        return f'{self.verb}:{self.name.hex()}'.encode('ascii')
+        return f'stat:{self.name.hex()}'.encode('ascii')
 
-@msr.reg_verb
+    verb = 'stat'
+
 @dataclass(frozen=True)
-class Submit(Message):
+class Submit(Message, key='submit'):
     """
     A message asking for a task to be executed
 
@@ -302,14 +303,12 @@ class Submit(Message):
     task_def: CoreTaskDef
     resources: gtt.ResourceClaim
 
-    verb: Literal['submit'] = field(default='submit', repr=False)
-
     @property
     def task_key(self) -> bytes:
         """
         Unique request identifier
         """
-        return f'{self.verb}:{self.task_def.name.hex()}'.encode('ascii')
+        return f'submit:{self.task_def.name.hex()}'.encode('ascii')
 
     @property
     def name(self) -> TaskName:
@@ -318,29 +317,25 @@ class Submit(Message):
         """
         return self.task_def.name
 
+    verb = 'submit'
+
 Request: TypeAlias = Get | Stat | Submit
 
 # Req-rep wrappers
 # ----------------
 
-@msr.reg_verb
 @dataclass(frozen=True)
-class Exec(Message):
+class Exec(Message, key='exec'):
     """
     A message wrapping a Submit with a resource allocation
     """
     submit: Submit
     resources: gtt.Resources
 
-    verb: Literal['exec'] = field(default='exec', repr=False)
-
-@msr.reg_verb
 @dataclass(frozen=True)
-class Reply(Message):
+class Reply(Message, key='reply'):
     """
     Wraps the result to a request, identifing said request
     """
     request: str
     value: ReplyValue
-
-    verb: Literal['reply'] = field(default='reply', repr=False)

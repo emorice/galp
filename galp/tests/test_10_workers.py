@@ -42,7 +42,7 @@ def load_message(msg: list[bytes]) -> gm.Message:
     Deserialize message body
     """
     assert len(msg) == 3 # null, verb, payload
-    cls = gm.msr.get_type(msg[1])
+    cls = gm.Message.message_get_type(msg[1])
     assert cls
     return TypeAdapter(cls).validate_python(
         msgpack.loads(msg[-1])
@@ -119,10 +119,10 @@ async def test_fork_worker(tmpdir):
     socket.bind('tcp://127.0.0.1:*')
     endpoint = socket.getsockopt(zmq.LAST_ENDPOINT)
 
-    pid = galp.worker.fork(dict(
-        endpoint=endpoint,
-        store=tmpdir
-        ))
+    pid = galp.worker.fork({
+        'endpoint': endpoint,
+        'store': tmpdir
+        })
     try:
         async with timeout(3):
             msg = await socket.recv_multipart()

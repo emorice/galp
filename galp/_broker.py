@@ -266,7 +266,7 @@ class CommonProtocol:
             if not isinstance(msg.value, gm.Doing):
                 self.free_resources(sessions.origin)
         # Forward as-is.
-        logging.debug('Forwarding %s', msg.verb)
+        logging.debug('Forwarding %s', msg.__class__.__name__)
         return [sessions.dest.reply_from(sessions.origin).write(msg)]
 
     def on_local(self, session: ReplyFromSession, msg: gm.Message

@@ -12,7 +12,7 @@ def dump_message(message: Message) -> list[bytes]:
     """
     Serialize a message
     """
-    return [message.verb.encode('ascii'), dump_model(message)]
+    return [message.message_get_key(), dump_model(message)]
 
 @dataclass
 class UpperSession:
