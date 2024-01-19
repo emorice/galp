@@ -6,6 +6,7 @@ Not in actual use yet
 
 from typing import Literal, Annotated, TypeAlias
 from dataclasses import field, dataclass
+from typing_extensions import Self
 from pydantic import Field
 
 from . import task_types as gtt
@@ -123,71 +124,59 @@ ReplyValue = Annotated[
 # Messages
 # ========
 
-class MessageRegistry:
+class MessageType:
     """
-    Associate message classes with unique keys that can be used to mux and
-    demux them when serializing and deserializing messages
+    Base class that implement mandatory registration of direct subclasses for
+    all its subclass hierarchy.
+
+    Every class that subclasses, directly or indirectly, MessageType, has to
+    specify a unique key that identifies it among its direct sister classes.
+    Unicity is enforced at class definition time.
+
+    Class methods are available to obtain the key a class has been registered
+    with, and crucially which direct subclass of a given class is associated
+    with a key.
     """
-    def __init__(self) -> None:
-        self.types: 'dict[bytes, type[Message]]' = {}
-        self.keys: 'dict[type[Message], bytes]' = {}
+    _message_registry: dict[bytes, type[Self]] = {}
+    _message_type_key: bytes = b'_root'
 
-    def register(self, key: str):
-        """
-        Register a key to indicate a message type when serializing
-
-        While keys are bytes, for convenience this accepts string and
-        ascii-encodes them. This always use the lower case string, so that
-        registering two messages that differ only by case would also fail.
-        """
+    def __init_subclass__(cls, /, key: str) -> None:
+        # Normalize the key
         b_key = key.lower().encode('ascii')
-        def _register(cls: 'type[Message]'):
-            if b_key in self.types:
-                raise ValueError(f'Message type key {key} is already used for '
-                        + str(self.types[b_key]))
-            self.types[b_key] = cls
-            self.keys[cls] = b_key
-            return cls
-        return _register
-
-    def get_type(self, key: bytes) -> 'type[Message] | None':
-        """
-        Returns the type associated with a key
-        """
-        return self.types.get(key)
-
-    def get_key(self, cls: 'type[Message]') -> bytes:
-        """
-        Returns the key associated with a type.
-        """
-        return self.keys[cls]
-
-class Message:
-    """
-    Base class for messages. Through init_subclass, forces subclasses to
-    register a unique key used for communication
-    """
-    _message_registry = MessageRegistry()
-
-    def __init_subclass__(cls, /, key: str, **kwargs) -> None:
-        super().__init_subclass__(**kwargs)
-        # Transitional. Since init_subclass is called before the call to
-        # dataclass, verb is still a Field object here
-        cls._message_registry.register(key)(cls)
+        # First, register the class in its parent's regitry
+        previous = cls._message_registry.get(b_key)
+        if previous:
+            raise ValueError(f'Message type key {b_key!r} is already used for '
+                    + str(previous))
+        cls._message_registry[b_key] = cls
+        # Save the key, since accesing the parent's registry later is hard
+        cls._message_type_key = b_key
+        # Then, initialize a new registry that will mask the parent's
+        cls._message_registry = {}
 
     @classmethod
     def message_get_key(cls) -> bytes:
         """
         Get the unique key associated with a class
         """
-        return cls._message_registry.get_key(cls)
+        return cls._message_type_key
 
     @classmethod
-    def message_get_type(cls, key: bytes) -> 'type[Message] | None':
+    def message_get_type(cls, key: bytes) -> type[Self] | None:
         """
-        Get the class associated with unique key
+        Get the sub-class associated with a unique key
         """
-        return cls._message_registry.get_type(key)
+        # The type checker is right that in general, _message_registry could
+        # contain a type that is not a sub-type of Self, and complains.
+        # In reality, the fact that this cannot happen is application logic
+        # guaranteed by the fact that we *reset* the registry each time, and
+        # therefore the hierarchy above is never exposed to the class.
+        return cls._message_registry.get(key) # type: ignore[return-value]
+
+class Message(MessageType, key='_core'):
+    """
+    Base class for core layer messages
+    """
 
 # Lifecycle
 # ----------
