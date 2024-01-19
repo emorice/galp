@@ -109,15 +109,25 @@ def _default_loader(cls: type[T]) -> Callable[[list[bytes]], T]:
                 raise IllegalRequestError('Wrong number of frames')
     return _load
 
+def _reply_value_loader(frames: list[bytes]) -> gm.BaseReplyValue:
+    match frames:
+        case [key, *value_frames]:
+            vtype = gm.BaseReplyValue.message_get_type(key)
+            if not vtype:
+                raise IllegalRequestError(f'Bad message: {vtype!r}')
+            return _default_loader(vtype)(value_frames)
+        case _:
+            raise IllegalRequestError('Wrong number of frames')
+
 def _reply_loader(frames: list[bytes]) -> gm.Reply:
     """
     Constructs a Reply
     """
     match frames:
-        case [core_frame, value_frame]:
+        case [core_frame, *value_frames]:
             return gm.Reply(
                 request=load_model(str, core_frame),
-                value=load_model(gm.ReplyValue, value_frame) # type: ignore[arg-type]
+                value=_reply_value_loader(value_frames)
                 )
         case _:
             raise IllegalRequestError('Wrong number of frames')
