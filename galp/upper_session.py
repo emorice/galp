@@ -5,11 +5,11 @@ Core-layer writer
 from dataclasses import dataclass
 from functools import singledispatch
 
-from galp.messages import Message, Reply, BaseReplyValue
+from galp.messages import Message, Reply, ReplyValue
 from galp.writer import TransportMessage, Writer, add_frames
 from galp.serializer import dump_model
 
-def dump_reply_value(value: BaseReplyValue) -> list[bytes]:
+def dump_reply_value(value: ReplyValue) -> list[bytes]:
     """
     Serializes a reply value along its type key
     """

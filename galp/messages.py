@@ -4,10 +4,9 @@ Models for Galp messages
 Not in actual use yet
 """
 
-from typing import Literal, Annotated, TypeAlias
-from dataclasses import field, dataclass
+from typing import TypeAlias
+from dataclasses import dataclass
 from typing_extensions import Self
-from pydantic import Field
 
 from . import task_types as gtt
 from .task_types import TaskName, TaskDef, CoreTaskDef, TaskRef
@@ -67,19 +66,19 @@ class MessageType:
 # Replies
 # ========
 
-class BaseReplyValue(MessageType, key='_rvalue'):
+class ReplyValue(MessageType, key='_rvalue'):
     """
     Base class for messages inside a Reply
     """
 
 @dataclass(frozen=True)
-class Doing(BaseReplyValue, key='doing'):
+class Doing(ReplyValue, key='doing'):
     """
     A message signaling that a task has been allocated or started
     """
 
 @dataclass(frozen=True)
-class Done(BaseReplyValue, key='done'):
+class Done(ReplyValue, key='done'):
     """
     A message signaling that a task has been succesful run
 
@@ -92,7 +91,7 @@ class Done(BaseReplyValue, key='done'):
     result: gtt.FlatResultRef
 
 @dataclass(frozen=True)
-class Failed(BaseReplyValue, key='failed'):
+class Failed(ReplyValue, key='failed'):
     """
     Signals that the execution of task has failed
 
@@ -102,7 +101,7 @@ class Failed(BaseReplyValue, key='failed'):
     task_def: CoreTaskDef
 
 @dataclass(frozen=True)
-class Found(BaseReplyValue, key='found'):
+class Found(ReplyValue, key='found'):
     """
     A message notifying that a task was registered, but not yet executed
 
@@ -112,13 +111,13 @@ class Found(BaseReplyValue, key='found'):
     task_def: TaskDef
 
 @dataclass(frozen=True)
-class NotFound(BaseReplyValue, key='notfound'):
+class NotFound(ReplyValue, key='notfound'):
     """
     A message indicating that no trace of a task was found
     """
 
 @dataclass(frozen=True)
-class Put(BaseReplyValue, key='put'):
+class Put(ReplyValue, key='put'):
     """
     A message sending a serialized task result
 
@@ -130,13 +129,6 @@ class Put(BaseReplyValue, key='put'):
     """
     data: bytes
     children: list[TaskRef]
-
-    verb: Literal['put'] = field(default='put', repr=False)
-
-ReplyValue = Annotated[
-        Done | Failed | Found | NotFound | Put | Doing,
-        Field(discriminator='verb')
-        ]
 
 # Messages
 # ========
