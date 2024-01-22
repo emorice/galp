@@ -444,8 +444,9 @@ class StepSet(Block):
     Obsolete alias for PipelineBlock
     """
     def __init__(self, *args, **kwargs):
-        warnings.warn('StepSet is now an alias to Block and will be removed in the'
-                ' future', FutureWarning, stacklevel=2)
+        warnings.warn(
+                'StepSet is now an alias to Block and will be removed in the future',
+                FutureWarning, stacklevel=2)
         super().__init__(*args, **kwargs)
 
 def query(subject: Any, query_doc: Any) -> TaskNode:

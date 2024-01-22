@@ -26,8 +26,9 @@ class Profiler:
             try:
                 self.dir = config['dir']
             except KeyError as exc:
-                raise ConfigError('Profiler is none but no profile.dir '
-                    'was specified') from exc
+                raise ConfigError(
+                        'Profiler is none but no profile.dir was specified'
+                        ) from exc
             os.makedirs(config['dir'], exist_ok=True)
 
             if 'steps' in config:
