@@ -219,14 +219,6 @@ class Get(Message, key='get'):
         name: the task name
     """
     name: TaskName
-
-    @property
-    def task_key(self) -> bytes:
-        """
-        Unique request identifier
-        """
-        return f'get:{self.name.hex()}'.encode('ascii')
-
     verb = 'get'
 
 @dataclass(frozen=True)
@@ -238,14 +230,6 @@ class Stat(Message, key='stat'):
         name: the task name
     """
     name: TaskName
-
-    @property
-    def task_key(self) -> bytes:
-        """
-        Unique request identifier
-        """
-        return f'stat:{self.name.hex()}'.encode('ascii')
-
     verb = 'stat'
 
 @dataclass(frozen=True)
@@ -259,13 +243,6 @@ class Submit(Message, key='submit'):
     """
     task_def: CoreTaskDef
     resources: gtt.ResourceClaim
-
-    @property
-    def task_key(self) -> bytes:
-        """
-        Unique request identifier
-        """
-        return f'submit:{self.task_def.name.hex()}'.encode('ascii')
 
     @property
     def name(self) -> TaskName:

@@ -186,32 +186,30 @@ class CommonProtocol:
             return msg.resources
         return gtt.ResourceClaim(cpus=1)
 
-    def on_request(self, session: ReplyFromSession, msg: gm.Stat | gm.Submit | gm.Get):
+    def on_request(self, session: ReplyFromSession, msg: gm.Request):
         """
         Assign a worker
         """
-        verb = msg.verb
-
         claim = self.calc_resource_claim(msg)
 
         # Drop if we already accepted the same task
         # This ideally should not happen if the client receives proper feedback
         # on when to re-submit, but should happen from time to time under normal
         # operation
-        task_id = msg.task_key
+        task_id = gm.get_request_id(msg).as_word()
         if task_id in self.alloc_from_task:
-            logging.info('Dropping %s (already allocated)', verb)
+            logging.info('Dropping %s (already allocated)', task_id)
             return None
 
         # Drop if we don't have a way to spawn workers
         if not self.pool:
-            logging.info('Dropping %s (pool not joined)', verb)
+            logging.info('Dropping %s (pool not joined)', task_id)
             return None
 
         # Try allocate and drop if we don't have any resources left
         resources, self.resources = self.resources.allocate(claim)
         if resources is None:
-            logging.info('Dropping %s (no resources)', verb)
+            logging.info('Dropping %s (no resources)', task_id)
             return None
 
         # Allocated. At this point the message can be considered
@@ -241,7 +239,7 @@ class CommonProtocol:
         # If we have idle workers, directly forward to one
         if (workers := self.idle_workers[claim]):
             worker = workers.pop()
-            logging.debug('Worker available, forwarding %s', verb)
+            logging.debug('Worker available, forwarding %s', task_id)
 
             # Save task info
             self.alloc_from_wuid[worker.uid] = alloc
