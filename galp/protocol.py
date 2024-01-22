@@ -15,6 +15,7 @@ from galp.lower_protocol import (IllegalRequestError, RoutedHandler,
         AppSessionT, TransportHandler, handle_routing)
 from galp.serializer import load_model, DeserializeError
 from galp.upper_session import UpperSession
+from galp.task_types import TaskRef
 
 # Errors and exceptions
 # =====================
@@ -109,13 +110,27 @@ def _default_loader(cls: type[T]) -> Callable[[list[bytes]], T]:
                 raise IllegalRequestError('Wrong number of frames')
     return _load
 
+def _put_loader(frames: list[bytes]) -> gm.Put:
+    """Loads a Put with data frame"""
+    match frames:
+        case [core_frame, data_frame]:
+            return gm.Put(
+                children=load_model(list[TaskRef], core_frame),
+                data=data_frame
+                )
+        case _:
+            raise IllegalRequestError('Wrong number of frames')
+
+_value_loaders = Loaders(_default_loader)
+_value_loaders[gm.Put] = _put_loader
+
 def _reply_value_loader(frames: list[bytes]) -> gm.ReplyValue:
     match frames:
         case [key, *value_frames]:
             vtype = gm.ReplyValue.message_get_type(key)
             if not vtype:
                 raise IllegalRequestError(f'Bad message: {vtype!r}')
-            return _default_loader(vtype)(value_frames)
+            return _value_loaders[vtype](value_frames)
         case _:
             raise IllegalRequestError('Wrong number of frames')
 
