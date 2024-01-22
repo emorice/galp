@@ -110,6 +110,28 @@ def _default_loader(cls: type[T]) -> Callable[[list[bytes]], T]:
                 raise IllegalRequestError('Wrong number of frames')
     return _load
 
+MT = TypeVar('MT', bound=gm.MessageType)
+
+def parse_message_type(cls: type[MT], loaders: Loaders
+        ) -> Callable[[list[bytes]], MT]:
+    """
+    Common logic in parsing union keyed through MessageType
+    """
+    def _parse(frames: list[bytes]) -> MT:
+        match frames:
+            case [type_frame, *data_frames]:
+                sub_cls = cls.message_get_type(type_frame)
+                if sub_cls is None:
+                    raise IllegalRequestError(f'Bad message: {cls} has no'
+                            + f' subclass with key {type_frame!r}')
+                try:
+                    return loaders[sub_cls](data_frames)
+                except DeserializeError as exc:
+                    raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
+            case _:
+                raise IllegalRequestError('Bad message: Wrong number of frames')
+    return _parse
+
 def _put_loader(frames: list[bytes]) -> gm.Put:
     """Loads a Put with data frame"""
     match frames:
@@ -124,15 +146,7 @@ def _put_loader(frames: list[bytes]) -> gm.Put:
 _value_loaders = Loaders(_default_loader)
 _value_loaders[gm.Put] = _put_loader
 
-def _reply_value_loader(frames: list[bytes]) -> gm.ReplyValue:
-    match frames:
-        case [key, *value_frames]:
-            vtype = gm.ReplyValue.message_get_type(key)
-            if not vtype:
-                raise IllegalRequestError(f'Bad message: {vtype!r}')
-            return _value_loaders[vtype](value_frames)
-        case _:
-            raise IllegalRequestError('Wrong number of frames')
+_reply_value_loader = parse_message_type(gm.ReplyValue, _value_loaders)
 
 def _reply_loader(frames: list[bytes]) -> gm.Reply:
     """
@@ -147,26 +161,10 @@ def _reply_loader(frames: list[bytes]) -> gm.Reply:
         case _:
             raise IllegalRequestError('Wrong number of frames')
 
-_message_loader = Loaders(_default_loader)
-_message_loader[gm.Reply] = _reply_loader
+_message_loaders = Loaders(_default_loader)
+_message_loaders[gm.Reply] = _reply_loader
 
-def parse_core_message(msg_body: list[bytes]) -> gm.Message:
-    """
-    Deserialize the core galp.message in the payload.
-
-    Raises IllegalRequestError on deserialization or validation problems
-    """
-    match msg_body:
-        case [verb, *frames]:
-            cls = gm.Message.message_get_type(verb)
-            if cls is None:
-                raise IllegalRequestError(f'Bad message: {verb!r}')
-            try:
-                return _message_loader[cls](frames)
-            except DeserializeError as exc:
-                raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
-        case _:
-            raise IllegalRequestError('Wrong number of frames')
+parse_core_message = parse_message_type(gm.Message, _message_loaders)
 
 def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
         ) -> RoutedHandler[AppSessionT]:
