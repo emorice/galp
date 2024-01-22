@@ -76,11 +76,7 @@ class BaseReplyValue(MessageType, key='_rvalue'):
 class Doing(BaseReplyValue, key='doing'):
     """
     A message signaling that a task has been allocated or started
-
-    Attributes:
-        name: the task name
     """
-    verb: Literal['doing'] = field(default='doing', repr=False)
 
 @dataclass(frozen=True)
 class Done(BaseReplyValue, key='done'):
@@ -95,8 +91,6 @@ class Done(BaseReplyValue, key='done'):
     task_def: TaskDef
     result: gtt.FlatResultRef
 
-    verb: Literal['done'] = field(default='done', repr=False)
-
 @dataclass(frozen=True)
 class Failed(BaseReplyValue, key='failed'):
     """
@@ -106,8 +100,6 @@ class Failed(BaseReplyValue, key='failed'):
         task_def: the definition of the failed task
     """
     task_def: CoreTaskDef
-
-    verb: Literal['failed'] = field(default='failed', repr=False)
 
 @dataclass(frozen=True)
 class Found(BaseReplyValue, key='found'):
@@ -119,17 +111,11 @@ class Found(BaseReplyValue, key='found'):
     """
     task_def: TaskDef
 
-    verb: Literal['found'] = field(default='found', repr=False)
-
 @dataclass(frozen=True)
 class NotFound(BaseReplyValue, key='notfound'):
     """
     A message indicating that no trace of a task was found
-
-    Attributes:
-        name: the task name
     """
-    verb: Literal['not_found'] = field(default='not_found', repr=False)
 
 @dataclass(frozen=True)
 class Put(BaseReplyValue, key='put'):
