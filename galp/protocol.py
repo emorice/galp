@@ -126,7 +126,7 @@ def _reply_loader(frames: list[bytes]) -> gm.Reply:
     match frames:
         case [core_frame, *value_frames]:
             return gm.Reply(
-                request=load_model(str, core_frame),
+                request=load_model(gm.RequestId, core_frame),
                 value=_reply_value_loader(value_frames)
                 )
         case _:

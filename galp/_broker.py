@@ -164,12 +164,12 @@ class CommonProtocol:
         match orig_msg:
             case gm.Get() | gm.Stat():
                 return [
-                        ReplySession(chan, orig_msg.verb)
+                        ReplySession(chan, gm.get_request_id(orig_msg))
                         .write(gm.NotFound(name=orig_msg.name))
                         ]
             case gm.Exec():
                 return [
-                        ReplySession(chan, orig_msg.submit.verb)
+                        ReplySession(chan, gm.get_request_id(orig_msg.submit))
                         .write(gm.Failed(task_def=orig_msg.submit.task_def)
                         )]
         logging.error(

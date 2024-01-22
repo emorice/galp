@@ -8,7 +8,7 @@ from typing import Callable, TypeAlias, TypeVar
 
 from galp.protocol import (Handler, TransportMessage,
     UpperSession, HandlerFunction)
-from galp.messages import Reply, ReplyValue, Request
+from galp.messages import Reply, ReplyValue, Request, RequestId, get_request_id
 from galp.commands import Script, PrimitiveProxy, InertCommand
 
 @dataclass
@@ -17,14 +17,14 @@ class ReplySession:
     Add request info to reply
     """
     lower: UpperSession
-    request: str
+    req_id: RequestId
 
     def write(self, value: ReplyValue) -> TransportMessage:
         """
         Wrap and write message
         """
         return self.lower.write(Reply(
-            request=self.request,
+            request=self.req_id,
             value=value
             ))
 
@@ -38,7 +38,7 @@ def make_request_handler(handler: RequestHandler[M]) -> HandlerFunction:
     original sender
     """
     def on_message(session: UpperSession, msg: M) -> list[TransportMessage]:
-        return handler(ReplySession(session, msg.verb), msg)
+        return handler(ReplySession(session, get_request_id(msg)), msg)
     return on_message
 
 
@@ -54,8 +54,8 @@ def make_reply_handler(script: Script, handlers: dict[str, ReplyHandler],
         Handle a reply
         """
         # Extract the promise
-        verb = msg.request.upper()
-        promise_id = (verb, msg.value.name)
+        verb = msg.request.verb.decode('ascii').upper()
+        promise_id = (verb, msg.request.name)
         command = script.commands.get(promise_id)
         if not command:
             logging.error('Dropping answer to missing promise %s', promise_id)

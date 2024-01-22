@@ -170,7 +170,7 @@ class WorkerProtocol:
         logging.info('SUBMIT: %s on cpus %s', task_def.step, msg.resources.cpus)
         name = task_def.name
         # Not that we reply to the Submit, not the Exec
-        reply_session = ReplySession(session, sub.verb)
+        reply_session = ReplySession(session, gm.get_request_id(sub))
 
         # Set the resource limits immediately
         limit_task_resources(msg.resources)

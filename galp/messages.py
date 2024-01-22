@@ -318,6 +318,26 @@ class Submit(Message, key='submit'):
 
 Request: TypeAlias = Get | Stat | Submit
 
+@dataclass(frozen=True)
+class RequestId:
+    """
+    The unique identifier of a request, excluding payloads
+    """
+    verb: bytes
+    name: TaskName
+
+    def as_word(self) -> bytes:
+        """
+        Converts self to a printable, space-less string
+        """
+        return self.verb + f':{self.name.hex()}'.encode('ascii')
+
+def get_request_id(req: Request) -> RequestId:
+    """
+    Make request id from Request
+    """
+    return RequestId(req.message_get_key(), req.name)
+
 # Req-rep wrappers
 # ----------------
 
@@ -334,5 +354,5 @@ class Reply(Message, key='reply'):
     """
     Wraps the result to a request, identifing said request
     """
-    request: str
+    request: RequestId
     value: ReplyValue
