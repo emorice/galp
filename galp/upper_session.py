@@ -9,47 +9,46 @@ from galp.messages import Message, Reply, ReplyValue, Put
 from galp.writer import TransportMessage, Writer, add_frames
 from galp.serializer import dump_model
 
+# ReplyValue serialization
+# ------------------------
+
 @singledispatch
-def dump_reply_value_data(value: ReplyValue) -> list[bytes]:
-    """
-    Serializes the reply value without key type
-    """
+def _dump_reply_value_data(value: ReplyValue) -> list[bytes]:
     return [dump_model(value)]
 
-@dump_reply_value_data.register
+@_dump_reply_value_data.register
 def _(value: Put) -> list[bytes]:
-    """
-    Serializes a put by keeping the data buffer as a frame
-    """
     return [dump_model(value.children), value.data]
 
 def dump_reply_value(value: ReplyValue) -> list[bytes]:
     """
-    Serializes a reply value along its type key
+    Serializes a reply value.
+
+    For Put, the data field is kept as-is a serialized frame.
     """
-    return [value.message_get_key(), *dump_reply_value_data(value)]
+    return [value.message_get_key(), *_dump_reply_value_data(value)]
+
+# Core message serialization
+# --------------------------
 
 @singledispatch
-def dump_message_data(message: Message) -> list[bytes]:
-    """
-    Dump a message, without the type identification frame
-
-    Fallback is to use pydantic to serialize the class, assuming it's a
-    dataclass
-
-    For replies, the value is handled as a separate frame
-    """
+def _dump_message_data(message: Message) -> list[bytes]:
     return [dump_model(message)]
 
-@dump_message_data.register
+@_dump_message_data.register
 def _(message: Reply) -> list[bytes]:
     return [dump_model(message.request), *dump_reply_value(message.value)]
 
 def dump_message(message: Message) -> list[bytes]:
     """
-    Serialize a message
+    Serialize a core message
+
+    For replies, the enclosed value is dumped to separate extra frames.
     """
-    return [message.message_get_key(), *dump_message_data(message)]
+    return [message.message_get_key(), *_dump_message_data(message)]
+
+# Core message session
+# --------------------
 
 @dataclass
 class UpperSession:
