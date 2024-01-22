@@ -115,7 +115,7 @@ async def test_unique_submission(peer_client):
             # Process one STAT for the task, two for the args and reply NOTFOUND
             for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
-                await peer.send_message(Reply(RequestId(b'stat', name), NotFound(name=name)))
+                await peer.send_message(Reply(RequestId(b'stat', name), NotFound()))
 
             # Process one SUBMIT and drop it
             await peer.recv_message()
@@ -123,7 +123,7 @@ async def test_unique_submission(peer_client):
             # Process a second SUBMIT and reply DOING
             await peer.recv_message()
             logging.info('Mock processing')
-            await peer.send_message(Reply(RequestId(b'submit', task.name), Doing(name=task.name))) # pylint: disable=no-member
+            await peer.send_message(Reply(RequestId(b'submit', task.name), Doing())) # pylint: disable=no-member
 
             # We should not receive any further message, at least until we add status
             # update to the protocol

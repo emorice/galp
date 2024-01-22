@@ -80,8 +80,6 @@ class Doing(BaseReplyValue, key='doing'):
     Attributes:
         name: the task name
     """
-    name: TaskName
-
     verb: Literal['doing'] = field(default='doing', repr=False)
 
 @dataclass(frozen=True)
@@ -99,13 +97,6 @@ class Done(BaseReplyValue, key='done'):
 
     verb: Literal['done'] = field(default='done', repr=False)
 
-    @property
-    def name(self) -> TaskName:
-        """
-        Task name
-        """
-        return self.task_def.name
-
 @dataclass(frozen=True)
 class Failed(BaseReplyValue, key='failed'):
     """
@@ -117,13 +108,6 @@ class Failed(BaseReplyValue, key='failed'):
     task_def: CoreTaskDef
 
     verb: Literal['failed'] = field(default='failed', repr=False)
-
-    @property
-    def name(self) -> TaskName:
-        """
-        Task name
-        """
-        return self.task_def.name
 
 @dataclass(frozen=True)
 class Found(BaseReplyValue, key='found'):
@@ -137,13 +121,6 @@ class Found(BaseReplyValue, key='found'):
 
     verb: Literal['found'] = field(default='found', repr=False)
 
-    @property
-    def name(self) -> TaskName:
-        """
-        Task name
-        """
-        return self.task_def.name
-
 @dataclass(frozen=True)
 class NotFound(BaseReplyValue, key='notfound'):
     """
@@ -152,8 +129,6 @@ class NotFound(BaseReplyValue, key='notfound'):
     Attributes:
         name: the task name
     """
-    name: TaskName
-
     verb: Literal['not_found'] = field(default='not_found', repr=False)
 
 @dataclass(frozen=True)
@@ -167,7 +142,6 @@ class Put(BaseReplyValue, key='put'):
         children: the subordinate task references that are linked from within the
             serialized data
     """
-    name: TaskName
     data: bytes
     children: list[TaskRef]
 

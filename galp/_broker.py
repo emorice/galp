@@ -165,7 +165,7 @@ class CommonProtocol:
             case gm.Get() | gm.Stat():
                 return [
                         ReplySession(chan, gm.get_request_id(orig_msg))
-                        .write(gm.NotFound(name=orig_msg.name))
+                        .write(gm.NotFound())
                         ]
             case gm.Exec():
                 return [

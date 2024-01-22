@@ -22,12 +22,12 @@ def make_get_handler(store: CacheStack) -> Handler[Get]:
         try:
             data, children = store.get_serial(name)
             logging.info('GET: Cache HIT: %s', name)
-            return [session.write(Put(name=name, data=data, children=children))]
+            return [session.write(Put(data=data, children=children))]
         except KeyError:
             logging.info('GET: Cache MISS: %s', name)
         except StoreReadError:
             logging.exception('GET: Cache ERROR: %s', name)
-        return [session.write(NotFound(name=name))]
+        return [session.write(NotFound())]
     return Handler(Get, _on_get)
 
 def make_stat_handler(store: CacheStack) -> Handler[Stat]:
@@ -40,7 +40,7 @@ def make_stat_handler(store: CacheStack) -> Handler[Stat]:
             return [session.write(_on_stat_io_unsafe(store, msg))]
         except StoreReadError:
             logging.exception('STAT: ERROR %s', msg.name)
-        return [session.write(NotFound(name=msg.name))]
+        return [session.write(NotFound())]
     return Handler(Stat, _on_stat)
 
 def _on_stat_io_unsafe(store, msg: Stat) -> Done | Found | NotFound:
@@ -79,7 +79,7 @@ def _on_stat_io_unsafe(store, msg: Stat) -> Done | Found | NotFound:
 
     # Case 4: nothing
     logging.info('STAT: NOT FOUND %s', msg.name)
-    return NotFound(name=msg.name)
+    return NotFound()
 
 def make_store_handlers(store: CacheStack) -> Iterable[Handler]:
     """

@@ -308,6 +308,15 @@ class PrimitiveProxy(Generic[Ok_contra, Err]):
         """
         return isinstance(self.val, Pending)
 
+    @property
+    def name(self) -> gtt.TaskName:
+        """
+        Name of underlying task
+        """
+        # Primitive proxys can only exist for commands that expose some kind of
+        # key, but we haven't defined that properly yet
+        return next(ins.name for ins in self.instances) #type: ignore[attr-defined]
+
 class Script:
     """
     A collection of maker methods for Commands
@@ -502,6 +511,11 @@ class Submit(InertCommand[gtt.ResultRef, str]):
     @property
     def key(self):
         return (self.__class__.__name__.upper(), self.task_def.name)
+
+    @property
+    def name(self):
+        """Task name"""
+        return self.task_def.name
 
 StatResult: TypeAlias = gm.Found | gm.Done | gm.NotFound
 

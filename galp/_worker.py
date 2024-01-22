@@ -192,7 +192,7 @@ class WorkerProtocol:
                     )]
 
         # If not in cache, resolve metadata and run the task
-        replies : list[list[bytes]] = [reply_session.write(gm.Doing(name=name))]
+        replies : list[list[bytes]] = [reply_session.write(gm.Doing())]
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are

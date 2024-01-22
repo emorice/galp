@@ -374,6 +374,7 @@ class BrokerProtocol:
         """
         Handle get replies
         """
+        name = get_command.name
         match msg:
             case gm.Put():
                 # Inject serializer
@@ -381,7 +382,7 @@ class BrokerProtocol:
                 # Mark as done and sets result
                 return get_command.done(serialized)
             case gm.NotFound():
-                logging.error('TASK RESULT FETCH FAILED: %s', msg.name)
+                logging.error('TASK RESULT FETCH FAILED: %s', name)
                 return get_command.failed('NOTFOUND')
 
     def on_submit_reply(self, sub_command, msg: gm.Done | gm.Failed | gm.Doing
@@ -389,10 +390,11 @@ class BrokerProtocol:
         """
         Handle get replies
         """
+        name = sub_command.name
         match msg:
             case gm.Doing():
-                self.run_count[msg.name] += 1
-                self._started[msg.name] = True
+                self.run_count[name] += 1
+                self._started[name] = True
                 return []
             case gm.Done():
                 return sub_command.done(msg.result)
