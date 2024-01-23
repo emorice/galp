@@ -8,7 +8,7 @@ from typing import Callable, TypeAlias, TypeVar
 
 from galp.protocol import (Handler, TransportMessage,
     UpperSession, HandlerFunction)
-from galp.messages import Reply, ReplyValue, Request, RequestId, get_request_id
+from galp.net.core.types import Reply, ReplyValue, Request, RequestId, get_request_id
 from galp.commands import Script, PrimitiveProxy, InertCommand
 
 @dataclass

@@ -15,7 +15,8 @@ from typing import Callable, Iterable, Any
 import zmq
 import zmq.asyncio
 
-import galp.messages as gm
+import galp.net.core.types as gm
+import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
 
@@ -350,7 +351,7 @@ class BrokerProtocol:
         Send GET for task if not locally available
         """
         try:
-            res = gm.Put(*self.store.get_serial(name))
+            res = gr.Put(*self.store.get_serial(name))
         except KeyError:
             # Not found, send a normal GET
             return gm.Get(name=name)
@@ -365,33 +366,33 @@ class BrokerProtocol:
     # Protocol callbacks
     # ==================
 
-    def on_get_reply(self, get_command, msg: gm.Put | gm.NotFound) -> list[cm.InertCommand]:
+    def on_get_reply(self, get_command, msg: gr.Put | gr.NotFound) -> list[cm.InertCommand]:
         """
         Handle get replies
         """
         name = get_command.name
         match msg:
-            case gm.Put():
+            case gr.Put():
                 # Mark as done and sets result
                 return get_command.done(msg)
-            case gm.NotFound():
+            case gr.NotFound():
                 logging.error('TASK RESULT FETCH FAILED: %s', name)
                 return get_command.failed('NOTFOUND')
 
-    def on_submit_reply(self, sub_command, msg: gm.Done | gm.Failed | gm.Doing
+    def on_submit_reply(self, sub_command, msg: gr.Done | gr.Failed | gr.Doing
             ) -> list[cm.InertCommand]:
         """
         Handle get replies
         """
         name = sub_command.name
         match msg:
-            case gm.Doing():
+            case gr.Doing():
                 self.run_count[name] += 1
                 self._started[name] = True
                 return []
-            case gm.Done():
+            case gr.Done():
                 return sub_command.done(msg.result)
-            case gm.Failed():
+            case gr.Failed():
                 task_def = msg.task_def
                 err_msg = f'Failed to execute task {task_def}, check worker logs'
                 logging.error('TASK FAILED: %s', err_msg)
@@ -399,7 +400,7 @@ class BrokerProtocol:
                 # Mark fetch command as failed if pending
                 return sub_command.failed(err_msg)
 
-    def on_stat_reply(self, stat_command, msg: gm.Found | gm.Done | gm.NotFound):
+    def on_stat_reply(self, stat_command, msg: gr.Found | gr.Done | gr.NotFound):
         """
         Handle stat replies
         """

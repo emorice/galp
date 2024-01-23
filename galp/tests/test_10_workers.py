@@ -14,7 +14,7 @@ from pydantic import TypeAdapter
 
 import galp.tests
 import galp.worker
-import galp.messages as gm
+import galp.net.core.types as gm
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member

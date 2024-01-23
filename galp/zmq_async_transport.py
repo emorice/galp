@@ -6,7 +6,7 @@ import zmq
 
 from galp.protocol import ProtocolEndException
 from galp.writer import TransportMessage
-import galp.messages as gm
+from galp.net.core.types import Message
 
 class ZmqAsyncTransport:
     """
@@ -35,7 +35,7 @@ class ZmqAsyncTransport:
     def __del__(self):
         self.socket.close()
 
-    async def send_message(self, msg: gm.Message) -> None:
+    async def send_message(self, msg: Message) -> None:
         """
         Passes msg to the protocol to be serialized, then sends it.
 

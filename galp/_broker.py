@@ -11,7 +11,8 @@ from itertools import cycle
 
 import zmq
 
-import galp.messages as gm
+import galp.net.core.types as gm
+import galp.net.requests.types as gr
 import galp.task_types as gtt
 
 from galp.protocol import (UpperSession,
@@ -165,12 +166,12 @@ class CommonProtocol:
             case gm.Get() | gm.Stat():
                 return [
                         ReplySession(chan, gm.get_request_id(orig_msg))
-                        .write(gm.NotFound())
+                        .write(gr.NotFound())
                         ]
             case gm.Exec():
                 return [
                         ReplySession(chan, gm.get_request_id(orig_msg.submit))
-                        .write(gm.Failed(task_def=orig_msg.submit.task_def)
+                        .write(gr.Failed(task_def=orig_msg.submit.task_def)
                         )]
         logging.error(
             'Worker %s died while handling %s, no error propagation',
@@ -261,7 +262,7 @@ class CommonProtocol:
         """
         # Free resources for all messages indicating end of task
         if isinstance(msg, gm.Reply):
-            if not isinstance(msg.value, gm.Doing):
+            if not isinstance(msg.value, gr.Doing):
                 self.free_resources(sessions.origin)
         # Forward as-is.
         logging.debug('Forwarding %s', msg.__class__.__name__)

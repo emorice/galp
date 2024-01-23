@@ -7,7 +7,9 @@ import logging
 from typing import TypeAlias, Iterable, TypeVar, Generic, Callable, Protocol, Any
 from dataclasses import dataclass
 
-import galp.messages as gm
+import galp.net.core.types as gm
+import galp.net.requests.types as gr
+from galp.net.base.types import MessageType
 from galp.writer import TransportMessage
 from galp.lower_sessions import (make_local_session, ReplyFromSession,
         ForwardSessions)
@@ -57,7 +59,7 @@ def _handle_illegal(session: ReplyFromSession,
 def _log_message(msg: gm.Message, proto_name: str) -> None:
     verb = msg.message_get_key()
     match msg:
-        case gm.Submit() | gm.Found():
+        case gm.Submit():
             arg = str(msg.task_def.name)
         case _:
             arg = getattr(msg, 'name', '')
@@ -110,7 +112,7 @@ def _default_loader(cls: type[T]) -> Callable[[list[bytes]], T]:
                 raise IllegalRequestError('Wrong number of frames')
     return _load
 
-MT = TypeVar('MT', bound=gm.MessageType)
+MT = TypeVar('MT', bound=MessageType)
 
 def parse_message_type(cls: type[MT], loaders: Loaders
         ) -> Callable[[list[bytes]], MT]:
@@ -132,11 +134,11 @@ def parse_message_type(cls: type[MT], loaders: Loaders
                 raise IllegalRequestError('Bad message: Wrong number of frames')
     return _parse
 
-def _put_loader(frames: list[bytes]) -> gm.Put:
+def _put_loader(frames: list[bytes]) -> gr.Put:
     """Loads a Put with data frame"""
     match frames:
         case [core_frame, data_frame]:
-            return gm.Put(
+            return gr.Put(
                 children=load_model(list[TaskRef], core_frame),
                 data=data_frame,
                 _loads=TaskSerializer.loads
@@ -145,7 +147,7 @@ def _put_loader(frames: list[bytes]) -> gm.Put:
             raise IllegalRequestError('Wrong number of frames')
 
 _value_loaders = Loaders(_default_loader)
-_value_loaders[gm.Put] = _put_loader
+_value_loaders[gr.Put] = _put_loader
 
 _reply_value_loader = parse_message_type(gm.ReplyValue, _value_loaders)
 

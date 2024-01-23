@@ -7,7 +7,8 @@ import logging
 
 from typing import Iterable
 
-from galp.messages import Get, Stat, NotFound, Found, Put, Done
+from galp.net.core.types import Get, Stat
+from galp.net.requests.types import NotFound, Found, Put, Done
 from galp.cache import CacheStack, StoreReadError
 from galp.req_rep import Handler, make_request_handler, ReplySession
 

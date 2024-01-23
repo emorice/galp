@@ -5,7 +5,8 @@ Core-layer writer
 from dataclasses import dataclass
 from functools import singledispatch
 
-from galp.messages import Message, Reply, ReplyValue, Put
+from galp.net.core.types import Message, Reply, ReplyValue
+from galp.net.requests.types import Put
 from galp.writer import TransportMessage, Writer, add_frames
 from galp.serializer import dump_model
 

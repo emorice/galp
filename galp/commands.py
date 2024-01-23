@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from itertools import chain
 from functools import wraps
 
-import galp.messages as gm
+import galp.net.requests.types as gr
 import galp.task_types as gtt
 from galp.serialize import DeserializeError
 
@@ -495,7 +495,7 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
-class Get(NamedPrimitive[gm.Put, str]):
+class Get(NamedPrimitive[gr.Put, str]):
     """
     Get a single resource part
     """
@@ -517,7 +517,7 @@ class Submit(InertCommand[gtt.ResultRef, str]):
         """Task name"""
         return self.task_def.name
 
-StatResult: TypeAlias = gm.Found | gm.Done | gm.NotFound
+StatResult: TypeAlias = gr.Found | gr.Done | gr.NotFound
 
 class Stat(NamedPrimitive[StatResult, str]):
     """
@@ -532,7 +532,7 @@ class Put(NamedPrimitive[gtt.ResultRef, str]):
         super().__init__(name)
         self.data = data
 
-def safe_deserialize(res: gm.Put, children: list):
+def safe_deserialize(res: gr.Put, children: list):
     """
     Wrap serializer in a guard for invalid payloads
     """
@@ -566,21 +566,21 @@ def sget(name: gtt.TaskName) -> Command[Any, str]:
         )
 
 def no_not_found(stat_result: StatResult, task: gtt.Task
-                 ) -> gm.Found | gm.Done | Failed[str]:
+                 ) -> gr.Found | gr.Done | Failed[str]:
     """
     Transform NotFound in Found if the task is a real object, and fails
     otherwise.
     """
-    if not isinstance(stat_result, gm.NotFound):
+    if not isinstance(stat_result, gr.NotFound):
         return stat_result
 
     if isinstance(task, gtt.TaskNode):
-        return gm.Found(task_def=task.task_def)
+        return gr.Found(task_def=task.task_def)
 
     return Failed(f'The task reference {task.name} could not be resolved to a'
         ' definition')
 
-def safe_stat(task: gtt.Task) -> Command[gm.Done | gm.Found, str]:
+def safe_stat(task: gtt.Task) -> Command[gr.Done | gr.Found, str]:
     """
     Chains no_not_found to a stat
     """
@@ -597,13 +597,13 @@ def ssubmit(task: gtt.Task, dry: bool = False
     """
     return safe_stat(task).then(lambda statr: _ssubmit(task, statr, dry))
 
-def _ssubmit(task: gtt.Task, stat_result: gm.Found | gm.Done, dry: bool
+def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.Done, dry: bool
              ) -> gtt.ResultRef | Command[gtt.ResultRef, str]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
     # Short circuit for tasks already processed
-    if isinstance(stat_result, gm.Done):
+    if isinstance(stat_result, gr.Done):
         return stat_result.result
 
     # gm.Found()

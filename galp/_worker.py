@@ -23,7 +23,8 @@ import zmq.asyncio
 
 import galp.steps
 import galp.cli
-import galp.messages as gm
+import galp.net.core.types as gm
+import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
 
@@ -182,16 +183,16 @@ class WorkerProtocol:
                 result_ref = self.store.get_children(name)
                 logging.info('SUBMIT: Cache HIT: %s', name)
                 return [reply_session.write(
-                    gm.Done(task_def=task_def, result=result_ref)
+                    gr.Done(task_def=task_def, result=result_ref)
                     )]
             except StoreReadError:
                 logging.exception('SUBMIT: Failed cache hit: %s', name)
                 return [reply_session.write(
-                    gm.Failed(task_def=task_def)
+                    gr.Failed(task_def=task_def)
                     )]
 
         # If not in cache, resolve metadata and run the task
-        replies : list[list[bytes]] = [reply_session.write(gm.Doing())]
+        replies : list[list[bytes]] = [reply_session.write(gr.Doing())]
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
@@ -202,15 +203,15 @@ class WorkerProtocol:
             ))
         return replies
 
-    def on_get_reply(self, get_command, msg: gm.Put | gm.NotFound
+    def on_get_reply(self, get_command, msg: gr.Put | gr.NotFound
             ) -> list[cm.InertCommand]:
         """
         Mark the promise as done and pass result
         """
         match msg:
-            case gm.Put():
+            case gr.Put():
                 return get_command.done(msg)
-            case gm.NotFound():
+            case gr.NotFound():
                 return get_command.failed('NOTFOUND')
 
     def new_commands_to_replies(self, session: UpperSession, commands: list[cm.InertCommand]
@@ -226,7 +227,7 @@ class WorkerProtocol:
                 raise NotImplementedError(command)
             name = command.name
             try:
-                res = gm.Put(*self.store.get_serial(name))
+                res = gr.Put(*self.store.get_serial(name))
                 commands.extend(
                     self.script.commands[command.key].done(res)
                     )
@@ -304,15 +305,15 @@ class Worker:
         """
         Loop that waits for tasks to finish to send back done/failed messages
         """
-        reply: gm.Failed | gm.Done
+        reply: gr.Failed | gr.Done
         while True:
             task = await self.galp_jobs.get()
             job = await task
             task_def = job.submit.task_def
             if job.result is not None:
-                reply = gm.Done(task_def=task_def, result=job.result)
+                reply = gr.Done(task_def=task_def, result=job.result)
             else:
-                reply = gm.Failed(task_def=task_def)
+                reply = gr.Failed(task_def=task_def)
             await self.transport.send_raw(
                     job.session.write(reply)
                     )

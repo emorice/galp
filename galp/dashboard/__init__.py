@@ -10,7 +10,7 @@ from flask import Flask, render_template, abort
 
 import galp.config
 import galp.commands as cm
-import galp.messages as gm
+from galp.net.requests.types import Put
 from galp._client import BrokerProtocol, store_literals
 from galp.task_types import TaskSerializer
 from galp.cache import CacheStack
@@ -108,7 +108,7 @@ def collect_kwargs(store, task):
         if name not in proto.store:
             buf, children, _loads = store.get_serial(name)
             proto.store.put_serial(name, (buf, children))
-        res = gm.Put(*proto.store.get_serial(name))
+        res = Put(*proto.store.get_serial(name))
         proto.schedule_new(None,
             proto.script.commands[command.key].done(res)
             )

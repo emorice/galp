@@ -14,7 +14,8 @@ import galp.tests.steps as gts
 import galp.task_types as gtt
 from galp.protocol import make_stack, make_local_handler, make_name_dispatcher
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.messages import Doing, Submit, NotFound, Reply, RequestId
+from galp.net.core.types import Reply, RequestId, Submit
+from galp.net.requests.types import Doing, NotFound
 
 # pylint: disable=redefined-outer-name
 

@@ -5,8 +5,8 @@ Implementation of complex queries within the command asynchronous system
 import logging
 from typing import Type
 
+import galp.net.requests.types as gr
 from . import commands as cm
-from . import messages as gm
 from . import task_types as gtt
 from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .cache import StoreReadError
@@ -211,8 +211,8 @@ class Done(Operator):
     def requires(task: gtt.Task):
         return cm.Stat(task.name)
 
-    def _result(self, stat_result: gm.Done | gm.Found, _subs):
-        return isinstance(stat_result, gm.Done)
+    def _result(self, stat_result: gr.Done | gr.Found, _subs):
+        return isinstance(stat_result, gr.Done)
 
 class Def(Operator):
     """
@@ -222,7 +222,7 @@ class Def(Operator):
     def requires(task: gtt.Task):
         return cm.safe_stat(task)
 
-    def _result(self, stat_result: gm.Done | gm.Found, _subs):
+    def _result(self, stat_result: gr.Done | gr.Found, _subs):
         return stat_result.task_def
 
 class Args(Operator):
@@ -233,7 +233,7 @@ class Args(Operator):
     def requires(task: gtt.Task):
         return cm.safe_stat(task)
 
-    def _recurse(self, stat_result: gm.Done | gm.Found):
+    def _recurse(self, stat_result: gr.Done | gr.Found):
         """
         Build list of sub-queries for arguments of subject task from the
         definition obtained from STAT
