@@ -13,7 +13,7 @@ from functools import wraps
 
 import galp.net.requests.types as gr
 import galp.task_types as gtt
-from galp.serialize import DeserializeError
+from galp.serialize import LoadError
 
 # Result types
 # ============
@@ -536,12 +536,10 @@ def safe_deserialize(res: gr.Put, children: list):
     """
     Wrap serializer in a guard for invalid payloads
     """
-    try:
-        return res.deserialize(children)
-    except DeserializeError:
-        msg = 'Failed to deserialize'
-        logging.exception(msg)
-        return Failed(msg)
+    obj = res.deserialize(children)
+    if isinstance(obj, LoadError):
+        return Failed(obj)
+    return obj.result
 
 def rget(name: gtt.TaskName) -> Command[Any, str]:
     """
@@ -562,7 +560,7 @@ def sget(name: gtt.TaskName) -> Command[Any, str]:
     """
     return (
         Get(name)
-        .then(lambda res: res.deserialize(res.children))
+        .then(lambda res: safe_deserialize(res, res.children))
         )
 
 def no_not_found(stat_result: StatResult, task: gtt.Task

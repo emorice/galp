@@ -10,7 +10,6 @@ from . import commands as cm
 from . import task_types as gtt
 from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .cache import StoreReadError
-from .serializer import DeserializeError
 
 def run_task(task: TaskNode, dry: bool = False) -> cm.Command:
     """
@@ -145,7 +144,7 @@ class Operator:
         """
         try:
             return self.result(subs)
-        except (StoreReadError, DeserializeError) as exc:
+        except StoreReadError  as exc:
             logging.exception('In %s:', self)
             return cm.Failed(exc)
 

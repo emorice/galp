@@ -9,6 +9,7 @@ from galp.net.base.types import MessageType
 from galp.task_types import (
         TaskDef, CoreTaskDef, TaskRef, FlatResultRef
         )
+from galp.serialize import Ok, LoadError
 
 # Replies
 # ========
@@ -77,7 +78,7 @@ class Put(ReplyValue, key='put'):
     children: list[TaskRef]
     _loads: Callable[[bytes, list[Any]], Any]
 
-    def deserialize(self, children: list[Any]) -> Any:
+    def deserialize(self, children: list[Any]) -> Ok | LoadError:
         """
         Given the native objects that children are references to, deserialize
         this resource by injecting the corresponding objects into it.

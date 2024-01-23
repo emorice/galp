@@ -16,7 +16,7 @@ import dill # type: ignore[import] # Issue 85
 from pydantic import ValidationError, TypeAdapter, RootModel
 
 from galp import serialize
-from galp.serialize import DeserializeError
+from galp.serialize import LoadError, Ok
 
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
@@ -33,7 +33,7 @@ class Serializer(serialize.Serializer[Nat, Ref]):
     """
 
     @classmethod
-    def loads(cls, data: bytes, native_children: List[Any]) -> Any:
+    def loads(cls, data: bytes, native_children: List[Any]) -> Ok | LoadError:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.
@@ -41,10 +41,12 @@ class Serializer(serialize.Serializer[Nat, Ref]):
         Re-raises DeserializeError on any exception.
         """
         try:
-            return msgpack.unpackb(data, ext_hook=cls._ext_hook(native_children),
-                    raw=False, use_list=False)
-        except Exception as exc:
-            raise DeserializeError from exc
+            return Ok(msgpack.unpackb(data, ext_hook=cls._ext_hook(native_children),
+                    raw=False, use_list=False))
+        except Exception: # pylint: disable=broad-exception-caught
+            # (msgpack limitation)
+            logging.exception('Invalid msgpack')
+            return LoadError('Invalid msgpack')
 
     @classmethod
     def dumps(cls, obj: Any, save: Callable[[Nat], Ref]
@@ -106,23 +108,24 @@ class Serializer(serialize.Serializer[Nat, Ref]):
     @classmethod
     def _ext_hook(cls, native_children):
         """
-        ExtType to object for msgpack
+        ExtType to object for msgpack. This raises on problems, as this runs as
+        a callback inside msgpack.
         """
         def _hook(code, data):
             if code == _CHILD_EXT_CODE:
                 if not len(data) == 4:
-                    raise DeserializeError(f'Invalid child index {data}')
+                    raise ValueError(f'Invalid child index {data}')
                 index = int.from_bytes(data, 'little')
                 try:
                     return native_children[index]
                 except (KeyError, IndexError) as exc:
-                    raise DeserializeError(f'Missing child index {data}') from exc
+                    raise ValueError(f'Missing child index {data}') from exc
             if code == _DILL_EXT_CODE:
                 return dill.loads(data)
-            raise DeserializeError(f'Unknown ExtType {code}')
+            raise ValueError(f'Unknown ExtType {code}')
         return _hook
 
-def serialize_child(index):
+def serialize_child(index: int) -> msgpack.ExtType:
     """
     Serialized representation of a reference to the index-th child task of an
     object.
@@ -152,7 +155,7 @@ def dump_model(model: Any) -> bytes:
 
 T = TypeVar('T')
 
-def load_model(model_type: type[T], payload: bytes) -> T:
+def load_model(model_type: type[T], payload: bytes) -> T | LoadError:
     """
     Load a msgpack-serialized pydantic model
 
@@ -163,25 +166,25 @@ def load_model(model_type: type[T], payload: bytes) -> T:
         model_type: The pydantic model class of the object to create
         payload: The msgpack-encoded buffer with the object data
 
-    Raises:
-        DeserializeError on any failed deserialization or validation.
+    Returns:
+        The deserialized object or LoadError
     """
     try:
         doc = msgpack.loads(payload)
     # Per msgpack docs:
     # "unpack may raise exception other than subclass of UnpackException.
     # If you want to catch all error, catch Exception instead.:
-    except Exception as exc: # pylint: disable=broad-except
+    except Exception: # pylint: disable=broad-except
         err = 'Invalid msgpack message'
         logging.exception(err)
-        raise DeserializeError(err) from exc
+        return LoadError(err)
 
     try:
         return TypeAdapter(model_type).validate_python(doc)
-    except ValidationError as exc:
+    except ValidationError:
         err = 'Invalid model data'
         logging.exception(err)
-        raise DeserializeError(err) from exc
+        return LoadError(err)
 
 # Private serializer helpers
 # ==========================

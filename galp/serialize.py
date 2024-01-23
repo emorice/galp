@@ -6,14 +6,22 @@ serializer but do not depend on what is the actual serialization strategy used.
 """
 
 from typing import Any, TypeVar, Generic, Callable
+from dataclasses import dataclass
 
-class DeserializeError(ValueError):
+
+@dataclass
+class LoadError:
     """
-    Exception raised to wrap any error encountered by the deserialization
-    backends
+    Error value to be returned on failed deserialization
     """
-    def __init__(self, msg=None):
-        super().__init__(msg or 'Failed to deserialize')
+    reason: str
+
+@dataclass
+class Ok:
+    """
+    Ok value.
+    """
+    result: Any
 
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
@@ -32,12 +40,10 @@ class Serializer(Generic[Nat, Ref]):
     """
 
     @classmethod
-    def loads(cls, data: bytes, native_children: list[Any]) -> Any:
+    def loads(cls, data: bytes, native_children: list[Any]) -> Ok | LoadError:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.
-
-        Re-raises DeserializeError on any exception.
         """
         raise NotImplementedError
 

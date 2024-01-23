@@ -4,20 +4,17 @@ GALP protocol implementation
 
 import logging
 
-from typing import TypeAlias, Iterable, TypeVar, Generic, Callable, Protocol, Any
+from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
 from dataclasses import dataclass
 
 import galp.net.core.types as gm
-import galp.net.requests.types as gr
-from galp.net.base.types import MessageType
+from galp.net.core.load import parse_core_message, LoadError
 from galp.writer import TransportMessage
 from galp.lower_sessions import (make_local_session, ReplyFromSession,
         ForwardSessions)
-from galp.lower_protocol import (IllegalRequestError, RoutedHandler,
+from galp.lower_protocol import (RoutedHandler,
         AppSessionT, TransportHandler, handle_routing)
-from galp.serializer import load_model, DeserializeError
 from galp.upper_session import UpperSession
-from galp.task_types import TaskRef, TaskSerializer
 
 # Errors and exceptions
 # =====================
@@ -40,21 +37,11 @@ forwarding and some control over it, in order to accomodate the needs of both
 "end peers" (client, worker, pool) and broker.
 """
 
-def _handle_illegal(session: ReplyFromSession,
-                    upper: Callable[[], Iterable[TransportMessage]]
-                    ) -> Iterable[TransportMessage]:
+def _write_illegal(session: ReplyFromSession, error: LoadError) -> TransportMessage:
     """
-    Wraps a handler to catch IllegalRequestError and reply with a gm.Illegal
-    message.
+    Wraps a LoadError and reply with a gm.Illegal message.
     """
-    try:
-        return upper()
-    except IllegalRequestError as exc:
-        logging.exception('Bad request')
-        return [session
-                .reply_from(None)
-                .write(gm.Illegal(reason=exc.reason))
-                ]
+    return session.reply_from(None).write(gm.Illegal(reason=error.reason))
 
 def _log_message(msg: gm.Message, proto_name: str) -> None:
     verb = msg.message_get_key()
@@ -73,117 +60,21 @@ def _log_message(msg: gm.Message, proto_name: str) -> None:
 
     logging.info(pattern, msg_log_str)
 
-T = TypeVar('T')
-
-class DefaultLoader(Protocol): # pylint: disable=too-few-public-methods
-    """Generic callable signature for a universal object loader"""
-    def __call__(self, cls: type[T]) -> Callable[[list[bytes]], T]: ...
-
-class Loaders:
-    """
-    Thin wrapper around a dictionary that maps types to a method to load them
-    from buffers. This class is used because even if the functionality is a
-    trivial defaultdict, the type signature is quite more elaborate.
-    """
-    def __init__(self, default_loader: DefaultLoader):
-        self._loaders: dict[type, Callable[[list[bytes]], Any]] = {}
-        self._default_loader = default_loader
-
-    def __setitem__(self, cls: type[T], loader: Callable[[list[bytes]], T]
-            ) -> None:
-        self._loaders[cls] = loader
-
-    def __getitem__(self, cls: type[T]) -> Callable[[list[bytes]], T]:
-        loader = self._loaders.get(cls)
-        if loader is None:
-            return self._default_loader(cls)
-        return loader
-
-def _default_loader(cls: type[T]) -> Callable[[list[bytes]], T]:
-    """
-    Fallback to loading a message consisting of a single frame by using the
-    general pydantic validating constructor for e.g. dataclasses
-    """
-    def _load(frames: list[bytes]) -> T:
-        match frames:
-            case [frame]:
-                return load_model(cls, frame)
-            case _:
-                raise IllegalRequestError('Wrong number of frames')
-    return _load
-
-MT = TypeVar('MT', bound=MessageType)
-
-def parse_message_type(cls: type[MT], loaders: Loaders
-        ) -> Callable[[list[bytes]], MT]:
-    """
-    Common logic in parsing union keyed through MessageType
-    """
-    def _parse(frames: list[bytes]) -> MT:
-        match frames:
-            case [type_frame, *data_frames]:
-                sub_cls = cls.message_get_type(type_frame)
-                if sub_cls is None:
-                    raise IllegalRequestError(f'Bad message: {cls} has no'
-                            + f' subclass with key {type_frame!r}')
-                try:
-                    return loaders[sub_cls](data_frames)
-                except DeserializeError as exc:
-                    raise IllegalRequestError(f'Bad message: {exc.args[0]}') from exc
-            case _:
-                raise IllegalRequestError('Bad message: Wrong number of frames')
-    return _parse
-
-def _put_loader(frames: list[bytes]) -> gr.Put:
-    """Loads a Put with data frame"""
-    match frames:
-        case [core_frame, data_frame]:
-            return gr.Put(
-                children=load_model(list[TaskRef], core_frame),
-                data=data_frame,
-                _loads=TaskSerializer.loads
-                )
-        case _:
-            raise IllegalRequestError('Wrong number of frames')
-
-_value_loaders = Loaders(_default_loader)
-_value_loaders[gr.Put] = _put_loader
-
-_reply_value_loader = parse_message_type(gm.ReplyValue, _value_loaders)
-
-def _reply_loader(frames: list[bytes]) -> gm.Reply:
-    """
-    Constructs a Reply
-    """
-    match frames:
-        case [core_frame, *value_frames]:
-            return gm.Reply(
-                request=load_model(gm.RequestId, core_frame),
-                value=_reply_value_loader(value_frames)
-                )
-        case _:
-            raise IllegalRequestError('Wrong number of frames')
-
-_message_loaders = Loaders(_default_loader)
-_message_loaders[gm.Reply] = _reply_loader
-
-parse_core_message = parse_message_type(gm.Message, _message_loaders)
-
 def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
         ) -> RoutedHandler[AppSessionT]:
     """
     Chains the three parts of the core handlers:
-     * Error handling on the outside
      * Parsing the core payload
+     * Parse error handling
      * Logging the message between the parsing and the application handler
     """
     def on_message(session: ReplyFromSession, next_session: AppSessionT, msg: list[bytes]
                    ) -> Iterable[TransportMessage]:
-        def _unsafe_handle():
-            msg_obj = parse_core_message(msg)
-            _log_message(msg_obj, proto_name)
-            return upper(next_session, msg_obj)
-        return _handle_illegal(session, _unsafe_handle)
+        msg_obj = parse_core_message(msg)
+        if isinstance(msg_obj, LoadError):
+            return [_write_illegal(session, msg_obj)]
+        _log_message(msg_obj, proto_name)
+        return upper(next_session, msg_obj)
     return on_message
 
 # Stack

@@ -10,7 +10,7 @@ import msgpack # type: ignore[import] # Issue 85
 import galp.task_types as gtt
 from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
         TaskNode, LiteralTaskDef, TaskSerializer)
-from galp.serializer import serialize_child, dump_model, load_model
+from galp.serializer import serialize_child, dump_model, load_model, LoadError, Ok
 
 class StoreReadError(Exception):
     """
@@ -19,7 +19,8 @@ class StoreReadError(Exception):
     store raises KeyError instead).
     """
 
-Serialized: TypeAlias = tuple[bytes, list[TaskRef], Callable[[bytes, list[Any]], Any]]
+Serialized: TypeAlias = tuple[bytes, list[TaskRef],
+        Callable[[bytes, list[Any]], Ok | LoadError]]
 """
 Tuple representing the result of a serialization: a buffer with the data, a list
 of object referenced inside, and a function that can be used to re-assemble the
@@ -85,7 +86,9 @@ class CacheStack():
                     for child in children]
 
         native = loads(data, native_children)
-        return native
+        if isinstance(native, LoadError):
+            raise StoreReadError(native)
+        return native.result
 
     def get_children(self, name: TaskName) -> gtt.FlatResultRef:
         """
@@ -237,7 +240,10 @@ class CacheStack():
         Loads a task definition, non-recursively
         """
         # Load with a union, I don't know any way to type this
-        return load_model(TaskDef, self.serialcache[name + b'.task']) # type: ignore[arg-type]
+        task_def = load_model(TaskDef, self.serialcache[name + b'.task']) # type: ignore[arg-type]
+        if isinstance(task_def, LoadError):
+            raise StoreReadError
+        return task_def
 
 def add_store_argument(parser, optional=False):
     """
