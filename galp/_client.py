@@ -29,7 +29,7 @@ from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef,
-    ensure_task_node, TaskSerializer, SerializedTask)
+    ensure_task_node, TaskSerializer)
 
 class TaskFailedError(RuntimeError):
     """
@@ -302,9 +302,6 @@ class BrokerProtocol:
         # Default resources
         self.resources = gtt.ResourceClaim(cpus=cpus_per_task)
 
-        # Serializer for Put handler, to be modularized away
-        self.serializer: TaskSerializer = TaskSerializer()
-
     def write_next(self, command: cm.InertCommand) -> gm.Message | None:
         """
         Returns the next nessage to be sent for a task given the information we
@@ -353,16 +350,14 @@ class BrokerProtocol:
         Send GET for task if not locally available
         """
         try:
-            data, children = self.store.get_serial(name)
+            res = gm.Put(*self.store.get_serial(name))
         except KeyError:
             # Not found, send a normal GET
             return gm.Get(name=name)
 
         # Found, mark command as done and pass on children
         self.schedule_new(None,
-            self.script.commands['GET', name].done(
-                SerializedTask(self.serializer, data, children)
-                )
+            self.script.commands['GET', name].done(res)
             )
         # Supress normal output, removing task from queue
         return None
@@ -377,10 +372,8 @@ class BrokerProtocol:
         name = get_command.name
         match msg:
             case gm.Put():
-                # Inject serializer
-                serialized = SerializedTask(self.serializer, msg.data, msg.children)
                 # Mark as done and sets result
-                return get_command.done(serialized)
+                return get_command.done(msg)
             case gm.NotFound():
                 logging.error('TASK RESULT FETCH FAILED: %s', name)
                 return get_command.failed('NOTFOUND')

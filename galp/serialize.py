@@ -5,7 +5,6 @@ Many code paths may need to deal with an object that is serialized or with a
 serializer but do not depend on what is the actual serialization strategy used.
 """
 
-from dataclasses import dataclass
 from typing import Any, TypeVar, Generic, Callable
 
 class DeserializeError(ValueError):
@@ -58,21 +57,3 @@ class Serializer(Generic[Nat, Ref]):
                 with unresolvable task references.
         """
         raise NotImplementedError
-
-
-@dataclass
-class Serialized(Generic[Ref]):
-    """
-    Represents a serialized object alongside with the interface needed to
-    deserialize it
-    """
-    serializer: Serializer[Any, Ref]
-    data: bytes
-    children: list[Ref]
-
-    def deserialize(self, children: list[Any]) -> Any:
-        """
-        Given the native objects that children are references to, deserialize
-        this resource by injecting the corresponding objects into it.
-        """
-        return self.serializer.loads(self.data, children)

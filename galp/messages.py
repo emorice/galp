@@ -4,7 +4,7 @@ Models for Galp messages
 Not in actual use yet
 """
 
-from typing import TypeAlias
+from typing import TypeAlias, Any, Callable
 from dataclasses import dataclass
 from typing_extensions import Self
 
@@ -122,13 +122,20 @@ class Put(ReplyValue, key='put'):
     A message sending a serialized task result
 
     Atrributes:
-        name: the task name whose result is sent
         data: the serialized result data
         children: the subordinate task references that are linked from within the
             serialized data
     """
     data: bytes
     children: list[TaskRef]
+    _loads: Callable[[bytes, list[Any]], Any]
+
+    def deserialize(self, children: list[Any]) -> Any:
+        """
+        Given the native objects that children are references to, deserialize
+        this resource by injecting the corresponding objects into it.
+        """
+        return self._loads(self.data, children)
 
 # Messages
 # ========

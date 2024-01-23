@@ -2,7 +2,7 @@
 Caching utils
 """
 
-from typing import Any
+from typing import Any, Callable, TypeAlias
 
 import diskcache # type: ignore[import] # Issue 85
 import msgpack # type: ignore[import] # Issue 85
@@ -18,6 +18,16 @@ class StoreReadError(Exception):
     reading the result despite it seemingly being in the store (object not in
     store raises KeyError instead).
     """
+
+Serialized: TypeAlias = tuple[bytes, list[TaskRef], Callable[[bytes, list[Any]], Any]]
+"""
+Tuple representing the result of a serialization: a buffer with the data, a list
+of object referenced inside, and a function that can be used to re-assemble the
+object from the buffer and referenced objects.
+
+This is meant to work with the Put message of the protocol, which can be
+created by passing this tuple directly to its constructor.
+"""
 
 class CacheStack():
     """Synchronous cache proxy.
@@ -66,7 +76,7 @@ class CacheStack():
                 the root object is returned with any linked task replaced by a
                 TaskRef.
         """
-        data, children = self.get_serial(name)
+        data, children, loads = self.get_serial(name)
 
         if shallow:
             native_children = children
@@ -74,7 +84,7 @@ class CacheStack():
             native_children = [self.get_native(child.name)
                     for child in children]
 
-        native = self.serializer.loads(data, native_children)
+        native = loads(data, native_children)
         return native
 
     def get_children(self, name: TaskName) -> gtt.FlatResultRef:
@@ -99,13 +109,14 @@ class CacheStack():
 
         return gtt.FlatResultRef(name, children)
 
-    def get_serial(self, name: TaskName) -> tuple[bytes, list[TaskRef]]:
+    def get_serial(self, name: TaskName) -> Serialized:
         """
         Get a serialized object form the cache.
 
         Returns:
-            a tuple of one bytes object and one list of taskname (data, children).
-            If there is no data, None is returned instead.
+            a tuple of a bytes object, a list of taskname (data, children) and a
+            callable usable to deserialize.
+            If there is no data, None is returned instead as the first tuple item
         """
         children_ref = self.get_children(name)
 
@@ -113,7 +124,7 @@ class CacheStack():
             data = self.serialcache[name + b'.data']
         except KeyError:
             data = None
-        return data, children_ref.children
+        return data, children_ref.children, self.serializer.loads
 
     def put_native(self, name: TaskName, obj: Any, scatter: int | None = None
                    ) -> gtt.FlatResultRef:
@@ -159,14 +170,12 @@ class CacheStack():
 
         return gtt.FlatResultRef(name, children)
 
-    def put_serial(self, name: TaskName,
-            serialized: tuple[bytes, list[TaskRef]]):
+    def put_serial(self, name: TaskName, serialized: tuple[bytes, list[TaskRef]]):
         """
         Simply pass the underlying object to the underlying cold cache.
 
-        No serialization involved, except for the children. The children must be
-        legal references ; that is, it is not permitted to store a task before
-        its children definitions have been stored
+        This inherently low-level and unsafe, this is only meant to transfer
+        objects effictiently between caches sharing a serializer.
         """
         data, children = serialized
 

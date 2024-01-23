@@ -13,7 +13,7 @@ from functools import wraps
 
 import galp.messages as gm
 import galp.task_types as gtt
-from galp.serialize import Serialized, DeserializeError
+from galp.serialize import DeserializeError
 
 # Result types
 # ============
@@ -495,7 +495,7 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
-class Get(NamedPrimitive[Serialized, str]):
+class Get(NamedPrimitive[gm.Put, str]):
     """
     Get a single resource part
     """
@@ -532,7 +532,7 @@ class Put(NamedPrimitive[gtt.ResultRef, str]):
         super().__init__(name)
         self.data = data
 
-def safe_deserialize(res: Serialized, children: list):
+def safe_deserialize(res: gm.Put, children: list):
     """
     Wrap serializer in a guard for invalid payloads
     """

@@ -15,7 +15,7 @@ from galp.lower_protocol import (IllegalRequestError, RoutedHandler,
         AppSessionT, TransportHandler, handle_routing)
 from galp.serializer import load_model, DeserializeError
 from galp.upper_session import UpperSession
-from galp.task_types import TaskRef
+from galp.task_types import TaskRef, TaskSerializer
 
 # Errors and exceptions
 # =====================
@@ -138,7 +138,8 @@ def _put_loader(frames: list[bytes]) -> gm.Put:
         case [core_frame, data_frame]:
             return gm.Put(
                 children=load_model(list[TaskRef], core_frame),
-                data=data_frame
+                data=data_frame,
+                _loads=TaskSerializer.loads
                 )
         case _:
             raise IllegalRequestError('Wrong number of frames')

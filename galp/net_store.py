@@ -20,9 +20,9 @@ def make_get_handler(store: CacheStack) -> Handler[Get]:
         name = msg.name
         logging.debug('Received GET for %s', name)
         try:
-            data, children = store.get_serial(name)
+            res = Put(*store.get_serial(name))
             logging.info('GET: Cache HIT: %s', name)
-            return [session.write(Put(data=data, children=children))]
+            return [session.write(res)]
         except KeyError:
             logging.info('GET: Cache MISS: %s', name)
         except StoreReadError:
