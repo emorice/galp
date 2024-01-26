@@ -8,27 +8,28 @@ import logging
 from typing import Iterable
 
 from galp.net.core.types import Get, Stat
+from galp.net.core.dump import Writer, ReplyValue
 from galp.net.requests.types import NotFound, Found, Put, Done
 from galp.cache import CacheStack, StoreReadError
-from galp.req_rep import Handler, make_request_handler, ReplySession
+from galp.req_rep import Handler, make_request_handler
 
 def make_get_handler(store: CacheStack) -> Handler[Get]:
     """
     Answers GET requests based on underlying store
     """
     @make_request_handler
-    def _on_get(session: ReplySession, msg: Get):
+    def _on_get(write_reply: Writer[ReplyValue], msg: Get):
         name = msg.name
         logging.debug('Received GET for %s', name)
         try:
             res = Put(*store.get_serial(name))
             logging.info('GET: Cache HIT: %s', name)
-            return [session.write(res)]
+            return [write_reply(res)]
         except KeyError:
             logging.info('GET: Cache MISS: %s', name)
         except StoreReadError:
             logging.exception('GET: Cache ERROR: %s', name)
-        return [session.write(NotFound())]
+        return [write_reply(NotFound())]
     return Handler(Get, _on_get)
 
 def make_stat_handler(store: CacheStack) -> Handler[Stat]:
@@ -36,12 +37,12 @@ def make_stat_handler(store: CacheStack) -> Handler[Stat]:
     Answers STAT requests based on underlying store
     """
     @make_request_handler
-    def _on_stat(session: ReplySession, msg: Stat):
+    def _on_stat(write_reply: Writer[ReplyValue], msg: Stat):
         try:
-            return [session.write(_on_stat_io_unsafe(store, msg))]
+            return [write_reply(_on_stat_io_unsafe(store, msg))]
         except StoreReadError:
             logging.exception('STAT: ERROR %s', msg.name)
-        return [session.write(NotFound())]
+        return [write_reply(NotFound())]
     return Handler(Stat, _on_stat)
 
 def _on_stat_io_unsafe(store, msg: Stat) -> Done | Found | NotFound:

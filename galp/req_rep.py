@@ -3,34 +3,17 @@ Request-reply pattern with multiplexing
 """
 
 import logging
-from dataclasses import dataclass
 from typing import Callable, TypeAlias, TypeVar
 
 from galp.protocol import (Handler, TransportMessage,
     UpperSession, HandlerFunction)
-from galp.net.core.types import Reply, ReplyValue, Request, RequestId, get_request_id
+from galp.net.core.types import Reply, ReplyValue, Request
+from galp.net.core.dump import add_request_id, Writer
 from galp.commands import Script, PrimitiveProxy, InertCommand
-
-@dataclass
-class ReplySession:
-    """
-    Add request info to reply
-    """
-    lower: UpperSession
-    req_id: RequestId
-
-    def write(self, value: ReplyValue) -> TransportMessage:
-        """
-        Wrap and write message
-        """
-        return self.lower.write(Reply(
-            request=self.req_id,
-            value=value
-            ))
 
 M = TypeVar('M', bound=Request)
 
-RequestHandler: TypeAlias = Callable[[ReplySession, M], list[TransportMessage]]
+RequestHandler: TypeAlias = Callable[[Writer[ReplyValue], M], list[TransportMessage]]
 
 def make_request_handler(handler: RequestHandler[M]) -> HandlerFunction:
     """
@@ -38,7 +21,7 @@ def make_request_handler(handler: RequestHandler[M]) -> HandlerFunction:
     original sender
     """
     def on_message(session: UpperSession, msg: M) -> list[TransportMessage]:
-        return handler(ReplySession(session, get_request_id(msg)), msg)
+        return handler(add_request_id(session.write, msg), msg)
     return on_message
 
 

@@ -38,7 +38,8 @@ from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
 from galp.net_store import make_store_handlers
-from galp.req_rep import make_reply_handler, ReplySession
+from galp.net.core.dump import add_request_id, Writer
+from galp.req_rep import make_reply_handler
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -170,7 +171,7 @@ class WorkerProtocol:
         logging.info('SUBMIT: %s on cpus %s', task_def.step, msg.resources.cpus)
         name = task_def.name
         # Not that we reply to the Submit, not the Exec
-        reply_session = ReplySession(session, gm.get_request_id(sub))
+        write_reply = add_request_id(session.write, sub)
 
         # Set the resource limits immediately
         limit_task_resources(msg.resources)
@@ -182,24 +183,24 @@ class WorkerProtocol:
             try:
                 result_ref = self.store.get_children(name)
                 logging.info('SUBMIT: Cache HIT: %s', name)
-                return [reply_session.write(
+                return [write_reply(
                     gr.Done(task_def=task_def, result=result_ref)
                     )]
             except StoreReadError:
                 logging.exception('SUBMIT: Failed cache hit: %s', name)
-                return [reply_session.write(
+                return [write_reply(
                     gr.Failed(task_def=task_def)
                     )]
 
         # If not in cache, resolve metadata and run the task
-        replies : list[list[bytes]] = [reply_session.write(gr.Doing())]
+        replies : list[list[bytes]] = [write_reply(gr.Doing())]
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
         replies.extend(self.new_commands_to_replies(session,
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
-            self.worker.schedule_task(reply_session, sub)
+            self.worker.schedule_task(write_reply, sub)
             ))
         return replies
 
@@ -255,7 +256,7 @@ class JobResult:
         result: None iff the task has failed, other wise a reference to the
             stored result.
     """
-    session: ReplySession
+    write_reply: Writer[gm.ReplyValue]
     submit: gm.Submit
     result: gtt.FlatResultRef | None
 
@@ -315,17 +316,18 @@ class Worker:
             else:
                 reply = gr.Failed(task_def=task_def)
             await self.transport.send_raw(
-                    job.session.write(reply)
+                    job.write_reply(reply)
                     )
 
-    def schedule_task(self, session: ReplySession, msg: gm.Submit) -> list[cm.InertCommand]:
+    def schedule_task(self, write_reply: Writer[gm.ReplyValue], msg: gm.Submit
+            ) -> list[cm.InertCommand]:
         """
         Callback to schedule a task for execution.
         """
         task_def = msg.task_def
         def _start_task(inputs: cm.FinalResult[list, str]):
             task = asyncio.create_task(
-                self.run_submission(session, msg, inputs)
+                self.run_submission(write_reply, msg, inputs)
                 )
             self.galp_jobs.put_nowait(task)
 
@@ -380,7 +382,7 @@ class Worker:
 
         return args, kwargs
 
-    async def run_submission(self, session: ReplySession, msg: gm.Submit,
+    async def run_submission(self, write_reply: Writer[gm.ReplyValue], msg: gm.Submit,
                              inputs: cm.FinalResult[list, str]) -> JobResult:
         """
         Actually run the task
@@ -418,12 +420,12 @@ class Worker:
             self.protocol.store.put_task_def(task_def)
             result_ref = self.protocol.store.put_native(name, result, task_def.scatter)
 
-            return JobResult(session, msg, result_ref)
+            return JobResult(write_reply, msg, result_ref)
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return JobResult(session, msg, None)
+            return JobResult(write_reply, msg, None)
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.

@@ -12,6 +12,7 @@ from itertools import cycle
 import zmq
 
 import galp.net.core.types as gm
+from galp.net.core.dump import add_request_id
 import galp.net.requests.types as gr
 import galp.task_types as gtt
 
@@ -19,7 +20,6 @@ from galp.protocol import (UpperSession,
     make_stack, ReplyFromSession, ForwardSessions, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
-from galp.req_rep import ReplySession
 
 class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
@@ -164,15 +164,11 @@ class CommonProtocol:
 
         match orig_msg:
             case gm.Get() | gm.Stat():
-                return [
-                        ReplySession(chan, gm.get_request_id(orig_msg))
-                        .write(gr.NotFound())
-                        ]
+                return [add_request_id(chan.write, orig_msg)(gr.NotFound())]
             case gm.Exec():
-                return [
-                        ReplySession(chan, gm.get_request_id(orig_msg.submit))
-                        .write(gr.Failed(task_def=orig_msg.submit.task_def)
-                        )]
+                return [add_request_id(chan.write, orig_msg.submit)(
+                    gr.Failed(task_def=orig_msg.submit.task_def)
+                    )]
         logging.error(
             'Worker %s died while handling %s, no error propagation',
             peer, alloc
