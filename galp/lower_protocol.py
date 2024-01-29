@@ -7,7 +7,7 @@ from typing import TypeAlias, Callable, Iterable, TypeVar
 import logging
 
 from galp.writer import TransportMessage, Writer
-from galp.lower_sessions import Route, ReplyFromSession, ForwardSessions
+from galp.net.routing.dump import Route, ReplyFromSession, ForwardSessions
 
 
 # Routing-layer handlers

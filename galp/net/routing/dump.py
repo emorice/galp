@@ -8,26 +8,7 @@ writer, but should work with any layer.
 from dataclasses import dataclass
 
 from galp.net.core.dump import Writer, Message, dump_message
-
-# Routing-layer data structures
-# =============================
-
-Route = list[bytes]
-"""
-This actually ZMQ specific and should be changed to a generic if we ever need
-more protocols
-"""
-
-@dataclass
-class Routes:
-    """
-    The routing layer of a message
-    """
-    incoming: Route
-    forward: Route
-
-# Routing-layer writers
-# =====================
+from .types import Route, Routes
 
 def dump_routes(is_router: bool, routes: Routes) -> list[bytes]:
     """Serializes routes"""
