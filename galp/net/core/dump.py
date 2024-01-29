@@ -25,6 +25,10 @@ def dump_message(message: Message) -> list[bytes]:
     """
     return [message.message_get_key(), *_dump_message_data(message)]
 
+def make_message_writer(write: Writer[list[bytes]]) -> Writer[Message]:
+    """Create a message writer on top of bytes writer, not type safe"""
+    return lambda msg: write(dump_message(msg))
+
 def add_request_id(write: Writer[Message], request: Request) -> Writer[ReplyValue]:
     """Stack a Reply with given request id"""
     return lambda value: write(Reply(get_request_id(request), value))

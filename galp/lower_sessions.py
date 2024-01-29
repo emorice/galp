@@ -7,8 +7,8 @@ writer, but should work with any layer.
 
 from dataclasses import dataclass
 
-from galp.writer import TransportMessage, Writer
-from galp.upper_session import UpperSession
+from galp.net.core.dump import Writer, Message, make_message_writer
+from galp.writer import TransportMessage
 
 # Routing-layer data structures
 # =============================
@@ -37,7 +37,7 @@ class LowerSession:
 
     This should be internal, since it's modular session and not type safe.
     """
-    write_lower: Writer
+    write_lower: Writer[list[bytes]]
     is_router: bool
     routes: Routes
 
@@ -68,11 +68,11 @@ class ReplyFromSession:
 
     This is what is exposed to the user, and must be type safe.
     """
-    write_lower: Writer
+    write_lower: Writer[list[bytes]]
     is_router: bool
     forward: Route
 
-    def reply_from(self, origin: 'ReplyFromSession | None') -> UpperSession:
+    def reply_from(self, origin: 'ReplyFromSession | None') -> Writer[Message]:
         """
         Creates a session to send galp messages
 
@@ -81,7 +81,7 @@ class ReplyFromSession:
             be sent. If None, means the message was locally generated.
         """
         nat_origin = Route() if origin is None else origin.forward
-        return UpperSession(
+        return make_message_writer(
                 LowerSession(self.write_lower, self.is_router,
                     Routes(incoming=nat_origin, forward=self.forward)
                     ).write

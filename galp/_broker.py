@@ -12,12 +12,12 @@ from itertools import cycle
 import zmq
 
 import galp.net.core.types as gm
-from galp.net.core.dump import add_request_id
+from galp.net.core.dump import add_request_id, Writer
 import galp.net.requests.types as gr
 import galp.task_types as gtt
 
-from galp.protocol import (UpperSession,
-    make_stack, ReplyFromSession, ForwardSessions, TransportMessage)
+from galp.protocol import (make_stack, ReplyFromSession, ForwardSessions,
+        TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
 
@@ -70,7 +70,7 @@ class CommonProtocol:
         self.resources = Resources(cpus=[]) # Available cpus
 
         # Route to a worker spawner
-        self.pool: UpperSession | None = None
+        self.write_pool: Writer[gm.Message] | None = None
 
         # Tasks currenty accepted or ruuning, by unique id
         self.alloc_from_task: dict[bytes, Allocation] = {}
@@ -97,22 +97,19 @@ class CommonProtocol:
         self.alloc_from_wuid[session.uid] = pending_alloc
 
         # Fill in the worker route in original request
-        return [session
-                .reply_from(pending_alloc.client)
-                .write(pending_alloc.msg)
-                ]
+        return [session.reply_from(pending_alloc.client)(pending_alloc.msg)]
 
     def on_pool_ready(self, pool: ReplyFromSession, msg: gm.PoolReady):
         """
         Register pool route and resources
         """
-        assert self.pool is None
+        assert self.write_pool is None
 
         # When the pool manager joins, record its route and set the available
         # resources
         # We already set the forward-address to None since we will never need to
         # forward anything to pool.
-        self.pool = pool.reply_from(None)
+        self.write_pool = pool.reply_from(None)
         # Adapt the list of cpus to the requested number of max cpus by dropping
         # or repeting some as needed
         cpus = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
@@ -159,14 +156,14 @@ class CommonProtocol:
 
         # Note that we set the incoming to empty, which equals re-interpreting
         # the message as addressed to us
-        chan = alloc.client.reply_from(None)
+        write_client = alloc.client.reply_from(None)
         orig_msg = alloc.msg
 
         match orig_msg:
             case gm.Get() | gm.Stat():
-                return [add_request_id(chan.write, orig_msg)(gr.NotFound())]
+                return [add_request_id(write_client, orig_msg)(gr.NotFound())]
             case gm.Exec():
-                return [add_request_id(chan.write, orig_msg.submit)(
+                return [add_request_id(write_client, orig_msg.submit)(
                     gr.Failed(task_def=orig_msg.submit.task_def)
                     )]
         logging.error(
@@ -199,7 +196,7 @@ class CommonProtocol:
             return None
 
         # Drop if we don't have a way to spawn workers
-        if not self.pool:
+        if not self.write_pool:
             logging.info('Dropping %s (pool not joined)', task_id)
             return None
 
@@ -242,14 +239,11 @@ class CommonProtocol:
             self.alloc_from_wuid[worker.uid] = alloc
 
             # We build the message and return it to transport
-            return [worker
-                    .reply_from(session)
-                    .write(new_msg)
-                    ]
+            return [worker.reply_from(session)(new_msg)]
 
         # Else, ask the pool to fork a new worker
         # We'll send the request to the worker when it send us a READY
-        return [self.pool.write(gm.Fork(alloc.task_id, alloc.claim))]
+        return [self.write_pool(gm.Fork(alloc.task_id, alloc.claim))]
 
     def on_forward(self, sessions: ForwardSessions, msg: gm.Message
             ) -> list[TransportMessage]:
@@ -262,7 +256,7 @@ class CommonProtocol:
                 self.free_resources(sessions.origin)
         # Forward as-is.
         logging.debug('Forwarding %s', msg.__class__.__name__)
-        return [sessions.dest.reply_from(sessions.origin).write(msg)]
+        return [sessions.dest.reply_from(sessions.origin)(msg)]
 
     def on_local(self, session: ReplyFromSession, msg: gm.Message
             ) -> list[TransportMessage]:

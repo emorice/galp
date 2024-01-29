@@ -30,8 +30,8 @@ import galp.task_types as gtt
 
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
-from galp.protocol import (ProtocolEndException, UpperSession,
-        make_stack, Handler, make_local_handler, make_type_dispatcher)
+from galp.protocol import (ProtocolEndException, make_stack, Handler,
+        make_local_handler, make_type_dispatcher)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -156,7 +156,7 @@ class WorkerProtocol:
         self.store = store
         self.script = cm.Script()
 
-    def on_routed_exec(self, session: UpperSession, msg: gm.Exec
+    def on_routed_exec(self, write: Writer[gm.Message], msg: gm.Exec
             ) -> list[list[bytes]]:
         """Start processing the submission asynchronously.
 
@@ -171,7 +171,7 @@ class WorkerProtocol:
         logging.info('SUBMIT: %s on cpus %s', task_def.step, msg.resources.cpus)
         name = task_def.name
         # Not that we reply to the Submit, not the Exec
-        write_reply = add_request_id(session.write, sub)
+        write_reply = add_request_id(write, sub)
 
         # Set the resource limits immediately
         limit_task_resources(msg.resources)
@@ -197,7 +197,7 @@ class WorkerProtocol:
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        replies.extend(self.new_commands_to_replies(session,
+        replies.extend(self.new_commands_to_replies(write,
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
             self.worker.schedule_task(write_reply, sub)
@@ -215,7 +215,7 @@ class WorkerProtocol:
             case gr.NotFound():
                 return get_command.failed('NOTFOUND')
 
-    def new_commands_to_replies(self, session: UpperSession, commands: list[cm.InertCommand]
+    def new_commands_to_replies(self, write: Writer[gm.Message], commands: list[cm.InertCommand]
             ) -> list[list[bytes]]:
         """
         Generate galp messages from a command reply list
@@ -241,9 +241,7 @@ class WorkerProtocol:
                 continue
             except KeyError:
                 pass
-            messages.append(
-                session.write(gm.Get(name=name))
-                )
+            messages.append(write(gm.Get(name=name)))
         return messages
 
 @dataclass

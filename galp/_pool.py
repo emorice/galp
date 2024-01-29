@@ -18,7 +18,7 @@ import galp.worker
 import galp.net.core.types as gm
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.protocol import make_stack, make_local_handler, make_name_dispatcher
-from galp.upper_session import dump_message
+from galp.net.core.dump import dump_message
 from galp.protocol import parse_core_message
 from galp.async_utils import background
 

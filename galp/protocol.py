@@ -9,12 +9,12 @@ from dataclasses import dataclass
 
 import galp.net.core.types as gm
 from galp.net.core.load import parse_core_message, LoadError
+from galp.net.core.dump import Writer, make_message_writer
 from galp.writer import TransportMessage
 from galp.lower_sessions import (make_local_session, ReplyFromSession,
         ForwardSessions)
 from galp.lower_protocol import (RoutedHandler,
         AppSessionT, TransportHandler, handle_routing)
-from galp.upper_session import UpperSession
 
 # Errors and exceptions
 # =====================
@@ -41,7 +41,7 @@ def _write_illegal(session: ReplyFromSession, error: LoadError) -> TransportMess
     """
     Wraps a LoadError and reply with a gm.Illegal message.
     """
-    return session.reply_from(None).write(gm.Illegal(reason=error.reason))
+    return session.reply_from(None)(gm.Illegal(reason=error.reason))
 
 def _log_message(msg: gm.Message, proto_name: str) -> None:
     verb = msg.message_get_key()
@@ -87,16 +87,7 @@ class Stack:
     Handling side of a network stack
     """
     handler: TransportHandler
-    base_session: UpperSession
-
-    def write_local(self, msg: gm.Message) -> TransportMessage:
-        """
-        Write a locally generated, next-hop addressed, galp message
-
-        This is a temporary interface to get the message writing out of the
-        handling stack
-        """
-        return self.base_session.write(msg)
+    write_local: Writer[gm.Message]
 
 def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, router: bool,
         on_forward: ForwardingHandler[ForwardSessions] | None = None
@@ -118,9 +109,9 @@ def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, rout
 
     # Writers
     _lower_base_session = make_local_session(router)
-    base_session = UpperSession(_lower_base_session.write)
+    base_writer = make_message_writer(_lower_base_session.write)
 
-    return Stack(routing_handler, base_session)
+    return Stack(routing_handler, base_writer)
 
 # Dispatch-layer handlers
 # =======================
@@ -129,7 +120,7 @@ def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, rout
 
 M = TypeVar('M', bound=gm.Message)
 
-HandlerFunction: TypeAlias = Callable[[UpperSession, M], list[TransportMessage]]
+HandlerFunction: TypeAlias = Callable[[Writer[gm.Message], M], list[TransportMessage]]
 """
 Type of function that handles a specific message M and generate replies
 """
@@ -153,8 +144,7 @@ def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
         """
         # We do not forwarding, so only generate local messages and discard
         # forwarding information
-        upper_session = session.reply_from(None)
-        return dispatch(upper_session, msg)
+        return dispatch(session.reply_from(None), msg)
     return on_message
 
 def make_name_dispatcher(upper) -> DispatchFunction:
@@ -190,14 +180,14 @@ def make_type_dispatcher(handlers: Iterable[Handler]) -> DispatchFunction:
         hdl.handles: hdl.handler
         for hdl in handlers
         }
-    def on_message(session: UpperSession, msg: gm.Message
+    def on_message(write: Writer[gm.Message], msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Dispatches
         """
         handler = _handlers.get(type(msg))
         if handler:
-            return handler(session, msg)
+            return handler(write, msg)
         #logging.error('No handler for %s', msg)
         return []
     return on_message
