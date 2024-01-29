@@ -9,9 +9,9 @@ from dataclasses import dataclass
 
 import galp.net.core.types as gm
 from galp.net.core.load import parse_core_message, LoadError
-from galp.net.core.dump import Writer, make_message_writer
+from galp.net.core.dump import Writer
 from galp.writer import TransportMessage
-from galp.lower_sessions import (make_local_session, ReplyFromSession,
+from galp.lower_sessions import (make_local_writer, ReplyFromSession,
         ForwardSessions)
 from galp.lower_protocol import (RoutedHandler,
         AppSessionT, TransportHandler, handle_routing)
@@ -107,11 +107,7 @@ def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, rout
         forward_core_handler = None
     routing_handler = handle_routing(router, core_handler, forward_core_handler)
 
-    # Writers
-    _lower_base_session = make_local_session(router)
-    base_writer = make_message_writer(_lower_base_session.write)
-
-    return Stack(routing_handler, base_writer)
+    return Stack(routing_handler, make_local_writer(router))
 
 # Dispatch-layer handlers
 # =======================
