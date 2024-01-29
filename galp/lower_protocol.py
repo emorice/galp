@@ -6,16 +6,16 @@ from typing import TypeAlias, Callable, Iterable, TypeVar
 
 import logging
 
-from galp.writer import TransportMessage, Writer
-from galp.net.routing.load import load_routes, LoadError
-from galp.net.routing.dump import ReplyFromSession, ForwardSessions
+from galp.writer import TransportMessage
+from galp.net.routing.load import load_routes, LoadError, Routes
+from galp.net.routing.dump import ReplyFromSession, ForwardSessions, Writer
 
 
 # Routing-layer handlers
 # ======================
 
 TransportHandler: TypeAlias = Callable[
-        [Writer, list[bytes]], Iterable[TransportMessage]
+        [Writer[list[bytes]], list[bytes]], Iterable[TransportMessage]
         ]
 """
 Type of handler implemented by this layer and intended to be passed to the
@@ -56,33 +56,11 @@ ForwardHandler: TypeAlias = RoutedHandler[ForwardSessions]
 More specific type of next-layer handler for the forward case.
 """
 
-class IllegalRequestError(Exception):
-    """Base class for all badly formed requests, should trigger sending an ILLEGAL
-    message back"""
-    def __init__(self, reason: str):
-        super().__init__()
-        self.reason = reason
-
-def _handle_illegal(upper: TransportHandler) -> TransportHandler:
-    """
-    Wraps a handler to catch IllegalRequestError, log, then suppress them.
-
-    At this level, we don't send error messages back.
-    """
-    def on_message(session: Writer, msg: list[bytes]
-            ) -> Iterable[TransportMessage]:
-        try:
-            return upper(session, msg)
-        except IllegalRequestError as exc:
-            logging.warning('Supressing malformed incoming message: %s', exc.reason)
-            return []
-    return on_message
-
 def _handle_routing(is_router: bool, upper: LocalHandler,
-        upper_forward: ForwardHandler | None) -> TransportHandler:
+        upper_forward: ForwardHandler | None, session: Writer[list[bytes]],
+        msg: tuple[Routes, list[bytes]]) -> Iterable[list[bytes]]:
     """
-    Parses the routing part of a GALP message,
-    then calls the upper protocol with the parsed message.
+    Calls the upper protocol with the parsed message.
 
     This creates two sessions: one associated with the original recipient
     (forward session), and one associated with the original sender (reply
@@ -91,38 +69,34 @@ def _handle_routing(is_router: bool, upper: LocalHandler,
 
     Args:
         router: True if sending function should move a routing id in the
-            first routing segment. Default False.
+            first routing segment.
     """
-    def on_message(session: Writer, msg_parts: list[bytes]
-                   ) -> Iterable[list[bytes]]:
-        routed = load_routes(msg_parts)
-        if isinstance(routed, LoadError):
-            raise IllegalRequestError(routed.reason)
-        routes, payload = routed
+    routes, payload = msg
+    is_forward = bool(routes.forward)
 
-        is_forward = bool(routes.forward)
+    reply = ReplyFromSession(session, is_router, routes.incoming)
+    forward = ReplyFromSession(session, is_router, routes.forward)
+    both = ForwardSessions(origin=reply, dest=forward)
 
-        reply = ReplyFromSession(session, is_router, routes.incoming)
-        forward = ReplyFromSession(session, is_router, routes.forward)
-        both = ForwardSessions(origin=reply, dest=forward)
+    if is_forward:
+        if upper_forward:
+            return upper_forward(reply, both, payload)
+        return []
 
-        if is_forward:
-            if upper_forward:
-                return upper_forward(reply, both, payload)
-            return []
-
-        return upper(reply, reply, payload)
-    return on_message
+    return upper(reply, reply, payload)
 
 def handle_routing(router: bool,
         upper_local: LocalHandler,
         upper_forward: ForwardHandler | None
         ) -> TransportHandler:
-    """
-    Stack the routing-layer handlers
-    """
-    return _handle_illegal(
-            _handle_routing(router,
-                upper_local, upper_forward
-                )
-            )
+    """Stack the routing-layer handlers"""
+    def on_message(session: Writer[list[bytes]], msg_parts: list[bytes]
+                   ) -> Iterable[list[bytes]]:
+        routed = load_routes(msg_parts)
+        if isinstance(routed, LoadError):
+            logging.warning('Supressing malformed incoming message: %s', routed.reason)
+            return []
+        return _handle_routing(router,
+                    upper_local, upper_forward,
+                    session, routed)
+    return on_message
