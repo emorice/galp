@@ -7,7 +7,8 @@ from typing import TypeAlias, Callable, Iterable, TypeVar
 import logging
 
 from galp.writer import TransportMessage, Writer
-from galp.net.routing.dump import Route, ReplyFromSession, ForwardSessions
+from galp.net.routing.load import load_routes, LoadError
+from galp.net.routing.dump import ReplyFromSession, ForwardSessions
 
 
 # Routing-layer handlers
@@ -77,27 +78,6 @@ def _handle_illegal(upper: TransportHandler) -> TransportHandler:
             return []
     return on_message
 
-def _parse_lower(msg: list[bytes]) -> tuple[list[bytes], tuple[Route, Route]]:
-    """
-    Parses and returns the routing part of `msg`, and body.
-
-    Can be overloaded to handle different routing strategies.
-    """
-    route_parts = []
-    while msg and msg[0]:
-        route_parts.append(msg[0])
-        msg = msg[1:]
-    # Whatever was found is treated as the route. If it's malformed, we
-    # cannot know, and we cannot send answers anywhere else.
-    route = route_parts[:1], route_parts[1:]
-
-    # Discard empty frame
-    if not msg or  msg[0]:
-        raise IllegalRequestError('Missing empty delimiter frame')
-    msg = msg[1:]
-
-    return msg, route
-
 def _handle_routing(is_router: bool, upper: LocalHandler,
         upper_forward: ForwardHandler | None) -> TransportHandler:
     """
@@ -115,13 +95,15 @@ def _handle_routing(is_router: bool, upper: LocalHandler,
     """
     def on_message(session: Writer, msg_parts: list[bytes]
                    ) -> Iterable[list[bytes]]:
-        payload, routes = _parse_lower(msg_parts)
+        routed = load_routes(msg_parts)
+        if isinstance(routed, LoadError):
+            raise IllegalRequestError(routed.reason)
+        routes, payload = routed
 
-        incoming_route, forward_route = routes
-        is_forward = bool(forward_route)
+        is_forward = bool(routes.forward)
 
-        reply = ReplyFromSession(session, is_router, incoming_route)
-        forward = ReplyFromSession(session, is_router, forward_route)
+        reply = ReplyFromSession(session, is_router, routes.incoming)
+        forward = ReplyFromSession(session, is_router, routes.forward)
         both = ForwardSessions(origin=reply, dest=forward)
 
         if is_forward:
