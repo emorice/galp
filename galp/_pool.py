@@ -16,7 +16,7 @@ import zmq
 
 import galp.worker
 import galp.net.core.types as gm
-from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.zmq_async_transport import ZmqAsyncTransport, TransportMessage
 from galp.protocol import make_stack, make_local_handler, make_name_dispatcher
 from galp.net.core.dump import dump_message
 from galp.protocol import parse_core_message
@@ -155,11 +155,12 @@ class BrokerProtocol:
     def __init__(self, pool: Pool) -> None:
         self.pool = pool
 
-    def on_fork(self, msg: gm.Fork):
+    def on_fork(self, msg: gm.Fork) -> list[TransportMessage]:
         """
         Request to spawn a worker for a task
         """
         self.pool.start_worker(msg)
+        return []
 
 def forkserver(config):
     """

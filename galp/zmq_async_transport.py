@@ -7,6 +7,7 @@ import zmq
 from galp.protocol import ProtocolEndException
 from galp.writer import TransportMessage
 from galp.net.core.types import Message
+from galp.serialize import LoadError
 
 class ZmqAsyncTransport:
     """
@@ -51,16 +52,21 @@ class ZmqAsyncTransport:
         """
         await self.socket.send_multipart(msg)
 
-    async def send_messages(self, messages: list[TransportMessage]):
+    async def send_messages(self, messages: list[TransportMessage | LoadError]
+            ) -> LoadError | None:
         """
-        Wrapper of send_raw accepting None to several messages
-        """
-        if not messages:
-            return
-        for message in messages:
-            await self.send_raw(message)
+        Wrapper of send_raw accepting several messages or errors.
 
-    async def recv_message(self) -> list[TransportMessage]:
+        Send messages up to the first error. Return None if all messages were
+        processed, and the error if one was encountered.
+        """
+        for message in messages:
+            if isinstance(message, LoadError):
+                return message
+            await self.send_raw(message)
+        return None
+
+    async def recv_message(self) -> list[TransportMessage | LoadError]:
         """
         Waits for one message, then call handlers when it arrives.
 
@@ -68,21 +74,27 @@ class ZmqAsyncTransport:
         type accepted by protocol.write_message.
         """
         zmq_msg = await self.socket.recv_multipart()
-        return self.handler(lambda msg: msg, zmq_msg)
+        ret = self.handler(lambda msg: msg, zmq_msg)
+        assert ret is not None, zmq_msg
+        return ret
 
-    async def listen_reply_loop(self) -> None:
+    async def listen_reply_loop(self) -> LoadError | None:
         """Simple processing loop
 
         Waits for a message, call the protocol handler, then sends the replies.
         Can also block on sending replies if the underlying transport does.
-        Stops when a handler raises ProtocolEndException
+        Stops when a handler raises ProtocolEndException or when a parsing error
+        is encountered.
 
         Suitable for peers with one connection that do not need to transfer
         information beteen connections.
         """
         try:
-            while True:
+            error = None
+            while error is None:
+                # Replies can contain errors, but we check this when sending
                 replies = await self.recv_message()
-                await self.send_messages(replies)
+                error = await self.send_messages(replies)
+            return error
         except ProtocolEndException:
-            pass
+            return None

@@ -78,7 +78,8 @@ class CommonProtocol:
         # Tasks currently running on a worker
         self.alloc_from_wuid: dict[Any, Allocation] = {}
 
-    def on_ready(self, session: ReplyFromSession, msg: gm.Ready):
+    def on_ready(self, session: ReplyFromSession, msg: gm.Ready
+            ) -> list[TransportMessage]:
         """
         Register worker route and forward initial worker mission
         """
@@ -90,7 +91,7 @@ class CommonProtocol:
         pending_alloc = self.alloc_from_task.get(msg.mission, None)
         if pending_alloc is None:
             logging.error('Worker came with unknown mission %s', msg.mission)
-            return None
+            return []
 
         # Before sending, mark it as affected to this worker so we can
         # handle errors and free resources later
@@ -99,7 +100,8 @@ class CommonProtocol:
         # Fill in the worker route in original request
         return [session.reply_from(pending_alloc.client)(pending_alloc.msg)]
 
-    def on_pool_ready(self, pool: ReplyFromSession, msg: gm.PoolReady):
+    def on_pool_ready(self, pool: ReplyFromSession, msg: gm.PoolReady
+            ) -> list[TransportMessage]:
         """
         Register pool route and resources
         """
@@ -114,6 +116,7 @@ class CommonProtocol:
         # or repeting some as needed
         cpus = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
         self.resources = Resources(cpus)
+        return []
 
     def free_resources(self, session: ReplyFromSession, reuse=True) -> None:
         """
@@ -133,7 +136,8 @@ class CommonProtocol:
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
-    def on_exited(self, msg: gm.Exited):
+    def on_exited(self, msg: gm.Exited
+            ) -> list[TransportMessage]:
         """
         Propagate failuer messages and free resources when worker is killed
         """
@@ -143,12 +147,12 @@ class CommonProtocol:
         session = self.session_from_peer.get(peer)
         if session is None:
             logging.error("Worker %s is unknown, ignoring exit", peer)
-            return None
+            return []
 
         alloc = self.alloc_from_wuid.pop(session.uid, None)
         if alloc is None:
             logging.error("Worker %s was not assigned a task, ignoring exit", peer)
-            return None
+            return []
 
         # Free resources, since a dead worker uses none, but of course don't
         # mark the worker as reusable
@@ -170,7 +174,7 @@ class CommonProtocol:
             'Worker %s died while handling %s, no error propagation',
             peer, alloc
             )
-        return None
+        return []
 
     def calc_resource_claim(self, msg: gm.Message) -> gtt.ResourceClaim:
         """
@@ -180,7 +184,8 @@ class CommonProtocol:
             return msg.resources
         return gtt.ResourceClaim(cpus=1)
 
-    def on_request(self, session: ReplyFromSession, msg: gm.Request):
+    def on_request(self, session: ReplyFromSession, msg: gm.Request
+            ) -> list[TransportMessage]:
         """
         Assign a worker
         """
@@ -193,18 +198,18 @@ class CommonProtocol:
         task_id = gm.get_request_id(msg).as_word()
         if task_id in self.alloc_from_task:
             logging.info('Dropping %s (already allocated)', task_id)
-            return None
+            return []
 
         # Drop if we don't have a way to spawn workers
         if not self.write_pool:
             logging.info('Dropping %s (pool not joined)', task_id)
-            return None
+            return []
 
         # Try allocate and drop if we don't have any resources left
         resources, self.resources = self.resources.allocate(claim)
         if resources is None:
             logging.info('Dropping %s (no resources)', task_id)
-            return None
+            return []
 
         # Allocated. At this point the message can be considered
         # as accepted and queued
