@@ -126,16 +126,7 @@ def make_worker_init(config):
     return _make_worker
 
 def make_lifecycle_handlers():
-    """
-    Raises on EXIT/ILLEGAL
-    """
-    def on_illegal(_session, msg: gm.Illegal):
-        """
-        Terminate
-        """
-        logging.error('Received ILLEGAL, terminating: %s', msg.reason)
-        raise ProtocolEndException('Incoming ILLEGAL')
-
+    """Raises on EXIT"""
     def on_exit(_session, msg: gm.Exit):
         """
         Terminate
@@ -143,10 +134,7 @@ def make_lifecycle_handlers():
         del msg
         logging.info('Received EXIT, terminating')
         raise ProtocolEndException('Incoming EXIT')
-    return [
-            Handler(gm.Illegal, on_illegal),
-            Handler(gm.Exit, on_exit),
-            ]
+    return [Handler(gm.Exit, on_exit)]
 
 class WorkerProtocol:
     """
@@ -267,7 +255,7 @@ class Worker:
     def __init__(self, setup: dict):
         protocol = WorkerProtocol(self, setup['store'])
         handler = make_local_handler(make_type_dispatcher([
-            # Lifecycle messages: Exit, Illegal
+            # Lifecycle messages: Exit
             *make_lifecycle_handlers(),
             # Request handlers: Get, Stat
             *make_store_handlers(setup['store']),

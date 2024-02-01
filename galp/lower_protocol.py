@@ -28,16 +28,7 @@ handler. In practice this type is almost always known, but a few bits of code
 benefit from treating it as a generic.
 """
 
-RoutedHandler: TypeAlias = Callable[
-        [
-            # Session used by upper parser to send back parsing error messages
-            ReplyFromSession,
-            # Sessions used by app handler to send other responses or forward
-            AppSessionT,
-            # Payload
-            list[bytes]
-            ],
-        # Messages to be sent in reaction
+RoutedHandler: TypeAlias = Callable[[AppSessionT, list[bytes]],
         Iterable[TransportMessage | LoadError]]
 """
 Type of the next-layer ("routed" layer, once the "routing" is parsed) handler to
@@ -79,10 +70,10 @@ def _handle_routing(is_router: bool, upper: LocalHandler,
 
     if is_forward:
         if upper_forward:
-            return upper_forward(reply, both, payload)
+            return upper_forward(both, payload)
         return []
 
-    return upper(reply, reply, payload)
+    return upper(reply, payload)
 
 def handle_routing(router: bool,
         upper_local: LocalHandler,

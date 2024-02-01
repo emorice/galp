@@ -37,12 +37,6 @@ forwarding and some control over it, in order to accomodate the needs of both
 "end peers" (client, worker, pool) and broker.
 """
 
-def _write_illegal(session: ReplyFromSession, error: LoadError) -> TransportMessage:
-    """
-    Wraps a LoadError and reply with a gm.Illegal message.
-    """
-    return session.reply_from(None)(gm.Illegal(reason=error.error))
-
 def _log_message(msg: gm.Message, proto_name: str) -> None:
     verb = msg.message_get_key()
     match msg:
@@ -68,13 +62,13 @@ def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
      * Parse error handling
      * Logging the message between the parsing and the application handler
     """
-    def on_message(session: ReplyFromSession, next_session: AppSessionT, msg: list[bytes]
+    def on_message(session: AppSessionT, msg: list[bytes]
                    ) -> Iterable[TransportMessage | LoadError]:
         msg_obj = parse_core_message(msg)
         if isinstance(msg_obj, LoadError):
             return [msg_obj]
         _log_message(msg_obj, proto_name)
-        return upper(next_session, msg_obj)
+        return upper(session, msg_obj)
     return on_message
 
 # Stack

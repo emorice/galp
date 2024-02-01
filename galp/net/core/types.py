@@ -42,16 +42,6 @@ class Exited(Message, key='exited'):
     peer: str
 
 @dataclass(frozen=True)
-class Illegal(Message, key='illegal'):
-    """
-    A message notifying that a previously sent message was malformed
-
-    Attributes:
-        reason: an error message
-    """
-    reason:str
-
-@dataclass(frozen=True)
 class Fork(Message, key='fork'):
     """
     A message asking for a new peer, compatible with some resource claim, to be

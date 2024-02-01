@@ -63,7 +63,6 @@ class Client:
                 store=self.store
                 )
         handler = make_local_handler(make_type_dispatcher([
-            make_illegal_hanlder(), # Illegal
             make_get_handler(self.store), # Get
             make_reply_handler(self.protocol.script, { # Reply
                 'GET': self.protocol.on_get_reply,
@@ -242,17 +241,6 @@ class Client:
         # Issue 84: this work because End is only raised after collect is done,
         # but that's bad style.
         return [c.val for c in commands]
-
-def make_illegal_hanlder():
-    """
-    Raise when peer replies with Illegal
-
-    Mostly useful for debugging
-    """
-    def on_illegal(_session, msg: gm.Illegal):
-        """Should never happen"""
-        raise RuntimeError(f'ILLEGAL recevived: {msg.reason}')
-    return Handler(gm.Illegal, on_illegal)
 
 def store_literals(store: CacheStack, tasks: list[TaskNode]):
     """
