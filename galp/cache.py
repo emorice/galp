@@ -85,10 +85,11 @@ class CacheStack():
             native_children = [self.get_native(child.name)
                     for child in children]
 
-        native = loads(data, native_children)
-        if isinstance(native, LoadError):
-            raise StoreReadError(native)
-        return native.result
+        match loads(data, native_children):
+            case LoadError() as err:
+                raise StoreReadError(err)
+            case Ok(native):
+                return native
 
     def get_children(self, name: TaskName) -> gtt.FlatResultRef:
         """

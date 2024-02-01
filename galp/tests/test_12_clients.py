@@ -103,8 +103,10 @@ async def test_unique_submission(peer_client):
     stat_counter = [0]
     def _count(*_):
         submit_counter[0] += 1
+        return []
     def _count_stat(*_):
         stat_counter[0] += 1
+        return []
     handlers.on_submit = _count
     handlers.on_stat = _count_stat
 

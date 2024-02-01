@@ -90,26 +90,30 @@ def test_signals(worker_socket, sig):
 
 @pytest.mark.parametrize('msg_body', [
     [b'RABBIT'],
-    [b'GET'],
-    [b'GET', b'one', b'two'],
-    [b'SUBMIT'],
-    [b'SUBMIT', b'RABBIT'],
-    [b'SUBMIT', b'name', b'step', b'keyword_without_value'],
+    [b'get'],
+    [b'get', b'one', b'two'],
+    [b'submit'],
+    [b'submit', b'RABBIT'],
+    [b'submit', b'name', b'step', b'keyword_without_value'],
     ])
 def test_illegals(worker_socket, msg_body):
-    """Tests a few messages that should fire back an illegal
+    """Tests a few messages that should trigger worker abort"""
 
-    Note that we should pick some that will not be valid later"""
+    socket, _endpoint, worker_handle = worker_socket
 
-    socket, *_ = worker_socket
-
-    # Mind the empty frame on both send and receive sides
-    socket.send_multipart(make_msg(*msg_body))
-
+    assert worker_handle.poll() is None
     assert_ready(socket)
 
-    msg = zmq_recv_message(socket)
-    assert isinstance(msg, gm.Illegal)
+    process = psutil.Process(worker_handle.pid)
+    children = process.children(recursive=True)
+
+    # If not our children list may not be valid
+    assert process.status() != psutil.STATUS_ZOMBIE
+
+    socket.send_multipart(make_msg(*msg_body))
+
+    _gone, alive = psutil.wait_procs([process, *children], timeout=4)
+    assert not alive
 
 async def test_fork_worker(tmpdir):
     """

@@ -58,7 +58,8 @@ def parse_message_type(cls: type[MT], loaders: LoaderDict) -> Loader[MT]:
             case [type_frame, *data_frames]:
                 sub_cls = cls.message_get_type(type_frame)
                 if sub_cls is None:
-                    return LoadError(f'Bad message: {cls} has no'
+                    return LoadError('Bad message:'
+                            + f' {cls.__module__}.{cls.__qualname__} has no'
                             + f' subclass with key {type_frame!r}')
                 return loaders[sub_cls](data_frames)
             case _:

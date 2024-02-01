@@ -4,8 +4,6 @@ Implementation of the lower level of GALP, handles routing.
 
 from typing import TypeAlias, Callable, Iterable, TypeVar
 
-import logging
-
 from galp.writer import TransportMessage
 from galp.net.routing.load import load_routes, LoadError, Routes
 from galp.net.routing.dump import ReplyFromSession, ForwardSessions, Writer
@@ -15,7 +13,8 @@ from galp.net.routing.dump import ReplyFromSession, ForwardSessions, Writer
 # ======================
 
 TransportHandler: TypeAlias = Callable[
-        [Writer[list[bytes]], list[bytes]], Iterable[TransportMessage]
+        [Writer[list[bytes]], list[bytes]],
+        Iterable[TransportMessage | LoadError]
         ]
 """
 Type of handler implemented by this layer and intended to be passed to the
@@ -39,7 +38,7 @@ RoutedHandler: TypeAlias = Callable[
             list[bytes]
             ],
         # Messages to be sent in reaction
-        Iterable[TransportMessage]]
+        Iterable[TransportMessage | LoadError]]
 """
 Type of the next-layer ("routed" layer, once the "routing" is parsed) handler to
 be injected. This is also generic in the type of session passed to the app
@@ -58,7 +57,7 @@ More specific type of next-layer handler for the forward case.
 
 def _handle_routing(is_router: bool, upper: LocalHandler,
         upper_forward: ForwardHandler | None, session: Writer[list[bytes]],
-        msg: tuple[Routes, list[bytes]]) -> Iterable[list[bytes]]:
+        msg: tuple[Routes, list[bytes]]) -> Iterable[list[bytes] | LoadError]:
     """
     Calls the upper protocol with the parsed message.
 
@@ -91,11 +90,10 @@ def handle_routing(router: bool,
         ) -> TransportHandler:
     """Stack the routing-layer handlers"""
     def on_message(session: Writer[list[bytes]], msg_parts: list[bytes]
-                   ) -> Iterable[list[bytes]]:
+                   ) -> Iterable[list[bytes] | LoadError]:
         routed = load_routes(msg_parts)
         if isinstance(routed, LoadError):
-            logging.warning('Supressing malformed incoming message: %s', routed.reason)
-            return []
+            return [routed]
         return _handle_routing(router,
                     upper_local, upper_forward,
                     session, routed)

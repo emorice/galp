@@ -2,12 +2,15 @@
 Common CLI features used by several cli endpoints.
 """
 
+from typing import Iterable
+
 import os
 import asyncio
 import logging
 import signal
 
 import galp.config
+from galp.result import Result, Ok, Error
 
 def add_parser_arguments(parser):
     """Add generic arguments to the given parser"""
@@ -97,7 +100,7 @@ def create_terminate():
 
     return terminate
 
-async def wait(tasks):
+async def wait(tasks: Iterable[asyncio.Task[None | Error]]):
     """
     Waits until any task finishes or raises, then cancels and awaits the others.
 
@@ -114,11 +117,15 @@ async def wait(tasks):
             return_when=asyncio.FIRST_COMPLETED)
         await cleanup_tasks(pending)
         for task in done:
-            await task
+            match await task:
+                case None:
+                    continue
+                case Error() as err:
+                    logging.error("App coroutine returned error:\n%s", err)
     except:
         logging.exception("Aborting")
         raise
-    logging.info("Terminating normally")
+    logging.info("Terminating process normally")
 
 async def cleanup_tasks(tasks):
     """Cancels all tasks and wait for them"""

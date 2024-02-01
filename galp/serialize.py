@@ -6,22 +6,11 @@ serializer but do not depend on what is the actual serialization strategy used.
 """
 
 from typing import Any, TypeVar, Generic, Callable
-from dataclasses import dataclass
+from galp.result import Result, Error
 
 
-@dataclass
-class LoadError:
-    """
-    Error value to be returned on failed deserialization
-    """
-    reason: str
-
-@dataclass
-class Ok:
-    """
-    Ok value.
-    """
-    result: Any
+class LoadError(Error[str]):
+    """Error value to be returned on failed deserialization"""
 
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
@@ -40,7 +29,8 @@ class Serializer(Generic[Nat, Ref]):
     """
 
     @classmethod
-    def loads(cls, data: bytes, native_children: list[Any]) -> Ok | LoadError:
+    def loads(cls, data: bytes, native_children: list[Any]
+            ) -> Result[Any, LoadError]:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.

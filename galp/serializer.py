@@ -15,13 +15,13 @@ import dill # type: ignore[import] # Issue 85
 
 from pydantic import ValidationError, TypeAdapter, RootModel
 
-from galp import serialize
-from galp.serialize import LoadError, Ok
+from galp.serialize import LoadError, Serializer as BaseSerializer
+from galp.result import Result, Ok
 
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
 
-class Serializer(serialize.Serializer[Nat, Ref]):
+class Serializer(BaseSerializer[Nat, Ref]):
     """
     Implementation of a serialization based on msgpack and dill, with support
     for further customization through an out-of-band mechanism.
@@ -33,7 +33,8 @@ class Serializer(serialize.Serializer[Nat, Ref]):
     """
 
     @classmethod
-    def loads(cls, data: bytes, native_children: List[Any]) -> Ok | LoadError:
+    def loads(cls, data: bytes, native_children: List[Any]
+            ) -> Result[Any, LoadError]:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.

@@ -27,6 +27,7 @@ import galp.net.core.types as gm
 import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
+from galp.result import Error
 
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
@@ -289,7 +290,7 @@ class Worker:
         # Submitted jobs
         self.galp_jobs : asyncio.Queue[Awaitable[JobResult]] = asyncio.Queue()
 
-    def run(self):
+    def run(self) -> list[asyncio.Task]:
         """
         Starts and returns life-long tasks. You should cancel the others as soon
         as any finishes or raises
@@ -342,7 +343,7 @@ class Worker:
         _, primitives = script.callback(collect, _start_task)
         return primitives
 
-    async def listen(self):
+    async def listen(self) -> Error | None:
         """
         Main message processing loop of the worker.
         """
@@ -352,7 +353,7 @@ class Worker:
             )
         await self.transport.send_message(ready)
 
-        await self.transport.listen_reply_loop()
+        return await self.transport.listen_reply_loop()
 
     # Task execution logic
     # ====================
