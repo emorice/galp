@@ -16,6 +16,7 @@ import zmq
 
 import galp.worker
 import galp.net.core.types as gm
+from galp.result import Ok
 from galp.zmq_async_transport import ZmqAsyncTransport, TransportMessage
 from galp.protocol import make_stack, make_local_handler, make_name_dispatcher
 from galp.net.core.dump import dump_message
@@ -162,7 +163,7 @@ class BrokerProtocol:
         self.pool.start_worker(msg)
         return []
 
-def forkserver(config):
+def forkserver(config) -> None:
     """
     A dedicated loop to fork workers on demand and return the pids.
 
@@ -173,14 +174,15 @@ def forkserver(config):
     socket.connect('inproc://galp_forkserver')
 
     if config.get('pin_workers'):
-        cpus = psutil.Process().cpu_affinity()
+        cpus = psutil.Process().cpu_affinity() or []
+        assert cpus
 
     while True:
         msg = parse_core_message(socket.recv_multipart())
         match msg:
-            case gm.Fork():
-                _config = dict(config, mission=msg.mission,
-                               cpus_per_task=msg.resources.cpus)
+            case Ok(gm.Fork() as fork):
+                _config = dict(config, mission=fork.mission,
+                               cpus_per_task=fork.resources.cpus)
                 if _config.get('pin_workers'):
                     # We always pin to the first n cpus. This does not mean that
                     # we will actually execute on these ; cpu pins should be
@@ -189,13 +191,13 @@ def forkserver(config):
                     # number of bits in the cpu mask when modules that inspect
                     # the mask are loaded, possibly even before the first task
                     # is run.
-                    _cpus = cpus[:msg.resources.cpus]
+                    _cpus = cpus[:fork.resources.cpus]
                     logging.info('Pinning new worker to cpus %s', _cpus)
                     pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
                 else:
                     pid = galp.worker.fork(_config)
                 socket.send(pid.to_bytes(4, 'little'))
-            case gm.Exit():
+            case _:
                 break
 
 @asynccontextmanager

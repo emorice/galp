@@ -82,10 +82,9 @@ def handle_routing(router: bool,
     """Stack the routing-layer handlers"""
     def on_message(session: Writer[list[bytes]], msg_parts: list[bytes]
                    ) -> TransportReturn:
-        routed = load_routes(msg_parts)
-        if isinstance(routed, Error):
-            return routed
-        return _handle_routing(router,
-                    upper_local, upper_forward,
-                    session, routed)
+        return load_routes(msg_parts).then(
+                lambda r: _handle_routing(router,
+                            upper_local, upper_forward,
+                            session, r)
+                )
     return on_message

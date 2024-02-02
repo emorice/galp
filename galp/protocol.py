@@ -8,7 +8,6 @@ from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
 from dataclasses import dataclass
 
 import galp.net.core.types as gm
-from galp.result import Error
 from galp.net.core.load import parse_core_message
 from galp.net.core.dump import Writer
 from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
@@ -38,7 +37,7 @@ forwarding and some control over it, in order to accomodate the needs of both
 "end peers" (client, worker, pool) and broker.
 """
 
-def _log_message(msg: gm.Message, proto_name: str) -> None:
+def _log_message(msg: gm.Message, proto_name: str) -> gm.Message:
     verb = msg.message_get_key()
     match msg:
         case gm.Submit():
@@ -55,6 +54,8 @@ def _log_message(msg: gm.Message, proto_name: str) -> None:
 
     logging.info(pattern, msg_log_str)
 
+    return msg
+
 def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
         ) -> RoutedHandler[AppSessionT]:
     """
@@ -65,11 +66,11 @@ def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
     """
     def on_message(session: AppSessionT, msg: list[bytes]
                    ) -> TransportReturn:
-        msg_obj = parse_core_message(msg)
-        if isinstance(msg_obj, Error):
-            return msg_obj
-        _log_message(msg_obj, proto_name)
-        return upper(session, msg_obj)
+        return parse_core_message(msg).then(
+                lambda msg_obj: upper(
+                    session, _log_message(msg_obj, proto_name)
+                    )
+                )
     return on_message
 
 # Stack

@@ -8,9 +8,10 @@ import diskcache # type: ignore[import] # Issue 85
 import msgpack # type: ignore[import] # Issue 85
 
 import galp.task_types as gtt
+from galp.result import Result, Ok
 from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
         TaskNode, LiteralTaskDef, TaskSerializer)
-from galp.serializer import serialize_child, dump_model, load_model, LoadError, Ok
+from galp.serializer import serialize_child, dump_model, load_model, LoadError
 
 class StoreReadError(Exception):
     """
@@ -241,10 +242,13 @@ class CacheStack():
         Loads a task definition, non-recursively
         """
         # Load with a union, I don't know any way to type this
-        task_def = load_model(TaskDef, self.serialcache[name + b'.task']) # type: ignore[arg-type]
-        if isinstance(task_def, LoadError):
-            raise StoreReadError
-        return task_def
+        task_def: Result[TaskDef, LoadError] = \
+                load_model(TaskDef, self.serialcache[name + b'.task']) # type: ignore[arg-type]
+        match task_def:
+            case LoadError() as err:
+                raise StoreReadError(err)
+            case Ok(tdef):
+                return tdef
 
 def add_store_argument(parser, optional=False):
     """

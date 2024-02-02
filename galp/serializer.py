@@ -156,7 +156,7 @@ def dump_model(model: Any) -> bytes:
 
 T = TypeVar('T')
 
-def load_model(model_type: type[T], payload: bytes) -> T | LoadError:
+def load_model(model_type: type[T], payload: bytes) -> Result[T, LoadError]:
     """
     Load a msgpack-serialized pydantic model
 
@@ -181,7 +181,7 @@ def load_model(model_type: type[T], payload: bytes) -> T | LoadError:
         return LoadError(err)
 
     try:
-        return TypeAdapter(model_type).validate_python(doc)
+        return Ok(TypeAdapter(model_type).validate_python(doc))
     except ValidationError:
         err = 'Invalid model data'
         logging.exception(err)
