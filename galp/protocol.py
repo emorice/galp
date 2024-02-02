@@ -8,13 +8,14 @@ from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
 from dataclasses import dataclass
 
 import galp.net.core.types as gm
-from galp.net.core.load import parse_core_message, LoadError
+from galp.result import Error
+from galp.net.core.load import parse_core_message
 from galp.net.core.dump import Writer
 from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
         ForwardSessions)
 from galp.writer import TransportMessage
 from galp.lower_protocol import (RoutedHandler,
-        AppSessionT, TransportHandler, handle_routing)
+        AppSessionT, TransportHandler, handle_routing, TransportReturn)
 
 # Errors and exceptions
 # =====================
@@ -63,10 +64,10 @@ def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
      * Logging the message between the parsing and the application handler
     """
     def on_message(session: AppSessionT, msg: list[bytes]
-                   ) -> Iterable[TransportMessage | LoadError]:
+                   ) -> TransportReturn:
         msg_obj = parse_core_message(msg)
-        if isinstance(msg_obj, LoadError):
-            return [msg_obj]
+        if isinstance(msg_obj, Error):
+            return msg_obj
         _log_message(msg_obj, proto_name)
         return upper(session, msg_obj)
     return on_message

@@ -1,10 +1,10 @@
 """
 Using ØMQ as a transport for Galp protoclols
 """
-
+from typing import Iterable
 import zmq
 
-from galp.protocol import ProtocolEndException
+from galp.protocol import ProtocolEndException, Stack, TransportReturn
 from galp.writer import TransportMessage
 from galp.net.core.types import Message
 from galp.result import Error
@@ -19,8 +19,8 @@ class ZmqAsyncTransport:
         socket_type: zmq socket type
         bind: whether to bind or connect, default False (connect)
     """
-    def __init__(self, stack, endpoint, socket_type, bind=False):
-        self.stack = stack
+    def __init__(self, stack: Stack, endpoint, socket_type, bind=False):
+        self.stack: Stack = stack
         self.handler = stack.handler
 
         self.endpoint = endpoint
@@ -52,8 +52,7 @@ class ZmqAsyncTransport:
         """
         await self.socket.send_multipart(msg)
 
-    async def send_messages(self, messages: list[TransportMessage | Error]
-            ) -> Error | None:
+    async def send_messages(self, messages: Iterable[TransportMessage]) -> None:
         """
         Wrapper of send_raw accepting several messages or errors.
 
@@ -61,12 +60,9 @@ class ZmqAsyncTransport:
         processed, and the error if one was encountered.
         """
         for message in messages:
-            if isinstance(message, Error):
-                return message
             await self.send_raw(message)
-        return None
 
-    async def recv_message(self) -> list[TransportMessage | Error]:
+    async def recv_message(self) -> TransportReturn:
         """
         Waits for one message, then call handlers when it arrives.
 
@@ -74,9 +70,7 @@ class ZmqAsyncTransport:
         type accepted by protocol.write_message.
         """
         zmq_msg = await self.socket.recv_multipart()
-        ret = self.handler(lambda msg: msg, zmq_msg)
-        assert ret is not None, zmq_msg
-        return ret
+        return self.handler(lambda msg: msg, zmq_msg)
 
     async def listen_reply_loop(self) -> Error | None:
         """Simple processing loop
@@ -90,11 +84,10 @@ class ZmqAsyncTransport:
         information beteen connections.
         """
         try:
-            error = None
-            while error is None:
-                # Replies can contain errors, but we check this when sending
+            while True:
                 replies = await self.recv_message()
-                error = await self.send_messages(replies)
-            return error
+                if isinstance(replies, Error):
+                    return replies
+                await self.send_messages(replies)
         except ProtocolEndException:
             return None
