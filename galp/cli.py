@@ -10,7 +10,7 @@ import logging
 import signal
 
 import galp.config
-from galp.result import Result, Ok, Error
+from galp.result import Error
 
 def add_parser_arguments(parser):
     """Add generic arguments to the given parser"""

@@ -25,7 +25,7 @@ from galp.cache import CacheStack
 from galp.net_store import make_get_handler
 from galp.req_rep import make_reply_handler
 from galp.protocol import (ProtocolEndException, make_stack, make_local_handler,
-        make_type_dispatcher, Handler, TransportMessage)
+        make_type_dispatcher, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task

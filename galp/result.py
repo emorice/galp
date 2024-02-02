@@ -4,7 +4,7 @@ Simple tagged unions of types with error types to use as return value
 
 import traceback
 from typing import TypeAlias, Generic, TypeVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 OkT = TypeVar('OkT')
 
@@ -31,7 +31,7 @@ class Error(Exception, Generic[ErrMessageT]):
     ErrMessageT is commonly just str
     """
     error: ErrMessageT
-    frame: list[traceback.FrameSummary] = field(init=False)
+    stack_summary: list[traceback.FrameSummary]
 
     def __init__(self, error: ErrMessageT):
         self.error = error
