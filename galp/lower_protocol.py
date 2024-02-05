@@ -7,7 +7,8 @@ from typing import TypeAlias, Callable, Iterable, TypeVar
 from galp.writer import TransportMessage
 from galp.net.routing.load import load_routes, Routes
 from galp.net.routing.dump import ReplyFromSession, ForwardSessions, Writer
-from galp.result import Error
+from galp.net.core.load import parse_core_message, Message, LoadError
+from galp.result import Result, Error
 
 
 # Routing-layer handlers
@@ -28,7 +29,7 @@ handler. In practice this type is almost always known, but a few bits of code
 benefit from treating it as a generic.
 """
 
-RoutedHandler: TypeAlias = Callable[[AppSessionT, list[bytes]],
+RoutedHandler: TypeAlias = Callable[[AppSessionT, Result[Message, LoadError]],
         TransportReturn]
 """
 Type of the next-layer ("routed" layer, once the "routing" is parsed) handler to
@@ -68,12 +69,13 @@ def _handle_routing(is_router: bool, upper: LocalHandler,
     forward = ReplyFromSession(session, is_router, routes.forward)
     both = ForwardSessions(origin=reply, dest=forward)
 
+    core = parse_core_message(payload)
     if is_forward:
         if upper_forward:
-            return upper_forward(both, payload)
+            return upper_forward(both, core)
         return []
 
-    return upper(reply, payload)
+    return upper(reply, core)
 
 def handle_routing(router: bool,
         upper_local: LocalHandler,
