@@ -11,9 +11,10 @@ import galp.net.core.types as gm
 from galp.net.core.dump import Writer
 from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
         ForwardSessions)
+from galp.net.routing.load import load_routes
 from galp.writer import TransportMessage
 from galp.lower_protocol import (RoutedHandler,
-        AppSessionT, TransportHandler, handle_routing, TransportReturn)
+        AppSessionT, TransportHandler, TransportReturn, handle_routing)
 
 # Errors and exceptions
 # =====================
@@ -95,9 +96,15 @@ def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, rout
         forward_core_handler = handle_core(on_forward, name)
     else:
         forward_core_handler = None
-    routing_handler = handle_routing(router, core_handler, forward_core_handler)
 
-    return Stack(routing_handler, make_local_writer(router))
+    def on_message(writer: Writer[TransportMessage], msg: TransportMessage
+            ) -> TransportReturn:
+        return load_routes(msg).then(
+                lambda routed: handle_routing(router,
+                            core_handler, forward_core_handler,
+                            writer, routed)
+                )
+    return Stack(on_message, make_local_writer(router))
 
 # Dispatch-layer handlers
 # =======================

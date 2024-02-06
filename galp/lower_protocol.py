@@ -5,7 +5,7 @@ Implementation of the lower level of GALP, handles routing.
 from typing import TypeAlias, Callable, Iterable, TypeVar
 
 from galp.writer import TransportMessage
-from galp.net.routing.load import load_routes, Routes
+from galp.net.routing.load import Routes
 from galp.net.routing.dump import ReplyFromSession, ForwardSessions, Writer
 from galp.net.core.load import parse_core_message, Message
 from galp.result import Error
@@ -47,7 +47,7 @@ ForwardHandler: TypeAlias = RoutedHandler[ForwardSessions]
 More specific type of next-layer handler for the forward case.
 """
 
-def _handle_routing(is_router: bool, upper: LocalHandler,
+def handle_routing(is_router: bool, upper: LocalHandler,
     upper_forward: ForwardHandler | None, session: Writer[list[bytes]],
     msg: tuple[Routes, list[bytes]]) -> TransportReturn:
     """
@@ -76,17 +76,3 @@ def _handle_routing(is_router: bool, upper: LocalHandler,
         return []
 
     return core.then(lambda m: upper(reply, m))
-
-def handle_routing(router: bool,
-        upper_local: LocalHandler,
-        upper_forward: ForwardHandler | None
-        ) -> TransportHandler:
-    """Stack the routing-layer handlers"""
-    def on_message(session: Writer[list[bytes]], msg_parts: list[bytes]
-                   ) -> TransportReturn:
-        return load_routes(msg_parts).then(
-                lambda r: _handle_routing(router,
-                            upper_local, upper_forward,
-                            session, r)
-                )
-    return on_message
