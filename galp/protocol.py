@@ -8,7 +8,6 @@ from typing import TypeAlias, Iterable, TypeVar, Generic, Callable
 from dataclasses import dataclass
 
 import galp.net.core.types as gm
-from galp.net.core.load import LoadError, Result
 from galp.net.core.dump import Writer
 from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
         ForwardSessions)
@@ -64,13 +63,8 @@ def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
      * Parse error handling
      * Logging the message between the parsing and the application handler
     """
-    def on_message(session: AppSessionT, msg: Result[gm.Message, LoadError]
-                   ) -> TransportReturn:
-        return msg.then(
-                lambda msg_obj: upper(
-                    session, _log_message(msg_obj, proto_name)
-                    )
-                )
+    def on_message(session: AppSessionT, msg: gm.Message) -> TransportReturn:
+        return upper(session, _log_message(msg, proto_name))
     return on_message
 
 # Stack
