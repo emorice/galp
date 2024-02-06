@@ -5,9 +5,9 @@ Implementation of the lower level of GALP, handles routing.
 from typing import TypeAlias, Callable, Iterable, TypeVar
 
 from galp.writer import TransportMessage
-from galp.net.routing.load import Routes
+from galp.net.routing.load import Routed
 from galp.net.routing.dump import ReplyFromSession, ForwardSessions, Writer
-from galp.net.core.load import parse_core_message, Message
+from galp.net.core.load import Message
 from galp.result import Error
 
 
@@ -49,7 +49,7 @@ More specific type of next-layer handler for the forward case.
 
 def handle_routing(is_router: bool, upper: LocalHandler,
     upper_forward: ForwardHandler | None, session: Writer[list[bytes]],
-    msg: tuple[Routes, list[bytes]]) -> TransportReturn:
+    msg: Routed) -> TransportReturn:
     """
     Calls the upper protocol with the parsed message.
 
@@ -62,17 +62,15 @@ def handle_routing(is_router: bool, upper: LocalHandler,
         router: True if sending function should move a routing id in the
             first routing segment.
     """
-    routes, payload = msg
-    is_forward = bool(routes.forward)
+    is_forward = bool(msg.forward)
 
-    reply = ReplyFromSession(session, is_router, routes.incoming)
-    forward = ReplyFromSession(session, is_router, routes.forward)
+    reply = ReplyFromSession(session, is_router, msg.incoming)
+    forward = ReplyFromSession(session, is_router, msg.forward)
     both = ForwardSessions(origin=reply, dest=forward)
 
-    core = parse_core_message(payload)
     if is_forward:
         if upper_forward:
-            return core.then(lambda m: upper_forward(both, m))
+            return upper_forward(both, msg.body)
         return []
 
-    return core.then(lambda m: upper(reply, m))
+    return upper(reply, msg.body)

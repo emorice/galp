@@ -8,22 +8,24 @@ writer, but should work with any layer.
 from dataclasses import dataclass
 
 from galp.net.core.dump import Writer, Message, dump_message
-from .types import Route, Routes
+from .types import Routed, Route
 
-def dump_routes(is_router: bool, routes: Routes) -> list[bytes]:
+def dump_routed(is_router: bool, routed: Routed) -> list[bytes]:
     """Serializes routes"""
     if is_router:
         # If routing, we need an id, we take it from the forward segment
         # Note: this id is consumed by the zmq router sending stage and does
         # not end up on the wire
-        next_hop, *forward_route = routes.forward
-        return [next_hop, *routes.incoming, *forward_route, b'']
-    return [*routes.incoming, *routes.forward, b'']
+        next_hop, *forward_route = routed.forward
+        return [next_hop, *routed.incoming, *forward_route, b'', *dump_message(routed.body)]
+    return [*routed.incoming, *routed.forward, b'', *dump_message(routed.body)]
 
 def make_message_writer(write: Writer[list[bytes]],
-        is_router: bool, routes: Routes) -> Writer[Message]:
+        is_router: bool, incoming: Route, forward: Route) -> Writer[Message]:
     """Serialize and write routes and core message"""
-    return lambda msg: write(dump_routes(is_router, routes) + dump_message(msg))
+    return lambda msg: write(dump_routed(is_router,
+        Routed(incoming, forward, msg)
+        ))
 
 @dataclass
 class ReplyFromSession:
@@ -47,8 +49,7 @@ class ReplyFromSession:
         """
         nat_origin = Route() if origin is None else origin.forward
         return make_message_writer(self.write_lower, self.is_router,
-                Routes(incoming=nat_origin, forward=self.forward)
-                )
+                incoming=nat_origin, forward=self.forward)
 
     @property
     def uid(self):
@@ -72,5 +73,4 @@ def make_local_writer(is_router: bool) -> Writer[Message]:
     Create a default-addressing session
     """
     return make_message_writer(lambda msg: msg, is_router,
-            Routes(incoming=Route(), forward=Route())
-            )
+            incoming=Route(), forward=Route())

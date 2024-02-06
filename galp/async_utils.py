@@ -3,7 +3,9 @@ Asyncio recipes
 """
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager, AsyncExitStack
+from galp.result import Error
 
 @asynccontextmanager
 async def background(coroutine):
@@ -16,7 +18,11 @@ async def background(coroutine):
     finally:
         task.cancel()
         try:
-            await task
+            match await task:
+                case None:
+                    pass
+                case Error() as err:
+                    logging.error("App background task returned error:\n%s", err)
         except asyncio.CancelledError:
             pass
 

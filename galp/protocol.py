@@ -11,10 +11,10 @@ import galp.net.core.types as gm
 from galp.net.core.dump import Writer
 from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
         ForwardSessions)
-from galp.net.routing.load import load_routes
+from galp.net.routing.load import Routed, load_routed
 from galp.writer import TransportMessage
-from galp.lower_protocol import (RoutedHandler,
-        AppSessionT, TransportHandler, TransportReturn, handle_routing)
+from galp.lower_protocol import (AppSessionT, TransportHandler, TransportReturn,
+        handle_routing)
 
 # Errors and exceptions
 # =====================
@@ -37,7 +37,8 @@ forwarding and some control over it, in order to accomodate the needs of both
 "end peers" (client, worker, pool) and broker.
 """
 
-def _log_message(msg: gm.Message, proto_name: str) -> gm.Message:
+def _log_message(routed: Routed, proto_name: str) -> Routed:
+    msg = routed.body
     verb = msg.message_get_key()
     match msg:
         case gm.Submit():
@@ -54,19 +55,7 @@ def _log_message(msg: gm.Message, proto_name: str) -> gm.Message:
 
     logging.info(pattern, msg_log_str)
 
-    return msg
-
-def handle_core(upper: ForwardingHandler[AppSessionT], proto_name: str
-        ) -> RoutedHandler[AppSessionT]:
-    """
-    Chains the three parts of the core handlers:
-     * Parsing the core payload
-     * Parse error handling
-     * Logging the message between the parsing and the application handler
-    """
-    def on_message(session: AppSessionT, msg: gm.Message) -> TransportReturn:
-        return upper(session, _log_message(msg, proto_name))
-    return on_message
+    return routed
 
 # Stack
 # =====
@@ -90,19 +79,14 @@ def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, rout
         The result of each app-provided class factory, and the final root of the
         stack to be given to the transport
     """
-    # Handlers
-    core_handler = handle_core(app_handler, name)
-    if on_forward:
-        forward_core_handler = handle_core(on_forward, name)
-    else:
-        forward_core_handler = None
-
     def on_message(writer: Writer[TransportMessage], msg: TransportMessage
             ) -> TransportReturn:
-        return load_routes(msg).then(
+        return load_routed(msg).then(
                 lambda routed: handle_routing(router,
-                            core_handler, forward_core_handler,
-                            writer, routed)
+                            app_handler, on_forward,
+                            writer,
+                            _log_message(routed, name)
+                            )
                 )
     return Stack(on_message, make_local_writer(router))
 

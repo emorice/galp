@@ -2,20 +2,15 @@
 Parsing for routing layer
 """
 
-from typing import TypeAlias
-
 from galp.net.base.load import LoadError
 from galp.result import Result, Ok
 
-from .types import Routes
+from galp.net.core.load import parse_core_message
+from .types import Routed
 
-Routed: TypeAlias = tuple[Routes, list[bytes]]
-
-def load_routes(msg: list[bytes]) -> Result[Routed, LoadError]:
+def load_routed(msg: list[bytes]) -> Result[Routed, LoadError]:
     """
     Parses and returns the routing part of `msg`, and body.
-
-    Can be overloaded to handle different routing strategies.
     """
     route_parts = []
     while msg and msg[0]:
@@ -28,6 +23,10 @@ def load_routes(msg: list[bytes]) -> Result[Routed, LoadError]:
     # Discard empty frame
     if not msg or  msg[0]:
         return LoadError('Missing empty delimiter frame')
-    payload = msg[1:]
 
-    return Ok((Routes(incoming=incoming, forward=forward), payload))
+    return parse_core_message(msg[1:]).then(
+            lambda core: Ok(Routed(
+                incoming=incoming, forward=forward,
+                body=core
+                ))
+            )
