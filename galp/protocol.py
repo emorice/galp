@@ -71,19 +71,10 @@ forwarding and some control over it, in order to accomodate the needs of both
 "end peers" (client, worker, pool) and broker.
 """
 
-def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, router: bool) -> Stack:
-    """Shortcut stack maker for common end-peer stacks"""
-    def _on_message(sessions: ReplyFromSession | ForwardSessions, msg: gm.Message):
-        match sessions:
-            case ReplyFromSession():
-                return app_handler(sessions, msg)
-            case ForwardSessions():
-                return Error('Unexpected forwarded message')
-    return make_forward_stack(_on_message, name, router)
-
-def make_forward_stack(
-        app_handler: ForwardingHandler[ReplyFromSession | ForwardSessions],
-        name: str, router: bool = True) -> Stack:
+def make_forward_stack(app_handler: Callable[
+    [ReplyFromSession | ForwardSessions, gm.Message],
+    TransportReturn],
+    name: str, router: bool = True) -> Stack:
     """
     Factory function to assemble the handler stack
 
@@ -119,21 +110,15 @@ Type of function that can handle any of several messages, but differs from the
 core-layer expected handler by being blind to forwarding
 """
 
-def make_local_handler(dispatch: DispatchFunction) -> ForwardingHandler:
-    """
-    Wraps a Dispatcher accepting an UpperSession/Message
-    into one accepting an ReplyFromSession/Message and discarding
-    forwarding information
-    """
-    def on_message(session: ReplyFromSession, msg: gm.Message) -> list[TransportMessage]:
-        """
-        Process a routed message by forwarding the body only to the on_ method
-        of matching name
-        """
-        # We do not forwarding, so only generate local messages and discard
-        # forwarding information
-        return dispatch(session.reply_from(None), msg)
-    return on_message
+def make_stack(app_handler: DispatchFunction, name: str) -> Stack:
+    """Shortcut stack maker for common end-peer stacks"""
+    def _on_message(sessions: ReplyFromSession | ForwardSessions, msg: gm.Message):
+        match sessions:
+            case ReplyFromSession():
+                return app_handler(sessions.reply_from(None), msg)
+            case ForwardSessions():
+                return Error('Unexpected forwarded message')
+    return make_forward_stack(_on_message, name, router=False)
 
 def make_name_dispatcher(upper) -> DispatchFunction:
     """

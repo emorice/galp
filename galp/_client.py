@@ -24,7 +24,7 @@ from galp import async_utils
 from galp.cache import CacheStack
 from galp.net_store import make_get_handler
 from galp.req_rep import make_reply_handler
-from galp.protocol import (ProtocolEndException, make_stack, make_local_handler,
+from galp.protocol import (ProtocolEndException, make_stack,
         make_type_dispatcher, TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
@@ -62,7 +62,7 @@ class Client:
                 cpus_per_task=cpus_per_task or 1,
                 store=self.store
                 )
-        handler = make_local_handler(make_type_dispatcher([
+        handler = make_type_dispatcher([
             make_get_handler(self.store), # Get
             make_reply_handler(self.protocol.script, { # Reply
                 'GET': self.protocol.on_get_reply,
@@ -70,9 +70,8 @@ class Client:
                 'SUBMIT': self.protocol.on_submit_reply,
                 }, self.protocol.schedule_new)
             ])
-            )
         self.transport = ZmqAsyncTransport(
-            stack=make_stack(handler, name='BK', router=False),
+            stack=make_stack(handler, name='BK'),
             # pylint: disable=no-member # False positive
             endpoint=endpoint, socket_type=zmq.DEALER
             )
