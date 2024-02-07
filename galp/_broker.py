@@ -8,6 +8,7 @@ from typing import Any
 from dataclasses import dataclass
 from collections import defaultdict
 from itertools import cycle
+from functools import singledispatchmethod
 
 import zmq
 
@@ -16,7 +17,7 @@ from galp.net.core.dump import add_request_id, Writer
 import galp.net.requests.types as gr
 import galp.task_types as gtt
 
-from galp.protocol import (make_stack, ReplyFromSession, ForwardSessions,
+from galp.protocol import (make_forward_stack, ReplyFromSession, ForwardSessions,
         TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.task_types import Resources
@@ -27,9 +28,8 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
     def __init__(self, endpoint: str, n_cpus: int) -> None:
         self.proto = CommonProtocol(max_cpus=n_cpus)
-        stack = make_stack(self.proto.on_local,
-                name='CW', router=True,
-                on_forward=self.proto.on_forward)
+        stack = make_forward_stack(self.proto.on_message,
+                name='CW')
         self.transport = ZmqAsyncTransport(
             stack, endpoint, zmq.ROUTER, bind=True)
 
@@ -250,7 +250,8 @@ class CommonProtocol:
         # We'll send the request to the worker when it send us a READY
         return [self.write_pool(gm.Fork(alloc.task_id, alloc.claim))]
 
-    def on_forward(self, sessions: ForwardSessions, msg: gm.Message
+    @singledispatchmethod
+    def on_message(self, sessions: ForwardSessions, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles only messages forwarded through broker
@@ -263,7 +264,8 @@ class CommonProtocol:
         logging.debug('Forwarding %s', msg.__class__.__name__)
         return [sessions.dest.reply_from(sessions.origin)(msg)]
 
-    def on_local(self, session: ReplyFromSession, msg: gm.Message
+    @on_message.register
+    def _(self, session: ReplyFromSession, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles local messages received by the broker

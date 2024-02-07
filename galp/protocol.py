@@ -13,8 +13,9 @@ from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
         ForwardSessions)
 from galp.net.routing.load import Routed, load_routed
 from galp.writer import TransportMessage
-from galp.lower_protocol import (AppSessionT, TransportHandler, TransportReturn,
+from galp.lower_protocol import (TransportHandler, TransportReturn,
         handle_routing)
+from galp.result import Error
 
 # Errors and exceptions
 # =====================
@@ -27,15 +28,6 @@ class ProtocolEndException(Exception):
 
 # Core-layer handlers
 # ===================
-
-ForwardingHandler: TypeAlias = Callable[
-        [AppSessionT, gm.Message], list[TransportMessage]
-        ]
-"""
-Type of the next-layer ("application") handler that has some awareness of
-forwarding and some control over it, in order to accomodate the needs of both
-"end peers" (client, worker, pool) and broker.
-"""
 
 def _log_message(routed: Routed, proto_name: str) -> Routed:
     msg = routed.body
@@ -69,9 +61,29 @@ class Stack:
     handler: TransportHandler
     write_local: Writer[gm.Message]
 
-def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, router: bool,
-        on_forward: ForwardingHandler[ForwardSessions] | None = None
-        ) -> Stack:
+AppSessionT = TypeVar('AppSessionT')
+ForwardingHandler: TypeAlias = Callable[
+        [AppSessionT, gm.Message], TransportReturn
+        ]
+"""
+Type of the next-layer ("application") handler that has some awareness of
+forwarding and some control over it, in order to accomodate the needs of both
+"end peers" (client, worker, pool) and broker.
+"""
+
+def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, router: bool) -> Stack:
+    """Shortcut stack maker for common end-peer stacks"""
+    def _on_message(sessions: ReplyFromSession | ForwardSessions, msg: gm.Message):
+        match sessions:
+            case ReplyFromSession():
+                return app_handler(sessions, msg)
+            case ForwardSessions():
+                return Error('Unexpected forwarded message')
+    return make_forward_stack(_on_message, name, router)
+
+def make_forward_stack(
+        app_handler: ForwardingHandler[ReplyFromSession | ForwardSessions],
+        name: str, router: bool = True) -> Stack:
     """
     Factory function to assemble the handler stack
 
@@ -82,11 +94,10 @@ def make_stack(app_handler: ForwardingHandler[ReplyFromSession], name: str, rout
     def on_message(writer: Writer[TransportMessage], msg: TransportMessage
             ) -> TransportReturn:
         return load_routed(msg).then(
-                lambda routed: handle_routing(router,
-                            app_handler, on_forward,
-                            writer,
-                            _log_message(routed, name)
-                            )
+                lambda routed: app_handler(
+                    handle_routing(router, writer, _log_message(routed, name)),
+                    routed.body
+                    )
                 )
     return Stack(on_message, make_local_writer(router))
 
