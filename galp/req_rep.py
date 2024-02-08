@@ -3,26 +3,12 @@ Request-reply pattern with multiplexing
 """
 
 import logging
-from typing import Callable, TypeAlias, TypeVar
+from typing import Callable, TypeAlias
 
-from galp.protocol import Handler, TransportMessage, HandlerFunction
-from galp.net.core.types import Reply, ReplyValue, Request, Message
-from galp.net.core.dump import add_request_id, Writer
+from galp.protocol import Handler, TransportMessage
+from galp.net.core.types import Reply, ReplyValue, Message
+from galp.net.core.dump import Writer
 from galp.commands import Script, PrimitiveProxy, InertCommand
-
-M = TypeVar('M', bound=Request)
-
-RequestHandler: TypeAlias = Callable[[Writer[ReplyValue], M], list[TransportMessage]]
-
-def make_request_handler(handler: RequestHandler[M]) -> HandlerFunction:
-    """
-    Chain a handler returning a galp.Message with message writing back to
-    original sender
-    """
-    def on_message(write: Writer[Message], msg: M) -> list[TransportMessage]:
-        return handler(add_request_id(write, msg), msg)
-    return on_message
-
 
 ReplyHandler: TypeAlias = Callable[[PrimitiveProxy, ReplyValue], list[InertCommand]]
 

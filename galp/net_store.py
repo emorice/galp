@@ -7,18 +7,19 @@ import logging
 
 from typing import Iterable
 
-from galp.net.core.types import Get, Stat
-from galp.net.core.dump import Writer, ReplyValue
+from galp.net.core.types import Get, Stat, Message
+from galp.net.core.dump import Writer
 from galp.net.requests.types import NotFound, Found, Put, Done
+from galp.net.core.dump import add_request_id
 from galp.cache import CacheStack, StoreReadError
-from galp.req_rep import Handler, make_request_handler
+from galp.req_rep import Handler
 
 def make_get_handler(store: CacheStack) -> Handler[Get]:
     """
     Answers GET requests based on underlying store
     """
-    @make_request_handler
-    def _on_get(write_reply: Writer[ReplyValue], msg: Get):
+    def _on_get(write: Writer[Message], msg: Get):
+        write_reply = add_request_id(write, msg)
         name = msg.name
         logging.debug('Received GET for %s', name)
         try:
@@ -36,8 +37,8 @@ def make_stat_handler(store: CacheStack) -> Handler[Stat]:
     """
     Answers STAT requests based on underlying store
     """
-    @make_request_handler
-    def _on_stat(write_reply: Writer[ReplyValue], msg: Stat):
+    def _on_stat(write: Writer[Message], msg: Stat):
+        write_reply = add_request_id(write, msg)
         try:
             return [write_reply(_on_stat_io_unsafe(store, msg))]
         except StoreReadError:
