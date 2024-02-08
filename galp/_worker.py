@@ -14,7 +14,7 @@ import logging
 import argparse
 import resource
 
-from typing import Awaitable
+from typing import Awaitable, Iterable
 from dataclasses import dataclass
 
 import psutil
@@ -32,15 +32,15 @@ from galp.result import Error
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
 from galp.protocol import (ProtocolEndException, make_stack, Handler,
-        make_type_dispatcher)
+        TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
-from galp.net_store import make_store_handlers
+from galp.net_store import handle_get, handle_stat
 from galp.net.core.dump import add_request_id, Writer
-from galp.req_rep import make_reply_handler
+from galp.req_rep import handle_reply
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -132,8 +132,6 @@ def make_lifecycle_handlers():
         Terminate
         """
         del msg
-        logging.info('Received EXIT, terminating')
-        raise ProtocolEndException('Incoming EXIT')
     return [Handler(gm.Exit, on_exit)]
 
 class WorkerProtocol:
@@ -254,21 +252,29 @@ class Worker:
     """
     def __init__(self, setup: dict):
         protocol = WorkerProtocol(self, setup['store'])
-        handler = make_type_dispatcher([
-            # Lifecycle messages: Exit
-            *make_lifecycle_handlers(),
-            # Request handlers: Get, Stat
-            *make_store_handlers(setup['store']),
-            # Request handlers: Exec
-            Handler(gm.Exec, protocol.on_routed_exec),
-            # Reply handlers for Get: Put/NotFound
-            make_reply_handler(protocol.script,
-                { 'GET': protocol.on_get_reply },
-                protocol.new_commands_to_replies)
-            ])
+
+        def on_message(write: Writer[gm.Message], msg: gm.Message
+                ) -> Iterable[TransportMessage] | Error:
+            match msg:
+                case gm.Exit():
+                    logging.info('Received EXIT, terminating')
+                    raise ProtocolEndException('Incoming EXIT')
+                case gm.Get():
+                    return handle_get(write, msg, setup['store'])
+                case gm.Stat():
+                    return handle_stat(write, msg, setup['store'])
+                case gm.Exec():
+                    return protocol.on_routed_exec(write, msg)
+                case gm.Reply():
+                    news = handle_reply(msg, protocol.script,
+                            {'GET': protocol.on_get_reply})
+                    return protocol.new_commands_to_replies(write, news)
+                case _:
+                    return Error(f'Unexpected {msg}')
+
         self.protocol : 'WorkerProtocol' = protocol
         self.transport = ZmqAsyncTransport(
-                make_stack(handler, name='BK'),
+                make_stack(on_message, name='BK'),
                 setup['endpoint'], zmq.DEALER # pylint: disable=no-member
                 )
         self.step_dir = setup['steps']

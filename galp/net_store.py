@@ -12,7 +12,7 @@ from galp.net.core.dump import Writer
 from galp.net.requests.types import NotFound, Found, Put, Done
 from galp.net.core.dump import add_request_id
 from galp.cache import CacheStack, StoreReadError
-from galp.protocol import Handler, TransportMessage
+from galp.protocol import TransportMessage
 
 def handle_get(write: Writer[Message], msg: Get, store: CacheStack
         ) -> Iterable[TransportMessage]:
@@ -32,22 +32,17 @@ def handle_get(write: Writer[Message], msg: Get, store: CacheStack
         logging.exception('GET: Cache ERROR: %s', name)
     return [write_reply(NotFound())]
 
-def make_get_handler(store: CacheStack) -> Handler[Get]:
-    """Wrap get handler into object"""
-    return Handler(Get, lambda write, msg: handle_get(write, msg, store))
-
-def make_stat_handler(store: CacheStack) -> Handler[Stat]:
+def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
+        ) -> Iterable[TransportMessage]:
     """
     Answers STAT requests based on underlying store
     """
-    def _on_stat(write: Writer[Message], msg: Stat):
-        write_reply = add_request_id(write, msg)
-        try:
-            return [write_reply(_on_stat_io_unsafe(store, msg))]
-        except StoreReadError:
-            logging.exception('STAT: ERROR %s', msg.name)
-        return [write_reply(NotFound())]
-    return Handler(Stat, _on_stat)
+    write_reply = add_request_id(write, msg)
+    try:
+        return [write_reply(_on_stat_io_unsafe(store, msg))]
+    except StoreReadError:
+        logging.exception('STAT: ERROR %s', msg.name)
+    return [write_reply(NotFound())]
 
 def _on_stat_io_unsafe(store, msg: Stat) -> Done | Found | NotFound:
     """
@@ -86,12 +81,3 @@ def _on_stat_io_unsafe(store, msg: Stat) -> Done | Found | NotFound:
     # Case 4: nothing
     logging.info('STAT: NOT FOUND %s', msg.name)
     return NotFound()
-
-def make_store_handlers(store: CacheStack) -> Iterable[Handler]:
-    """
-    Collect straight-to-store handlers
-    """
-    return [
-        make_get_handler(store),
-        make_stat_handler(store)
-        ]
