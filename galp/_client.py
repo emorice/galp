@@ -20,12 +20,13 @@ import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
 
+from galp.result import Error
 from galp import async_utils
 from galp.cache import CacheStack
-from galp.net_store import make_get_handler
-from galp.req_rep import make_reply_handler
+from galp.net_store import handle_get
+from galp.req_rep import handle_reply
 from galp.protocol import (ProtocolEndException, make_stack,
-        make_type_dispatcher, TransportMessage)
+    TransportMessage, Writer)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.command_queue import CommandQueue
 from galp.query import run_task
@@ -62,16 +63,23 @@ class Client:
                 cpus_per_task=cpus_per_task or 1,
                 store=self.store
                 )
-        handler = make_type_dispatcher([
-            make_get_handler(self.store), # Get
-            make_reply_handler(self.protocol.script, { # Reply
-                'GET': self.protocol.on_get_reply,
-                'STAT': self.protocol.on_stat_reply,
-                'SUBMIT': self.protocol.on_submit_reply,
-                }, self.protocol.schedule_new)
-            ])
+        def on_message(write: Writer[gm.Message], msg: gm.Message
+                ) -> Iterable[TransportMessage] | Error:
+            match msg:
+                case gm.Get():
+                    return handle_get(write, msg, self.store)
+                case gm.Reply():
+                    news = handle_reply(msg, self.protocol.script, {
+                        'GET': self.protocol.on_get_reply,
+                        'STAT': self.protocol.on_stat_reply,
+                        'SUBMIT': self.protocol.on_submit_reply,
+                        })
+                    self.protocol.schedule_new(news)
+                    return []
+                case _:
+                    return Error(f'Unexpected {msg}')
         self.transport = ZmqAsyncTransport(
-            stack=make_stack(handler, name='BK'),
+            stack=make_stack(on_message, name='BK'),
             # pylint: disable=no-member # False positive
             endpoint=endpoint, socket_type=zmq.DEALER
             )
@@ -229,7 +237,7 @@ class Client:
 
         try:
             _, cmds = script.callback(collect, _end)
-            self.protocol.schedule_new(None, cmds)
+            self.protocol.schedule_new( cmds)
 
             await async_utils.run(
                 self.process_scheduled(),
@@ -344,7 +352,7 @@ class BrokerProtocol:
             return gm.Get(name=name)
 
         # Found, mark command as done and pass on children
-        self.schedule_new(None,
+        self.schedule_new(
             self.script.commands['GET', name].done(res)
             )
         # Supress normal output, removing task from queue
@@ -393,8 +401,8 @@ class BrokerProtocol:
         """
         return stat_command.done(msg)
 
-    def schedule_new(self, _session, commands: Iterable[cm.InertCommand]
-            ) -> list[TransportMessage]:
+    def schedule_new(self, commands: Iterable[cm.InertCommand]
+            ) -> None:
         """
         Transfer the command queue to the scheduler, and therefore only return
         an empty list of immediate messages. Session argument is just for compat
@@ -402,4 +410,3 @@ class BrokerProtocol:
         """
         for command in commands:
             self.schedule(command)
-        return []

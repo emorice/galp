@@ -12,26 +12,29 @@ from galp.net.core.dump import Writer
 from galp.net.requests.types import NotFound, Found, Put, Done
 from galp.net.core.dump import add_request_id
 from galp.cache import CacheStack, StoreReadError
-from galp.req_rep import Handler
+from galp.protocol import Handler, TransportMessage
 
-def make_get_handler(store: CacheStack) -> Handler[Get]:
+def handle_get(write: Writer[Message], msg: Get, store: CacheStack
+        ) -> Iterable[TransportMessage]:
     """
     Answers GET requests based on underlying store
     """
-    def _on_get(write: Writer[Message], msg: Get):
-        write_reply = add_request_id(write, msg)
-        name = msg.name
-        logging.debug('Received GET for %s', name)
-        try:
-            res = Put(*store.get_serial(name))
-            logging.info('GET: Cache HIT: %s', name)
-            return [write_reply(res)]
-        except KeyError:
-            logging.info('GET: Cache MISS: %s', name)
-        except StoreReadError:
-            logging.exception('GET: Cache ERROR: %s', name)
-        return [write_reply(NotFound())]
-    return Handler(Get, _on_get)
+    write_reply = add_request_id(write, msg)
+    name = msg.name
+    logging.debug('Received GET for %s', name)
+    try:
+        res = Put(*store.get_serial(name))
+        logging.info('GET: Cache HIT: %s', name)
+        return [write_reply(res)]
+    except KeyError:
+        logging.info('GET: Cache MISS: %s', name)
+    except StoreReadError:
+        logging.exception('GET: Cache ERROR: %s', name)
+    return [write_reply(NotFound())]
+
+def make_get_handler(store: CacheStack) -> Handler[Get]:
+    """Wrap get handler into object"""
+    return Handler(Get, lambda write, msg: handle_get(write, msg, store))
 
 def make_stat_handler(store: CacheStack) -> Handler[Stat]:
     """

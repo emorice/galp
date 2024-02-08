@@ -92,19 +92,8 @@ def make_forward_stack(app_handler: Callable[
                 )
     return Stack(on_message, make_local_writer(router))
 
-# Dispatch-layer handlers
-# =======================
-# Functions to help applications combine modular handlers into a generic handler
-# suitable for the core-layer
-
-M = TypeVar('M', bound=gm.Message)
-
-HandlerFunction: TypeAlias = Callable[[Writer[gm.Message], M], list[TransportMessage]]
-"""
-Type of function that handles a specific message M and generate replies
-"""
-
-DispatchFunction: TypeAlias = HandlerFunction[gm.Message]
+DispatchFunction: TypeAlias = Callable[[Writer[gm.Message], gm.Message],
+        Iterable[TransportMessage] | Error]
 """
 Type of function that can handle any of several messages, but differs from the
 core-layer expected handler by being blind to forwarding
@@ -119,6 +108,18 @@ def make_stack(app_handler: DispatchFunction, name: str) -> Stack:
             case ForwardSessions():
                 return Error('Unexpected forwarded message')
     return make_forward_stack(_on_message, name, router=False)
+
+# Dispatch-layer handlers
+# =======================
+# Functions to help applications combine modular handlers into a generic handler
+# suitable for the core-layer
+
+M = TypeVar('M', bound=gm.Message)
+
+HandlerFunction: TypeAlias = Callable[[Writer[gm.Message], M], Iterable[TransportMessage]]
+"""
+Type of function that handles a specific message M and generate replies
+"""
 
 def make_name_dispatcher(upper) -> DispatchFunction:
     """
@@ -154,7 +155,7 @@ def make_type_dispatcher(handlers: Iterable[Handler]) -> DispatchFunction:
         for hdl in handlers
         }
     def on_message(write: Writer[gm.Message], msg: gm.Message
-            ) -> list[TransportMessage]:
+            ) -> Iterable[TransportMessage]:
         """
         Dispatches
         """
