@@ -31,8 +31,7 @@ from galp.result import Error
 
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
-from galp.protocol import (ProtocolEndException, make_stack, Handler,
-        TransportMessage)
+from galp.protocol import ProtocolEndException, make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -124,15 +123,6 @@ def make_worker_init(config):
     def _make_worker():
         return Worker(setup)
     return _make_worker
-
-def make_lifecycle_handlers():
-    """Raises on EXIT"""
-    def on_exit(_session, msg: gm.Exit):
-        """
-        Terminate
-        """
-        del msg
-    return [Handler(gm.Exit, on_exit)]
 
 class WorkerProtocol:
     """

@@ -16,9 +16,9 @@ import zmq
 
 import galp.worker
 import galp.net.core.types as gm
-from galp.result import Ok
+from galp.result import Ok, Error
 from galp.zmq_async_transport import ZmqAsyncTransport, TransportMessage
-from galp.protocol import make_stack, make_name_dispatcher
+from galp.protocol import make_stack
 from galp.net.core.dump import dump_message
 from galp.net.core.load import parse_core_message
 from galp.async_utils import background
@@ -39,9 +39,15 @@ class Pool:
         self.signal = None
         self.pending_signal = asyncio.Event()
 
-        stack = make_stack(
-                make_name_dispatcher(BrokerProtocol(pool=self)),
-                name='BK')
+        def on_message(_write, msg: gm.Message
+                ) -> list[TransportMessage] | Error:
+            match msg:
+                case gm.Fork():
+                    self.start_worker(msg)
+                    return []
+                case _:
+                    return Error(f'Unexpected {msg}')
+        stack = make_stack(on_message, name='BK')
         self.broker_transport = ZmqAsyncTransport(stack,
             config['endpoint'], zmq.DEALER # pylint: disable=no-member
             )
@@ -148,20 +154,6 @@ class Pool:
             while not rpid:
                 rpid, rexit = os.waitpid(pid, 0)
                 logging.info('Child %s exited with code %d', pid, rexit >> 8)
-
-class BrokerProtocol:
-    """
-    Simple protocol to process spawn request from broker
-    """
-    def __init__(self, pool: Pool) -> None:
-        self.pool = pool
-
-    def on_fork(self, msg: gm.Fork) -> list[TransportMessage]:
-        """
-        Request to spawn a worker for a task
-        """
-        self.pool.start_worker(msg)
-        return []
 
 def forkserver(config) -> None:
     """

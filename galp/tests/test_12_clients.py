@@ -12,73 +12,81 @@ from async_timeout import timeout
 import galp
 import galp.tests.steps as gts
 import galp.task_types as gtt
-from galp.protocol import make_stack, make_name_dispatcher
+from galp.protocol import make_stack
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.net.core.types import Reply, RequestId, Submit
+from galp.net.core.types import Reply, RequestId, Submit, Stat
 from galp.net.requests.types import Doing, NotFound
 
 # pylint: disable=redefined-outer-name
 
 @pytest.fixture
-async def peer_client():
+async def make_peer_client():
     """
     A client and connected peer
     """
     # Inproc seems to have the most consistent buffering behavior,
     # understandably
     endpoint = 'inproc://test_fill_queue'
-    mock_handler = type('Mock', (), {})()
-    peer = ZmqAsyncTransport(
-            make_stack(
-                make_name_dispatcher(mock_handler),
-                'CL'),
-        endpoint, zmq.DEALER, bind=True) # pylint: disable=no-member
+    peers, clients = [], []
+    def _make_peers(handler):
+        peer = ZmqAsyncTransport(
+                make_stack(handler,
+                    'CL'),
+            endpoint, zmq.DEALER, bind=True) # pylint: disable=no-member
+        peers.append(peer)
 
-    client = galp.Client(endpoint)
+        client = galp.Client(endpoint)
+        clients.append(client)
+        return peer, client
 
-    yield peer, client, mock_handler
+    yield _make_peers
 
-    peer.socket.close(linger=1)
-    client.transport.socket.close(linger=1)
+    for peer in peers:
+        peer.socket.close(linger=1)
+    for client in clients:
+        client.transport.socket.close(linger=1)
 
 @pytest.fixture
-async def blocked_client(peer_client):
+def make_blocked_client(make_peer_client):
     """
     A Client and bound socket with the client sending queue artificially filled
     """
-    peer, client, handlers = peer_client
+    async def _make(handler):
+        peer, client = make_peer_client(handler)
 
-    # Lower the HWMs first, else filling the queues takes lots of messages
-    # 0 creates problems, 1 seems the minimum still safe
-    client.transport.socket.hwm = 1
-    peer.socket.hwm = 1
+        # Lower the HWMs first, else filling the queues takes lots of messages
+        # 0 creates problems, 1 seems the minimum still safe
+        client.transport.socket.hwm = 1
+        peer.socket.hwm = 1
 
-    fillers = [0]
-    async def _fill():
-        # pylint: disable=no-member
-        await client.transport.socket.send(b'FILLER', flags=zmq.NOBLOCK)
-        fillers[0] += 1
+        fillers = [0]
+        async def _fill():
+            # pylint: disable=no-member
+            await client.transport.socket.send(b'FILLER', flags=zmq.NOBLOCK)
+            fillers[0] += 1
 
-    with pytest.raises(zmq.ZMQError):
-        # Send messages until we error or timeout to fill the queue
-        # If this work zmq should eventually raise
-        async with timeout(1):
-            while True:
-                await _fill()
-    logging.warning('Queue filled after %d fillers', fillers[0])
-
-    # Check that we can reliably not send anything more
-    for _ in range(100):
         with pytest.raises(zmq.ZMQError):
-            await _fill()
+            # Send messages until we error or timeout to fill the queue
+            # If this work zmq should eventually raise
+            async with timeout(1):
+                while True:
+                    await _fill()
+        logging.warning('Queue filled after %d fillers', fillers[0])
 
-    yield peer, client, handlers
+        # Check that we can reliably not send anything more
+        for _ in range(100):
+            with pytest.raises(zmq.ZMQError):
+                await _fill()
 
-async def test_fill_queue(blocked_client):
+        return peer, client
+
+    yield _make
+
+async def test_fill_queue(make_blocked_client):
     """
     Tests that we can saturate the client outgoing queue at will
     """
-    _, client, _ = blocked_client
+    _, client = await make_blocked_client(lambda *_: [])
     task = gts.hello()
 
     # Check that client blocks
@@ -90,25 +98,24 @@ async def test_fill_queue(blocked_client):
                            resources=gtt.Resources(cpus=1))
                     )
 
-async def test_unique_submission(peer_client):
+async def test_unique_submission(make_peer_client):
     """
     Tests that we only successfully send a submit only once
     """
-    peer, client, handlers = peer_client
     task = gts.sleeps(1, 42)
     # pylint: disable=no-member
     tdef = task.task_def
 
     submit_counter = [0]
     stat_counter = [0]
-    def _count(*_):
-        submit_counter[0] += 1
+    def on_message(_, msg):
+        match msg:
+            case Submit():
+                submit_counter[0] += 1
+            case Stat():
+                stat_counter[0] += 1
         return []
-    def _count_stat(*_):
-        stat_counter[0] += 1
-        return []
-    handlers.on_submit = _count
-    handlers.on_stat = _count_stat
+    peer, client = make_peer_client(on_message)
 
     bg_collect = asyncio.create_task(
         client.collect(task)
