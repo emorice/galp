@@ -84,7 +84,6 @@ class Get(Message, key='get'):
         name: the task name
     """
     name: gtt.TaskName
-    verb = 'get'
 
 @dataclass(frozen=True)
 class Stat(Message, key='stat'):
@@ -95,7 +94,6 @@ class Stat(Message, key='stat'):
         name: the task name
     """
     name: gtt.TaskName
-    verb = 'stat'
 
 @dataclass(frozen=True)
 class Submit(Message, key='submit'):
@@ -115,8 +113,6 @@ class Submit(Message, key='submit'):
         Unify name with get/stat
         """
         return self.task_def.name
-
-    verb = 'submit'
 
 Request: TypeAlias = Get | Stat | Submit
 
@@ -151,8 +147,29 @@ class Exec(Message, key='exec'):
     submit: Submit
     resources: gtt.Resources
 
+
 @dataclass(frozen=True)
-class Reply(Message, key='reply'):
+class Reply(Message, key=None):
+    """Formal supertype of replies"""
+
+@dataclass(frozen=True)
+class GetReply(Reply, key='get_reply'):
+    """
+    Wraps the result to a request, identifing said request
+    """
+    request: RequestId
+    value: ReplyValue
+
+@dataclass(frozen=True)
+class StatReply(Reply, key='stat_reply'):
+    """
+    Wraps the result to a request, identifing said request
+    """
+    request: RequestId
+    value: ReplyValue
+
+@dataclass(frozen=True)
+class SubmitReply(Reply, key='submit_reply'):
     """
     Wraps the result to a request, identifing said request
     """
