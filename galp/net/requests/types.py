@@ -19,14 +19,17 @@ class ReplyValue(MessageType, key='_rvalue'):
     Base class for messages inside a Reply
     """
 
+class SubmitReplyValue(ReplyValue, key=None):
+    """Doing/Done/Failed"""
+
 @dataclass(frozen=True)
-class Doing(ReplyValue, key='doing'):
+class Doing(SubmitReplyValue, key='doing'):
     """
     A message signaling that a task has been allocated or started
     """
 
 @dataclass(frozen=True)
-class Done(ReplyValue, key='done'):
+class Done(SubmitReplyValue, key='done'):
     """
     A message signaling that a task has been succesful run
 
@@ -39,7 +42,7 @@ class Done(ReplyValue, key='done'):
     result: FlatResultRef
 
 @dataclass(frozen=True)
-class Failed(ReplyValue, key='failed'):
+class Failed(SubmitReplyValue, key='failed'):
     """
     Signals that the execution of task has failed
 
@@ -48,8 +51,11 @@ class Failed(ReplyValue, key='failed'):
     """
     task_def: CoreTaskDef
 
+class StatReplyValue(ReplyValue, key=None):
+    """Found/NotFound"""
+
 @dataclass(frozen=True)
-class Found(ReplyValue, key='found'):
+class Found(StatReplyValue, key='found'):
     """
     A message notifying that a task was registered, but not yet executed
 
@@ -59,13 +65,20 @@ class Found(ReplyValue, key='found'):
     task_def: TaskDef
 
 @dataclass(frozen=True)
-class NotFound(ReplyValue, key='notfound'):
+class NotFound(StatReplyValue, key='notfound'):
     """
     A message indicating that no trace of a task was found
     """
 
+class GetReplyValue(ReplyValue, key=None):
+    """NotFound or Done"""
+
 @dataclass(frozen=True)
-class Put(ReplyValue, key='put'):
+class GetNotFound(GetReplyValue, key='getnotfound'):
+    """A message indicating that no trace of a task was found"""
+
+@dataclass(frozen=True)
+class Put(GetReplyValue, key='put'):
     """
     A message sending a serialized task result
 

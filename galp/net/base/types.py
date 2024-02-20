@@ -19,11 +19,22 @@ class MessageType:
     Class methods are available to obtain the key a class has been registered
     with, and crucially which direct subclass of a given class is associated
     with a key.
+
+    A class can be registered with a key of None. In that case, it is
+    transparent to the registry mechanism, subclasses of the None-key class will
+    be registered on the base class of the None-key class. This can be used to
+    insert types in the hierarchy and exploit inheritance without creating new
+    namespaces.
     """
     _message_registry: dict[bytes, type[Self]] = {}
     _message_type_key: bytes = b'_root'
 
-    def __init_subclass__(cls, /, key: str) -> None:
+    def __init_subclass__(cls, /, key: str | None, **kwargs) -> None:
+        # Perform other initializations
+        super().__init_subclass__(**kwargs)
+        # Bypass formal classes
+        if key is None:
+            return
         # Normalize the key
         b_key = key.lower().encode('ascii')
         # First, register the class in its parent's regitry

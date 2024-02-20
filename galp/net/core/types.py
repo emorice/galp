@@ -6,7 +6,7 @@ therefore a mix a messages related to very different big groups of
 functionalities.
 """
 
-from typing import TypeAlias
+from typing import TypeAlias, TypeVar, Generic
 from dataclasses import dataclass
 
 import galp.task_types as gtt
@@ -75,8 +75,17 @@ class PoolReady(Message, key='poolReady'):
 # Requests
 # --------
 
+V = TypeVar('V', bound=ReplyValue)
+
+class Request(Message, Generic[V], key=None):
+    """
+    Logical base request class.
+
+    Generic gives the type of the expected response.
+    """
+
 @dataclass(frozen=True)
-class Get(Message, key='get'):
+class Get(Request[ReplyValue], key='get'):
     """
     A message asking for an already computed resource
 
@@ -87,7 +96,7 @@ class Get(Message, key='get'):
     verb = 'get'
 
 @dataclass(frozen=True)
-class Stat(Message, key='stat'):
+class Stat(Request[ReplyValue], key='stat'):
     """
     A message asking if a task is defined or executed
 
@@ -98,7 +107,7 @@ class Stat(Message, key='stat'):
     verb = 'stat'
 
 @dataclass(frozen=True)
-class Submit(Message, key='submit'):
+class Submit(Request[ReplyValue], key='submit'):
     """
     A message asking for a task to be executed
 
@@ -117,8 +126,6 @@ class Submit(Message, key='submit'):
         return self.task_def.name
 
     verb = 'submit'
-
-Request: TypeAlias = Get | Stat | Submit
 
 @dataclass(frozen=True)
 class RequestId:
@@ -152,9 +159,9 @@ class Exec(Message, key='exec'):
     resources: gtt.Resources
 
 @dataclass(frozen=True)
-class Reply(Message, key='reply'):
+class Reply(Message, Generic[V], key='reply'):
     """
     Wraps the result to a request, identifing said request
     """
     request: RequestId
-    value: ReplyValue
+    value: V
