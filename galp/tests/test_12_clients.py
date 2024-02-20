@@ -14,7 +14,7 @@ import galp.tests.steps as gts
 import galp.task_types as gtt
 from galp.protocol import make_stack
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.net.core.types import StatReply, RequestId, Submit, Stat, SubmitReply
+from galp.net.core.types import Reply, RequestId, Submit, Stat
 from galp.net.requests.types import Doing, NotFound
 
 # pylint: disable=redefined-outer-name
@@ -125,7 +125,7 @@ async def test_unique_submission(make_peer_client):
             # Process one STAT for the task, two for the args and reply NOTFOUND
             for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
-                await peer.send_message(StatReply(RequestId(b'stat', name), NotFound()))
+                await peer.send_message(Reply(RequestId(b'stat', name), NotFound()))
 
             # Process one SUBMIT and drop it
             await peer.recv_message()
@@ -133,7 +133,7 @@ async def test_unique_submission(make_peer_client):
             # Process a second SUBMIT and reply DOING
             await peer.recv_message()
             logging.info('Mock processing')
-            await peer.send_message(SubmitReply(RequestId(b'submit', task.name), Doing())) # pylint: disable=no-member
+            await peer.send_message(Reply(RequestId(b'submit', task.name), Doing())) # pylint: disable=no-member
 
             # We should not receive any further message, at least until we add status
             # update to the protocol
