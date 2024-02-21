@@ -210,8 +210,8 @@ class Done(Operator):
     def requires(task: gtt.Task):
         return cm.Stat(task.name)
 
-    def _result(self, stat_result: gr.Done | gr.Found, _subs):
-        return isinstance(stat_result, gr.Done)
+    def _result(self, stat_result: gr.StatDone | gr.Found, _subs):
+        return isinstance(stat_result, gr.StatDone)
 
 class Def(Operator):
     """
@@ -221,7 +221,7 @@ class Def(Operator):
     def requires(task: gtt.Task):
         return cm.safe_stat(task)
 
-    def _result(self, stat_result: gr.Done | gr.Found, _subs):
+    def _result(self, stat_result: gr.StatDone | gr.Found, _subs):
         return stat_result.task_def
 
 class Args(Operator):
@@ -232,7 +232,7 @@ class Args(Operator):
     def requires(task: gtt.Task):
         return cm.safe_stat(task)
 
-    def _recurse(self, stat_result: gr.Done | gr.Found):
+    def _recurse(self, stat_result: gr.StatDone | gr.Found):
         """
         Build list of sub-queries for arguments of subject task from the
         definition obtained from STAT

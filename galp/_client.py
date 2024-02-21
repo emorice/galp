@@ -361,7 +361,7 @@ class BrokerProtocol:
     # Protocol callbacks
     # ==================
 
-    def on_get_reply(self, get_command, msg: gr.Put | gr.NotFound) -> list[cm.InertCommand]:
+    def on_get_reply(self, get_command, msg: gr.Put | gr.GetNotFound) -> list[cm.InertCommand]:
         """
         Handle get replies
         """
@@ -370,7 +370,7 @@ class BrokerProtocol:
             case gr.Put():
                 # Mark as done and sets result
                 return get_command.done(msg)
-            case gr.NotFound():
+            case gr.GetNotFound():
                 logging.error('TASK RESULT FETCH FAILED: %s', name)
                 return get_command.failed('NOTFOUND')
 
@@ -395,7 +395,7 @@ class BrokerProtocol:
                 # Mark fetch command as failed if pending
                 return sub_command.failed(err_msg)
 
-    def on_stat_reply(self, stat_command, msg: gr.Found | gr.Done | gr.NotFound):
+    def on_stat_reply(self, stat_command, msg: gr.Found | gr.StatDone | gr.NotFound):
         """
         Handle stat replies
         """

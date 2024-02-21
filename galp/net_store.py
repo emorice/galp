@@ -9,7 +9,7 @@ from typing import Iterable
 
 from galp.net.core.types import Get, Stat, Message
 from galp.net.core.dump import Writer
-from galp.net.requests.types import NotFound, Found, Put, Done
+from galp.net.requests.types import NotFound, Found, Put, StatDone, GetNotFound
 from galp.net.core.dump import add_request_id
 from galp.cache import CacheStack, StoreReadError
 from galp.protocol import TransportMessage
@@ -30,7 +30,7 @@ def handle_get(write: Writer[Message], msg: Get, store: CacheStack
         logging.info('GET: Cache MISS: %s', name)
     except StoreReadError:
         logging.exception('GET: Cache ERROR: %s', name)
-    return [write_reply(NotFound())]
+    return [write_reply(GetNotFound())]
 
 def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
         ) -> Iterable[TransportMessage]:
@@ -44,7 +44,7 @@ def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
         logging.exception('STAT: ERROR %s', msg.name)
     return [write_reply(NotFound())]
 
-def _on_stat_io_unsafe(store, msg: Stat) -> Done | Found | NotFound:
+def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:
     """
     STAT handler allowed to raise store read errors
     """
@@ -64,7 +64,7 @@ def _on_stat_io_unsafe(store, msg: Stat) -> Done | Found | NotFound:
     # Case 1: both def and children, DONE
     if task_def is not None and result_ref is not None:
         logging.info('STAT: DONE %s', msg.name)
-        return Done(task_def=task_def, result=result_ref)
+        return StatDone(task_def=task_def, result=result_ref)
 
     # Case 2: only def, FOUND
     if task_def is not None:

@@ -181,7 +181,7 @@ class WorkerProtocol:
             ))
         return replies
 
-    def on_get_reply(self, get_command, msg: gr.Put | gr.NotFound
+    def on_get_reply(self, get_command, msg: gr.Put | gr.GetNotFound
             ) -> list[cm.InertCommand]:
         """
         Mark the promise as done and pass result
@@ -189,7 +189,7 @@ class WorkerProtocol:
         match msg:
             case gr.Put():
                 return get_command.done(msg)
-            case gr.NotFound():
+            case gr.GetNotFound():
                 return get_command.failed('NOTFOUND')
 
     def new_commands_to_replies(self, write: Writer[gm.Message], commands: list[cm.InertCommand]

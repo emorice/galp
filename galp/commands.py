@@ -518,7 +518,7 @@ class Submit(InertCommand[gtt.ResultRef, str]):
         """Task name"""
         return self.task_def.name
 
-StatResult: TypeAlias = gr.Found | gr.Done | gr.NotFound
+StatResult: TypeAlias = gr.Found | gr.StatDone | gr.NotFound
 
 class Stat(NamedPrimitive[StatResult, str]):
     """
@@ -566,7 +566,7 @@ def sget(name: gtt.TaskName) -> Command[Any, str]:
         )
 
 def no_not_found(stat_result: StatResult, task: gtt.Task
-                 ) -> gr.Found | gr.Done | Failed[str]:
+                 ) -> gr.Found | gr.StatDone | Failed[str]:
     """
     Transform NotFound in Found if the task is a real object, and fails
     otherwise.
@@ -580,7 +580,7 @@ def no_not_found(stat_result: StatResult, task: gtt.Task
     return Failed(f'The task reference {task.name} could not be resolved to a'
         ' definition')
 
-def safe_stat(task: gtt.Task) -> Command[gr.Done | gr.Found, str]:
+def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found, str]:
     """
     Chains no_not_found to a stat
     """
@@ -597,13 +597,13 @@ def ssubmit(task: gtt.Task, dry: bool = False
     """
     return safe_stat(task).then(lambda statr: _ssubmit(task, statr, dry))
 
-def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.Done, dry: bool
+def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone, dry: bool
              ) -> gtt.ResultRef | Command[gtt.ResultRef, str]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
     # Short circuit for tasks already processed
-    if isinstance(stat_result, gr.Done):
+    if isinstance(stat_result, gr.StatDone):
         return stat_result.result
 
     # gm.Found()
