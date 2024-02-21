@@ -6,12 +6,13 @@ therefore a mix a messages related to very different big groups of
 functionalities.
 """
 
-from typing import TypeAlias, TypeVar, Generic
+from typing import TypeVar, Generic
 from dataclasses import dataclass
 
 import galp.task_types as gtt
 from galp.net.base.types import MessageType
 from galp.net.requests.types import ReplyValue
+import galp.net.requests.types as gr
 
 # Messages
 # ========
@@ -85,7 +86,7 @@ class Request(Message, Generic[V], key=None):
     """
 
 @dataclass(frozen=True)
-class Get(Request[ReplyValue], key='get'):
+class Get(Request[gr.GetReplyValue], key='get'):
     """
     A message asking for an already computed resource
 
@@ -96,7 +97,7 @@ class Get(Request[ReplyValue], key='get'):
     verb = 'get'
 
 @dataclass(frozen=True)
-class Stat(Request[ReplyValue], key='stat'):
+class Stat(Request[gr.StatReplyValue], key='stat'):
     """
     A message asking if a task is defined or executed
 
@@ -107,7 +108,7 @@ class Stat(Request[ReplyValue], key='stat'):
     verb = 'stat'
 
 @dataclass(frozen=True)
-class Submit(Request[ReplyValue], key='submit'):
+class Submit(Request[gr.SubmitReplyValue], key='submit'):
     """
     A message asking for a task to be executed
 

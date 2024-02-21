@@ -2,6 +2,7 @@
 Core message serialization
 """
 
+from typing import TypeVar
 from functools import singledispatch
 
 from galp.serializer import dump_model
@@ -25,6 +26,8 @@ def dump_message(message: Message) -> list[bytes]:
     """
     return [message.message_get_key(), *_dump_message_data(message)]
 
-def add_request_id(write: Writer[Message], request: Request) -> Writer[ReplyValue]:
+V = TypeVar('V', bound=ReplyValue)
+
+def add_request_id(write: Writer[Message], request: Request[V]) -> Writer[V]:
     """Stack a Reply with given request id"""
     return lambda value: write(Reply(get_request_id(request), value))
