@@ -164,7 +164,9 @@ class CommonProtocol:
         orig_msg = alloc.msg
 
         match orig_msg:
-            case gm.Get() | gm.Stat():
+            case gm.Get():
+                return [add_request_id(write_client, orig_msg)(gr.GetNotFound())]
+            case gm.Stat():
                 return [add_request_id(write_client, orig_msg)(gr.NotFound())]
             case gm.Exec():
                 return [add_request_id(write_client, orig_msg.submit)(

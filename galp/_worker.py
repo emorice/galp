@@ -231,7 +231,7 @@ class JobResult:
         result: None iff the task has failed, other wise a reference to the
             stored result.
     """
-    write_reply: Writer[gm.ReplyValue]
+    write_reply: Writer[gr.SubmitReplyValue]
     submit: gm.Submit
     result: gtt.FlatResultRef | None
 
@@ -302,7 +302,7 @@ class Worker:
                     job.write_reply(reply)
                     )
 
-    def schedule_task(self, write_reply: Writer[gm.ReplyValue], msg: gm.Submit
+    def schedule_task(self, write_reply: Writer[gr.SubmitReplyValue], msg: gm.Submit
             ) -> list[cm.InertCommand]:
         """
         Callback to schedule a task for execution.
@@ -365,7 +365,7 @@ class Worker:
 
         return args, kwargs
 
-    async def run_submission(self, write_reply: Writer[gm.ReplyValue], msg: gm.Submit,
+    async def run_submission(self, write_reply: Writer[gr.SubmitReplyValue], msg: gm.Submit,
                              inputs: cm.FinalResult[list, str]) -> JobResult:
         """
         Actually run the task
