@@ -23,4 +23,6 @@ def _put_loader(frames: list[bytes]) -> Result[Put, LoadError]:
 _value_loaders = LoaderDict(default_loader)
 _value_loaders[Put] = _put_loader
 
-load_reply_value = parse_message_type(ReplyValue, _value_loaders)
+def load_reply_value(value_type: type[ReplyValue], frames: list[bytes]):
+    """Load a reply value of the appropriate type"""
+    return parse_message_type(value_type, _value_loaders)(frames)

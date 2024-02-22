@@ -14,12 +14,12 @@ from galp.serialize import Result, LoadError
 # Replies
 # ========
 
-class ReplyValue(MessageType, key='_rvalue'):
+class ReplyValue(MessageType, key=None):
     """
     Base class for messages inside a Reply
     """
 
-class SubmitReplyValue(ReplyValue, key=None):
+class SubmitReplyValue(ReplyValue, key='_sub'):
     """Doing/Done/Failed"""
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ class Failed(SubmitReplyValue, key='failed'):
     """
     task_def: CoreTaskDef
 
-class StatReplyValue(ReplyValue, key=None):
+class StatReplyValue(ReplyValue, key='_stat'):
     """Found/NotFound/Done"""
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ class StatDone(StatReplyValue, key='statdone'):
     task_def: TaskDef
     result: FlatResultRef
 
-class GetReplyValue(ReplyValue, key=None):
+class GetReplyValue(ReplyValue, key='_get'):
     """NotFound or Done"""
 
 @dataclass(frozen=True)
