@@ -5,8 +5,8 @@ Specific parsing logic for core layer
 from galp.result import Result, Ok
 from galp.serialize import LoadError
 from galp.serializer import load_model
-from galp.net.base.load import LoaderDict, default_loader, parse_message_type
-from galp.net.requests.load import load_reply_value
+from galp.net.base.load import LoaderDict, default_loader, UnionLoader
+from galp.net.requests.load import ReplyValueLoader
 
 from .types import Message, Reply, RequestId, ReplyValue
 
@@ -16,9 +16,8 @@ def _get_reply_value_type(request: RequestId) -> type[ReplyValue]:
 
     Inherently fragile, but should break in fairly obvious ways
     """
-    req_type = Message.message_get_type(request.verb)
-    assert req_type
-    return req_type.__orig_bases__[0].__args__[0] # type: ignore[attr-defined]
+    req_type = MessageLoader.get_type(request.verb)
+    return req_type.reply_type # type: ignore
 
 def _reply_loader(frames: list[bytes]) -> Result[Reply, LoadError]:
     """
@@ -27,10 +26,10 @@ def _reply_loader(frames: list[bytes]) -> Result[Reply, LoadError]:
     match frames:
         case [core_frame, *value_frames]:
             return load_model(RequestId, core_frame).then(
-                    lambda request: load_reply_value(
-                        _get_reply_value_type(request), value_frames
-                        ).then(
-                        lambda value: Ok(Reply(request, value))
+                    lambda request: (
+                        ReplyValueLoader[_get_reply_value_type(request)] # type: ignore[misc]
+                        .load(value_frames)
+                        .then(lambda value: Ok(Reply(request, value)))
                         )
                     )
         case _:
@@ -39,4 +38,8 @@ def _reply_loader(frames: list[bytes]) -> Result[Reply, LoadError]:
 _message_loaders = LoaderDict(default_loader)
 _message_loaders[Reply] = _reply_loader
 
-parse_core_message = parse_message_type(Message, _message_loaders)
+class MessageLoader(UnionLoader[Message]): # pylint: disable=too-few-public-methods
+    """Loader for Message union"""
+    loaders = _message_loaders
+
+parse_core_message = MessageLoader.load

@@ -14,22 +14,19 @@ from galp.serialize import Result, LoadError
 # Replies
 # ========
 
-class ReplyValue(MessageType, key=None):
+class ReplyValue(MessageType, key='_rvalue'):
     """
     Base class for messages inside a Reply
     """
 
-class SubmitReplyValue(ReplyValue, key='_sub'):
-    """Doing/Done/Failed"""
-
 @dataclass(frozen=True)
-class Doing(SubmitReplyValue, key='doing'):
+class Doing(ReplyValue, key='doing'):
     """
     A message signaling that a task has been allocated or started
     """
 
 @dataclass(frozen=True)
-class Done(SubmitReplyValue, key='done'):
+class Done(ReplyValue, key='done'):
     """
     A message signaling that a task has been succesful run
 
@@ -42,7 +39,7 @@ class Done(SubmitReplyValue, key='done'):
     result: FlatResultRef
 
 @dataclass(frozen=True)
-class Failed(SubmitReplyValue, key='failed'):
+class Failed(ReplyValue, key='failed'):
     """
     Signals that the execution of task has failed
 
@@ -51,11 +48,10 @@ class Failed(SubmitReplyValue, key='failed'):
     """
     task_def: CoreTaskDef
 
-class StatReplyValue(ReplyValue, key='_stat'):
-    """Found/NotFound/Done"""
+SubmitReplyValue = Doing | Done | Failed
 
 @dataclass(frozen=True)
-class Found(StatReplyValue, key='found'):
+class Found(ReplyValue, key='found'):
     """
     A message notifying that a task was registered, but not yet executed
 
@@ -65,13 +61,13 @@ class Found(StatReplyValue, key='found'):
     task_def: TaskDef
 
 @dataclass(frozen=True)
-class NotFound(StatReplyValue, key='notfound'):
+class NotFound(ReplyValue, key='notfound'):
     """
     A message indicating that no trace of a task was found
     """
 
 @dataclass(frozen=True)
-class StatDone(StatReplyValue, key='statdone'):
+class StatDone(ReplyValue, key='statdone'):
     """
     A message signaling that a task has been succesful run
 
@@ -83,15 +79,14 @@ class StatDone(StatReplyValue, key='statdone'):
     task_def: TaskDef
     result: FlatResultRef
 
-class GetReplyValue(ReplyValue, key='_get'):
-    """NotFound or Done"""
+StatReplyValue = Found | NotFound | StatDone
 
 @dataclass(frozen=True)
-class GetNotFound(GetReplyValue, key='getnotfound'):
+class GetNotFound(ReplyValue, key='getnotfound'):
     """A message indicating that no trace of a task was found"""
 
 @dataclass(frozen=True)
-class Put(GetReplyValue, key='put'):
+class Put(ReplyValue, key='put'):
     """
     A message sending a serialized task result
 
@@ -110,3 +105,5 @@ class Put(GetReplyValue, key='put'):
         this resource by injecting the corresponding objects into it.
         """
         return self._loads(self.data, children)
+
+GetReplyValue = GetNotFound | Put

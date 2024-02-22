@@ -2,7 +2,8 @@
 Common logic for parsing messages
 """
 
-from typing import TypeVar, Protocol, Callable, Any, TypeAlias
+from types import UnionType, GenericAlias
+from typing import TypeVar, Protocol, Callable, Any, TypeAlias, Generic
 
 from galp.result import Result
 from galp.serializer import load_model, LoadError
@@ -50,19 +51,69 @@ def default_loader(cls: type[T]) -> Loader[T]:
 
 MT = TypeVar('MT', bound=MessageType)
 
-def parse_message_type(cls: type[MT], loaders: LoaderDict) -> Loader[MT]:
+class UnionLoader(Generic[MT]): # pylint: disable=too-few-public-methods # (generic trick)
     """
-    Common logic in parsing union keyed through MessageType
+    Helper generic factory class to deserialize union members
+
+    Subclass this class and override the loaders class attribute to inject the
+    loaders for the union memeber types.
     """
-    def _parse(frames: list[bytes]) -> Result[MT, LoadError]:
-        match frames:
-            case [type_frame, *data_frames]:
-                sub_cls = cls.message_get_type(type_frame)
-                if sub_cls is None:
-                    return LoadError('Bad message:'
-                            + f' {cls.__module__}.{cls.__qualname__} has no'
-                            + f' subclass with key {type_frame!r}')
-                return loaders[sub_cls](data_frames)
-            case _:
-                return LoadError('Bad message: Wrong number of frames')
-    return _parse
+    loaders: LoaderDict = LoaderDict(default_loader)
+
+    @classmethod
+    def load(cls, frames: list[bytes]) -> Result[MT, LoadError]:
+        """Attempt to load an object of the specified type"""
+        raise NotImplementedError
+
+    @classmethod
+    def get_type(cls, key: bytes) -> type[MT] | None:
+        """Return union member with given key, if any"""
+        raise NotImplementedError
+
+    def __class_getitem__(cls, item):
+        if isinstance(item, TypeVar):
+            # Use as a base class, no runtime effect
+            return GenericAlias(cls, item)
+
+        if not isinstance(item, UnionType):
+            raise RuntimeError('Concrete UnionLoader parameter must be a union type')
+
+        registry = {}
+        for mem_cls in item.__args__:
+            b_key = mem_cls.message_get_key()
+            previous = registry.get(b_key)
+            if previous:
+                raise ValueError(f'Message type key {b_key!r} is already used for '
+                        + str(previous))
+            registry[b_key] = mem_cls
+
+        class _Loader: # pylint: disable=too-few-public-methods
+            loaders = cls.loaders
+
+            @classmethod
+            def get_type(cls, key: bytes) -> type[MT] | None:
+                """Return union member with given key, if any"""
+                return registry.get(key)
+
+            @classmethod
+            def load(cls, frames):
+                """
+                Implementation of the union loader.
+
+                The actual union type is available from the argument of
+                class_getitem.
+                The dictionary of loader functions for member types is taken
+                from the class being subscripted, but can be changed by
+                overriding after the template parameter subscription
+                """
+                match frames:
+                    case [type_frame, *data_frames]:
+                        sub_cls = registry.get(type_frame)
+                        if sub_cls is None:
+                            return LoadError('Bad message:'
+                                    + f' {cls.__module__}.{cls.__qualname__} has no'
+                                    + f' subclass with key {type_frame!r}')
+                        return cls.loaders[sub_cls](data_frames)
+                    case _:
+                        return LoadError('Bad message: Wrong number of frames')
+        return _Loader

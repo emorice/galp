@@ -6,7 +6,7 @@ therefore a mix a messages related to very different big groups of
 functionalities.
 """
 
-from typing import TypeVar, Generic
+from typing import TypeVar, Generic, TypeAlias
 from dataclasses import dataclass
 
 import galp.task_types as gtt
@@ -17,22 +17,17 @@ import galp.net.requests.types as gr
 # Messages
 # ========
 
-class Message(MessageType, key='_core'):
-    """
-    Base class for core layer messages
-    """
-
 # Lifecycle
 # ----------
 
 @dataclass(frozen=True)
-class Exit(Message, key='exit'):
+class Exit(MessageType, key='exit'):
     """
     A message asking a peer to leave the system
     """
 
 @dataclass(frozen=True)
-class Exited(Message, key='exited'):
+class Exited(MessageType, key='exited'):
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
     other peer that detected the kill event
@@ -43,7 +38,7 @@ class Exited(Message, key='exited'):
     peer: str
 
 @dataclass(frozen=True)
-class Fork(Message, key='fork'):
+class Fork(MessageType, key='fork'):
     """
     A message asking for a new peer, compatible with some resource claim, to be
     created.
@@ -52,7 +47,7 @@ class Fork(Message, key='fork'):
     resources: gtt.ResourceClaim
 
 @dataclass(frozen=True)
-class Ready(Message, key='ready'):
+class Ready(MessageType, key='ready'):
     """
     A message advertising a worker joining the system
 
@@ -64,7 +59,7 @@ class Ready(Message, key='ready'):
     mission: bytes
 
 @dataclass(frozen=True)
-class PoolReady(Message, key='poolReady'):
+class PoolReady(MessageType, key='poolReady'):
     """
     A message advertising a pool (forkserver) joining the system
 
@@ -78,12 +73,17 @@ class PoolReady(Message, key='poolReady'):
 
 V = TypeVar('V', bound=ReplyValue)
 
-class Request(Message, Generic[V], key=None):
+# pylint: disable=too-few-public-methods
+class Request(MessageType, Generic[V], key=None):
     """
     Logical base request class.
 
     Generic gives the type of the expected response.
     """
+    def __class_getitem__(cls, item):
+        class _Request(MessageType, key=None):
+            reply_type = item
+        return _Request
 
 @dataclass(frozen=True)
 class Get(Request[gr.GetReplyValue], key='get'):
@@ -152,7 +152,7 @@ def get_request_id(req: Request) -> RequestId:
 # ----------------
 
 @dataclass(frozen=True)
-class Exec(Message, key='exec'):
+class Exec(MessageType, key='exec'):
     """
     A message wrapping a Submit with a resource allocation
     """
@@ -160,9 +160,15 @@ class Exec(Message, key='exec'):
     resources: gtt.Resources
 
 @dataclass(frozen=True)
-class Reply(Message, Generic[V], key='reply'):
+class Reply(MessageType, Generic[V], key='reply'):
     """
     Wraps the result to a request, identifing said request
     """
     request: RequestId
     value: V
+
+Message: TypeAlias = (
+        Exit | Exited | Fork | Ready | PoolReady |
+        Get | Stat | Submit
+        | Exec | Reply
+        )

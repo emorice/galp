@@ -3,7 +3,8 @@ Simple tagged unions of types with error types to use as return value
 """
 
 import traceback
-from typing import TypeAlias, Generic, TypeVar, Callable
+import logging
+from typing import TypeAlias, Generic, TypeVar, Callable, NoReturn
 from dataclasses import dataclass
 from typing_extensions import Self
 
@@ -20,6 +21,10 @@ class Ok(Generic[OkT]):
     def then(self, function: Callable[[OkT], R]) -> R:
         """Unpack Ok type"""
         return function(self.value)
+
+    def unwrap(self) -> OkT:
+        """Unsafe unpacking"""
+        return self.value
 
 ErrMessageT = TypeVar('ErrMessageT')
 
@@ -41,6 +46,11 @@ class Error(Exception, Generic[ErrMessageT]):
     def then(self, _function) -> Self:
         """Propagate Error type"""
         return self
+
+    def unwrap(self) -> NoReturn:
+        """Unsafe unpacking"""
+        logging.error('Unwrap failed: %s', self)
+        raise RuntimeError('Unwrapped failed')
 
     def __init__(self, error: ErrMessageT):
         self.error = error

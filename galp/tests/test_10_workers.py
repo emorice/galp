@@ -6,15 +6,14 @@ import os
 import signal
 import psutil
 import zmq
-import msgpack # type: ignore[import]
 
 import pytest
 from async_timeout import timeout
-from pydantic import TypeAdapter
 
 import galp.tests
 import galp.worker
 import galp.net.core.types as gm
+from galp.net.core.load import parse_core_message
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member
@@ -41,12 +40,9 @@ def load_message(msg: list[bytes]) -> gm.Message:
     """
     Deserialize message body
     """
-    assert len(msg) == 3 # null, verb, payload
-    cls = gm.Message.message_get_type(msg[1])
-    assert cls
-    return TypeAdapter(cls).validate_python(
-        msgpack.loads(msg[-1])
-        )
+    null, *frames = msg
+    assert not null
+    return parse_core_message(frames).unwrap()
 
 def zmq_recv_message(socket) -> gm.Message:
     """

@@ -3,9 +3,11 @@ Command line interface to the load-balancing broker
 """
 import asyncio
 import argparse
+import logging
 
 import galp.cli
 from galp.broker import Broker
+from galp.result import Error
 
 async def main(args):
     """Entry point for the broker program
@@ -21,7 +23,9 @@ async def main(args):
         n_cpus=args.pool_size
         )
 
-    await broker.run()
+    match await broker.run():
+        case Error() as err:
+            logging.error('Borker error: %s', err)
 
 def add_parser_arguments(parser):
     """Add broker-specific arguments to the given parser"""
