@@ -6,6 +6,7 @@ therefore a mix a messages related to very different big groups of
 functionalities.
 """
 
+from types import GenericAlias
 from typing import TypeVar, Generic, TypeAlias
 from dataclasses import dataclass
 
@@ -80,8 +81,11 @@ class Request(MessageType, Generic[V], key=None):
 
     Generic gives the type of the expected response.
     """
+    reply_type: type[V]
+
     def __class_getitem__(cls, item):
-        class _Request(MessageType, key=None):
+        orig = GenericAlias(cls, item)
+        class _Request(orig, key=None):
             reply_type = item
         return _Request
 
