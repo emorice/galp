@@ -51,7 +51,7 @@ def default_loader(cls: type[T]) -> Loader[T]:
 
 MT = TypeVar('MT', bound=MessageType)
 
-class UnionLoader(Generic[MT]): # pylint: disable=too-few-public-methods # (generic trick)
+class UnionLoader(Generic[MT]):
     """
     Helper generic factory class to deserialize union members
 
@@ -71,9 +71,10 @@ class UnionLoader(Generic[MT]): # pylint: disable=too-few-public-methods # (gene
         raise NotImplementedError
 
     def __class_getitem__(cls, item):
+        orig = GenericAlias(cls, item)
         if isinstance(item, TypeVar):
             # Use as a base class, no runtime effect
-            return GenericAlias(cls, item)
+            return orig
 
         if not isinstance(item, UnionType):
             raise RuntimeError('Concrete UnionLoader parameter must be a union type')
@@ -87,7 +88,7 @@ class UnionLoader(Generic[MT]): # pylint: disable=too-few-public-methods # (gene
                         + str(previous))
             registry[b_key] = mem_cls
 
-        class _Loader: # pylint: disable=too-few-public-methods
+        class _Loader(orig):
             loaders = cls.loaders
 
             @classmethod
