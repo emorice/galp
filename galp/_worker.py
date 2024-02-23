@@ -161,7 +161,7 @@ class WorkerProtocol:
                 result_ref = self.store.get_children(name)
                 logging.info('SUBMIT: Cache HIT: %s', name)
                 return [write_reply(
-                    gr.Done(task_def=task_def, result=result_ref)
+                    gr.Done(result=result_ref)
                     )]
             except StoreReadError:
                 logging.exception('SUBMIT: Failed cache hit: %s', name)
@@ -295,7 +295,7 @@ class Worker:
             job = await task
             task_def = job.submit.task_def
             if job.result is not None:
-                reply = gr.Done(task_def=task_def, result=job.result)
+                reply = gr.Done(result=job.result)
             else:
                 reply = gr.Failed(task_def=task_def)
             await self.transport.send_raw(
