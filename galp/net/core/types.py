@@ -75,7 +75,7 @@ class PoolReady(MessageType, key='poolReady'):
 V = TypeVar('V', bound=ReplyValue)
 
 # pylint: disable=too-few-public-methods
-class Request(MessageType, Generic[V], key=None):
+class BaseRequest(MessageType, Generic[V], key=None):
     """
     Logical base request class.
 
@@ -83,14 +83,24 @@ class Request(MessageType, Generic[V], key=None):
     """
     reply_type: type[V]
 
+    @property
+    def input_id(self) -> gtt.TaskName:
+        """Unique key to idenify request input"""
+        raise NotImplementedError
+
     def __class_getitem__(cls, item):
         orig = GenericAlias(cls, item)
         class _Request(orig, key=None):
             reply_type = item
+
+            @property
+            def input_id(self) -> gtt.TaskName:
+                """Unique key to identify request input"""
+                raise NotImplementedError
         return _Request
 
 @dataclass(frozen=True)
-class Get(Request[gr.GetReplyValue], key='get'):
+class Get(BaseRequest[gr.GetReplyValue], key='get'):
     """
     A message asking for an already computed resource
 
@@ -98,10 +108,13 @@ class Get(Request[gr.GetReplyValue], key='get'):
         name: the task name
     """
     name: gtt.TaskName
-    verb = 'get'
+
+    @property
+    def input_id(self) -> gtt.TaskName:
+        return self.name
 
 @dataclass(frozen=True)
-class Stat(Request[gr.StatReplyValue], key='stat'):
+class Stat(BaseRequest[gr.StatReplyValue], key='stat'):
     """
     A message asking if a task is defined or executed
 
@@ -109,10 +122,13 @@ class Stat(Request[gr.StatReplyValue], key='stat'):
         name: the task name
     """
     name: gtt.TaskName
-    verb = 'stat'
+
+    @property
+    def input_id(self) -> gtt.TaskName:
+        return self.name
 
 @dataclass(frozen=True)
-class Submit(Request[gr.SubmitReplyValue], key='submit'):
+class Submit(BaseRequest[gr.SubmitReplyValue], key='submit'):
     """
     A message asking for a task to be executed
 
@@ -124,13 +140,10 @@ class Submit(Request[gr.SubmitReplyValue], key='submit'):
     resources: gtt.ResourceClaim
 
     @property
-    def name(self) -> gtt.TaskName:
-        """
-        Unify name with get/stat
-        """
+    def input_id(self) -> gtt.TaskName:
         return self.task_def.name
 
-    verb = 'submit'
+Request: TypeAlias = Get | Stat | Submit
 
 @dataclass(frozen=True)
 class RequestId:
@@ -146,11 +159,11 @@ class RequestId:
         """
         return self.verb + f':{self.name.hex()}'.encode('ascii')
 
-def get_request_id(req: Request) -> RequestId:
+def get_request_id(req: BaseRequest) -> RequestId:
     """
     Make request id from Request
     """
-    return RequestId(req.message_get_key(), req.name)
+    return RequestId(req.message_get_key(), req.input_id)
 
 # Req-rep wrappers
 # ----------------
@@ -173,6 +186,6 @@ class Reply(MessageType, Generic[V], key='reply'):
 
 Message: TypeAlias = (
         Exit | Exited | Fork | Ready | PoolReady |
-        Get | Stat | Submit
-        | Exec | Reply
+        Request |
+        Exec | Reply
         )

@@ -14,6 +14,7 @@ from galp.serialize import Result, LoadError
 # Replies
 # ========
 
+@dataclass(frozen=True)
 class ReplyValue(MessageType, key='_rvalue'):
     """
     Base class for messages inside a Reply

@@ -10,13 +10,13 @@ from galp.net.requests.load import ReplyValueLoader
 
 from .types import Message, Reply, RequestId, ReplyValue
 
-def _get_reply_value_type(request: RequestId) -> type[ReplyValue]:
+def _get_reply_value_type(request_id: RequestId) -> type[ReplyValue]:
     """
     Magic to extract type of reply value associated with request key
 
     Inherently fragile, but should break in fairly obvious ways
     """
-    req_type = MessageLoader.get_type(request.verb)
+    req_type = MessageLoader.get_type(request_id.verb)
     return req_type.reply_type # type: ignore
 
 def _reply_loader(frames: list[bytes]) -> Result[Reply, LoadError]:

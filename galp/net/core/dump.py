@@ -8,7 +8,7 @@ from functools import singledispatch
 from galp.serializer import dump_model
 from galp.net.requests.dump import dump_reply_value
 from galp.net.base.dump import Writer
-from .types import Message, Reply, ReplyValue, get_request_id, Request
+from .types import Message, Reply, ReplyValue, get_request_id, BaseRequest
 
 @singledispatch
 def _dump_message_data(message: Message) -> list[bytes]:
@@ -28,6 +28,6 @@ def dump_message(message: Message) -> list[bytes]:
 
 V = TypeVar('V', bound=ReplyValue)
 
-def add_request_id(write: Writer[Message], request: Request[V]) -> Writer[V]:
+def add_request_id(write: Writer[Message], request: BaseRequest[V]) -> Writer[V]:
     """Stack a Reply with given request id"""
     return lambda value: write(Reply(get_request_id(request), value))
