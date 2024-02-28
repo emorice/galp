@@ -37,7 +37,7 @@ from galp.query import query
 from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
-from galp.net_store import handle_get, handle_stat
+from galp.net_store import handle_get, handle_stat, on_get_reply
 from galp.net.core.dump import add_request_id, Writer
 from galp.req_rep import handle_reply
 
@@ -181,17 +181,6 @@ class WorkerProtocol:
             ))
         return replies
 
-    def on_get_reply(self, get_command, msg: gr.Put | gr.GetNotFound
-            ) -> list[cm.InertCommand]:
-        """
-        Mark the promise as done and pass result
-        """
-        match msg:
-            case gr.Put():
-                return get_command.done(msg)
-            case gr.GetNotFound():
-                return get_command.failed('NOTFOUND')
-
     def new_commands_to_replies(self, write: Writer[gm.Message], commands: list[cm.InertCommand]
             ) -> list[list[bytes]]:
         """
@@ -257,7 +246,7 @@ class Worker:
                     return protocol.on_routed_exec(write, msg)
                 case gm.Reply():
                     news = handle_reply(msg, protocol.script,
-                            {'GET': protocol.on_get_reply})
+                            {'GET': on_get_reply})
                     return protocol.new_commands_to_replies(write, news)
                 case _:
                     return Error(f'Unexpected {msg}')

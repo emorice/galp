@@ -23,7 +23,7 @@ import galp.task_types as gtt
 from galp.result import Error
 from galp import async_utils
 from galp.cache import CacheStack
-from galp.net_store import handle_get
+from galp.net_store import handle_get, on_get_reply, on_stat_reply
 from galp.req_rep import handle_reply
 from galp.protocol import (ProtocolEndException, make_stack,
     TransportMessage, Writer)
@@ -70,8 +70,8 @@ class Client:
                     return handle_get(write, msg, self.store)
                 case gm.Reply():
                     news = handle_reply(msg, self.protocol.script, {
-                        'GET': self.protocol.on_get_reply,
-                        'STAT': self.protocol.on_stat_reply,
+                        'GET': on_get_reply,
+                        'STAT': on_stat_reply,
                         'SUBMIT': self.protocol.on_submit_reply,
                         })
                     self.protocol.schedule_new(news)
@@ -361,23 +361,10 @@ class BrokerProtocol:
     # Protocol callbacks
     # ==================
 
-    def on_get_reply(self, get_command, msg: gr.Put | gr.GetNotFound) -> list[cm.InertCommand]:
-        """
-        Handle get replies
-        """
-        name = get_command.name
-        match msg:
-            case gr.Put():
-                # Mark as done and sets result
-                return get_command.done(msg)
-            case gr.GetNotFound():
-                logging.error('TASK RESULT FETCH FAILED: %s', name)
-                return get_command.failed('NOTFOUND')
-
     def on_submit_reply(self, sub_command, msg: gr.Done | gr.Failed | gr.Doing
             ) -> list[cm.InertCommand]:
         """
-        Handle get replies
+        Handle submit replies
         """
         name = sub_command.name
         match msg:
@@ -394,12 +381,6 @@ class BrokerProtocol:
 
                 # Mark fetch command as failed if pending
                 return sub_command.failed(err_msg)
-
-    def on_stat_reply(self, stat_command, msg: gr.Found | gr.StatDone | gr.NotFound):
-        """
-        Handle stat replies
-        """
-        return stat_command.done(msg)
 
     def schedule_new(self, commands: Iterable[cm.InertCommand]
             ) -> None:
