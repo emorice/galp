@@ -27,7 +27,7 @@ import galp.net.core.types as gm
 import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
-from galp.result import Error
+from galp.result import Result, Error
 
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
@@ -202,7 +202,7 @@ class WorkerProtocol:
             except StoreReadError:
                 logging.exception('In %s %s:', *command.key)
                 commands.extend(
-                    self.script.commands[command.key].failed('StoreReadError')
+                    self.script.commands[command.key].failed(Error('StoreReadError'))
                     )
                 continue
             except KeyError:
@@ -297,7 +297,7 @@ class Worker:
         Callback to schedule a task for execution.
         """
         task_def = msg.task_def
-        def _start_task(inputs: cm.FinalResult[list, str]):
+        def _start_task(inputs: Result[list, Error]):
             task = asyncio.create_task(
                 self.run_submission(write_reply, msg, inputs)
                 )
@@ -355,7 +355,7 @@ class Worker:
         return args, kwargs
 
     async def run_submission(self, write_reply: Writer[gr.SubmitReplyValue], msg: gm.Submit,
-                             inputs: cm.FinalResult[list, str]) -> JobResult:
+                             inputs: Result[list, Error]) -> JobResult:
         """
         Actually run the task
         """
@@ -364,7 +364,7 @@ class Worker:
         step_name = task_def.step
 
         try:
-            if isinstance(inputs, cm.Failed):
+            if isinstance(inputs, Error):
                 logging.error('Could not gather task inputs' +
                               ' for step %s (%s): %s', name, step_name,
                               inputs.error)
@@ -378,7 +378,7 @@ class Worker:
                 logging.exception('No such step known to worker: %s', step_name)
                 raise NonFatalTaskError from exc
 
-            args, kwargs = self.prepare_submit_arguments(step, task_def, inputs.result)
+            args, kwargs = self.prepare_submit_arguments(step, task_def, inputs.value)
 
             # This may block for a long time, by design
             try:

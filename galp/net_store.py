@@ -14,6 +14,7 @@ from galp.net.requests.types import NotFound, Found, Put, StatDone, GetNotFound
 from galp.net.core.dump import add_request_id
 from galp.cache import CacheStack, StoreReadError
 from galp.protocol import TransportMessage
+from galp.result import Error
 
 def handle_get(write: Writer[Message], msg: Get, store: CacheStack
         ) -> Iterable[TransportMessage]:
@@ -100,4 +101,4 @@ def on_get_reply(get_command, msg: Put | GetNotFound) -> list[cm.InertCommand]:
             return get_command.done(msg)
         case GetNotFound():
             logging.error('TASK RESULT FETCH FAILED: %s', get_command.name)
-            return get_command.failed('NOTFOUND')
+            return get_command.failed(Error('NOTFOUND'))

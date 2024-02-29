@@ -14,6 +14,7 @@ from galp.net.requests.types import Put
 from galp._client import BrokerProtocol, store_literals
 from galp.task_types import TaskSerializer
 from galp.cache import CacheStack
+from galp.result import Ok
 
 def render_object(obj):
     """
@@ -129,9 +130,9 @@ def collect_kwargs(store, task):
         proto.schedule_new(
             cm.advance_all(proto.script, cm.get_leaves([cmd]))
             )
-        if not isinstance(cmd.val, cm.Done):
+        if not isinstance(cmd.val, Ok):
             # Error handling
             raise NotImplementedError(cmd.val)
-        kwargs[keyword] = cmd.val.result
+        kwargs[keyword] = cmd.val.value
 
     return kwargs

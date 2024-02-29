@@ -5,6 +5,7 @@ Implementation of complex queries within the command asynchronous system
 import logging
 from typing import Type
 
+from galp.result import Error
 import galp.net.requests.types as gr
 from . import commands as cm
 from . import task_types as gtt
@@ -146,7 +147,7 @@ class Operator:
             return self.result(subs)
         except StoreReadError  as exc:
             logging.exception('In %s:', self)
-            return cm.Failed(exc)
+            return Error(exc)
 
 def query_to_op(subject: gtt.Task, query_doc) -> Operator:
     """

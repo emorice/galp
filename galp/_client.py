@@ -20,7 +20,7 @@ import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
 
-from galp.result import Error
+from galp.result import Ok, Error
 from galp import async_utils
 from galp.cache import CacheStack
 from galp.net_store import handle_get, on_get_reply, on_stat_reply
@@ -166,15 +166,15 @@ class Client:
         results: list[Any] = []
         for val in cmd_vals:
             match val:
-                case cm.Done():
-                    results.append(val.result)
+                case Ok():
+                    results.append(val.value)
                 case cm.Pending():
                     # This should only be found if keep_going is False and an
                     # other command fails, so we should find a Failed and raise
                     # without actually returning this one.
                     # Fill it in anyway, to avoid confusions
                     results.append(val)
-                case cm.Failed():
+                case Error():
                     exc = TaskFailedError(
                         f'Failed to collect task: {val.error}'
                         )
@@ -380,7 +380,7 @@ class BrokerProtocol:
                 logging.error('TASK FAILED: %s', err_msg)
 
                 # Mark fetch command as failed if pending
-                return sub_command.failed(err_msg)
+                return sub_command.failed(Error(err_msg))
 
     def schedule_new(self, commands: Iterable[cm.InertCommand]
             ) -> None:

@@ -14,14 +14,14 @@ from functools import wraps
 import galp.net.requests.types as gr
 import galp.task_types as gtt
 from galp.serialize import LoadError
-from galp.result import Ok as LoadOk
+from galp.result import Ok, Error, Result
 
-# Result types
-# ============
+# Extension of Result with a "pending" state
+# ==========================================
 
 # pylint: disable=typevar-name-incorrect-variance
-Ok = TypeVar('Ok', covariant=True)
-Err = TypeVar('Err')
+OkT = TypeVar('OkT', covariant=True)
+ErrT = TypeVar('ErrT', bound=Error)
 
 @dataclass(frozen=True)
 class Pending():
@@ -29,49 +29,34 @@ class Pending():
     Special type for a result not known yet
     """
 
-@dataclass(frozen=True)
-class Done(Generic[Ok]):
-    """
-    Wrapper type for result
-    """
-    result: Ok
-
-@dataclass(frozen=True)
-class Failed(Generic[Err]):
-    """
-    Wrapper type for error
-    """
-    error: Err
-
-Result = Pending | Done[Ok] | Failed[Err]
-FinalResult = Done[Ok] | Failed[Err]
+State = Pending | Result[OkT, ErrT]
 
 # Commands
 # ========
 
 # Helper typevars when a second ok type is needed
-InOk = TypeVar('InOk')
-OutOk = TypeVar('OutOk')
+InOkT = TypeVar('InOkT')
+OutOkT = TypeVar('OutOkT')
 
 @dataclass
-class Deferred(Generic[InOk, Ok, Err]):
+class Deferred(Generic[InOkT, OkT, ErrT]):
     """Wraps commands with matching callback"""
     # Gotcha: the order of typevars differs from Callback !
-    callback: 'PlainCallback[InOk, Err, Ok]'
-    arg: 'Command[InOk, Err]'
+    callback: 'PlainCallback[InOkT, ErrT, OkT]'
+    arg: 'Command[InOkT, ErrT]'
 
     def __repr__(self):
         return f'Deferred({self.callback.__qualname__})'
 
-class Command(Generic[Ok, Err]):
+class Command(Generic[OkT, ErrT]):
     """
     Base class for commands
     """
     def __init__(self) -> None:
-        self.val: Result[Ok, Err] = Pending()
+        self.val: State[OkT, ErrT] = Pending()
         self.outputs : WeakSet[Command] = WeakSet()
 
-    def then(self, callback: 'Callback[Ok, OutOk, Err]') -> 'Command[OutOk, Err]':
+    def then(self, callback: 'Callback[OkT, OutOkT, ErrT]') -> 'Command[OutOkT, ErrT]':
         """
         Chain callback to this command
         """
@@ -111,36 +96,38 @@ class Command(Generic[Ok, Err]):
         raise NotImplementedError
 
 CallbackRet: TypeAlias = (
-        Ok | Done[Ok] | Failed[Err] | Command[Ok, Err]
+        OkT | Result[OkT, ErrT] | Command[OkT, ErrT]
         )
-Callback: TypeAlias = Callable[[InOk], CallbackRet[Ok, Err]]
-PlainCallback: TypeAlias = Callable[[Done[InOk] | Failed[Err]], CallbackRet[Ok, Err]]
+"""
+Type for callback returns. We accept callbacks not wrapping a successful result
+into an Ok type.
+"""
+Callback: TypeAlias = Callable[[InOkT], CallbackRet[OkT, ErrT]]
+"""
+Type of a typical callback
+"""
+PlainCallback: TypeAlias = Callable[[Result[InOkT, ErrT]], CallbackRet[OkT, ErrT]]
+"""
+Type of lower-level callback, which should also be called on failures
+"""
 
-def ok_callback(callback: Callback[InOk, Ok, Err]
-        ) -> PlainCallback[InOk, Err, Ok]:
+def ok_callback(callback: Callback[InOkT, OkT, ErrT]
+        ) -> PlainCallback[InOkT, ErrT, OkT]:
     """
     Wrap a callback from Ok values to accept and propagate Done/Failed
     accordingly
     """
     @wraps(callback)
-    def _ok_callback(val: Done[InOk] | Failed[Err]):
-        match val:
-            case Done():
-                # No need to wrap into Done since that's the default behavior
-                return callback(val.result)
-            case Failed():
-                return val
-            case _:
-                raise TypeError(val)
+    def _ok_callback(val: Result[InOkT, ErrT]):
+        return val.then(callback)
     return _ok_callback
 
-class DeferredCommand(Command[Ok, Err]):
+class DeferredCommand(Command[OkT, ErrT]):
     """
     A promise of the return value Ok of a callback applied to an input promise
     InOk
     """
-
-    def __init__(self, deferred: Deferred[Any, Ok, Err]) -> None:
+    def __init__(self, deferred: Deferred[Any, OkT, ErrT]) -> None:
         super().__init__()
         self._state = deferred
         deferred.arg.outputs.add(self)
@@ -162,11 +149,14 @@ class DeferredCommand(Command[Ok, Err]):
             match ret:
                 case Command():
                     self._state = Deferred(lambda r: r, ret)
-                case Failed() | Done():
-                    self.val = ret
+                case Error() | Ok():
+                    self.val = ret # type: ignore
+                    # Narrowing doesn't quite work here, maybe because the last
+                    # case can be about anything and we cannot check the inner
+                    # types of Ok/Error
                     return []
                 case _:
-                    self.val = Done(ret)
+                    self.val = Ok(ret)
                     return []
 
             sub_command = self._state.arg
@@ -188,13 +178,13 @@ class DeferredCommand(Command[Ok, Err]):
         """
         return [self._state.arg]
 
-class Gather(Command[list[Ok], Err]):
+class Gather(Command[list[OkT], ErrT]):
     """
     Then-able list
     """
-    commands: list[Command[Ok, Err]]
+    commands: list[Command[OkT, ErrT]]
 
-    def __init__(self, commands: 'Command[Ok, Err]' | Iterable['Command[Ok, Err]']):
+    def __init__(self, commands: 'Command[OkT, ErrT]' | Iterable['Command[OkT, ErrT]']):
         super().__init__()
         self.commands = list(commands) if isinstance(commands, Iterable) else [commands]
         for inp in self.commands:
@@ -219,7 +209,7 @@ class Gather(Command[list[Ok], Err]):
 
 CommandKey = tuple[str, gtt.TaskName]
 
-class InertCommand(Command[Ok, Err]):
+class InertCommand(Command[OkT, ErrT]):
     """
     Command tied to an external event
 
@@ -249,7 +239,7 @@ class InertCommand(Command[Ok, Err]):
         """
         return []
 
-class NamedPrimitive(InertCommand[Ok, Err]):
+class NamedPrimitive(InertCommand[OkT, ErrT]):
     """
     Primitive made of just a task name
     """
@@ -266,13 +256,13 @@ class NamedPrimitive(InertCommand[Ok, Err]):
 
 Ok_contra = TypeVar('Ok_contra', contravariant=True)
 
-class PrimitiveProxy(Generic[Ok_contra, Err]):
+class PrimitiveProxy(Generic[Ok_contra, ErrT]):
     """
     Helper class to propagate results to several logical instances of the same
     primitive
     """
     instances: WeakSet[InertCommand]
-    val: Result[Ok_contra, Err] = Pending()
+    val: State[Ok_contra, ErrT] = Pending()
     script: 'Script'
 
     def __init__(self, script: 'Script', *instances: InertCommand):
@@ -283,17 +273,17 @@ class PrimitiveProxy(Generic[Ok_contra, Err]):
         """
         Mark all instances as done
         """
-        self.val = Done(result)
+        self.val = Ok(result)
         return self._advance_all()
 
     def __repr__(self):
         return f'PrimitiveProxy({repr(set(self.instances))} = {self.val})'
 
-    def failed(self, error: Err) -> list[InertCommand]:
+    def failed(self, error: ErrT) -> list[InertCommand]:
         """
         Mark all instances as failed
         """
-        self.val = Failed(error)
+        self.val = error
         return self._advance_all()
 
     def _advance_all(self) -> list[InertCommand]:
@@ -337,14 +327,14 @@ class Script:
         self.verbose = verbose
         self.keep_going = keep_going
 
-    def collect(self, commands: list[Command[Ok, Err]]) -> Command[list[Ok], Err]:
+    def collect(self, commands: list[Command[OkT, ErrT]]) -> Command[list[OkT], ErrT]:
         """
         Creates a command representing a collection of other commands
         """
         return Gather(commands)
 
-    def callback(self, command: Command[InOk, Err],
-            callback: PlainCallback[InOk, Err, Ok]) -> tuple[Command[Ok, Err],
+    def callback(self, command: Command[InOkT, ErrT],
+            callback: PlainCallback[InOkT, ErrT, OkT]) -> tuple[Command[OkT, ErrT],
                     list[InertCommand]]:
         """
         Adds an arbitrary callback to an existing command. This triggers
@@ -356,7 +346,7 @@ class Script:
         # ensures the callback object won't be deleted before getting triggered,
         # but will once it has
         @wraps(callback)
-        def _dereference(value: Done[InOk] | Failed[Err]) -> CallbackRet[Ok, Err]:
+        def _dereference(value: Result[InOkT, ErrT]) -> CallbackRet[OkT, ErrT]:
             ret = callback(value)
             self.pending.remove(cb_command)
             return ret
@@ -367,7 +357,7 @@ class Script:
         # need an external trigger, so we need to advance it
         return cb_command, advance_all(self, get_leaves([cb_command]))
 
-    def notify_change(self, command: Command, old_value: Result, new_value: Result):
+    def notify_change(self, command: Command, old_value: State, new_value: State):
         """
         Hook called when the graph status changes
         """
@@ -381,8 +371,8 @@ class Script:
                     file=sys.stderr, flush=True)
 
         if isinstance(command, Stat):
-            if isinstance(new_value, Done):
-                task_done, task_def, _children = new_value.result
+            if isinstance(new_value, Ok):
+                task_done, task_def, _children = new_value.value
                 if not task_done and isinstance(self, gtt.CoreTaskDef):
                     print_status('PLAN', command.name, task_def.step)
 
@@ -396,13 +386,13 @@ class Script:
             match new_value:
                 case Pending():
                     print_status('SUB', name, step_name_s)
-                case Done():
+                case Ok():
                     print_status('DONE', name, step_name_s)
-                case Failed():
+                case Error():
                     print_status('FAIL', name, step_name_s)
 
-    def value_conj(self, commands: list[Command[Ok, Err]]
-                    ) -> Result[list[Ok], Err]:
+    def value_conj(self, commands: list[Command[OkT, ErrT]]
+                    ) -> State[list[OkT], ErrT]:
         """
         Value conjunction respecting self.keep_going
 
@@ -422,16 +412,16 @@ class Script:
             match val:
                 case Pending():
                     return Pending()
-                case Done():
-                    results.append(val.result)
-                case Failed():
+                case Ok():
+                    results.append(val.value)
+                case Error():
                     if not self.keep_going:
-                        return Failed(val.error)
+                        return val
                     if failed is None:
                         failed = val
         if failed is None:
-            return Done(results)
-        return Failed(failed.error)
+            return Ok(results)
+        return failed
 
 def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     """
@@ -496,12 +486,16 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
-class Get(NamedPrimitive[gr.Put, str]):
+# End of machinery and start of app-specific types and logic
+# ==========================================================
+# To be cut into two modules
+
+class Get(NamedPrimitive[gr.Put, Error]):
     """
     Get a single resource part
     """
 
-class Submit(InertCommand[gtt.ResultRef, str]):
+class Submit(InertCommand[gtt.ResultRef, Error]):
     """
     Remotely execute a single step
     """
@@ -520,12 +514,12 @@ class Submit(InertCommand[gtt.ResultRef, str]):
 
 StatResult: TypeAlias = gr.Found | gr.StatDone | gr.NotFound
 
-class Stat(NamedPrimitive[StatResult, str]):
+class Stat(NamedPrimitive[StatResult, Error]):
     """
     Get a task's metadata
     """
 
-class Put(NamedPrimitive[gtt.ResultRef, str]):
+class Put(NamedPrimitive[gtt.ResultRef, Error]):
     """
     Upload the object of a literal task
     """
@@ -539,11 +533,11 @@ def safe_deserialize(res: gr.Put, children: list):
     """
     match res.deserialize(children):
         case LoadError() as err:
-            return Failed(err)
-        case LoadOk(result):
+            return err
+        case Ok(result):
             return result
 
-def rget(name: gtt.TaskName) -> Command[Any, str]:
+def rget(name: gtt.TaskName) -> Command[Any, Error]:
     """
     Get a task result, then rescursively get all the sub-parts of it
     """
@@ -555,7 +549,7 @@ def rget(name: gtt.TaskName) -> Command[Any, str]:
             ))
         )
 
-def sget(name: gtt.TaskName) -> Command[Any, str]:
+def sget(name: gtt.TaskName) -> Command[Any, Error]:
     """
     Shallow or simple get: get a task result, and deserialize it but keeping
     children as references instead of recursing on them like rget
@@ -566,7 +560,7 @@ def sget(name: gtt.TaskName) -> Command[Any, str]:
         )
 
 def no_not_found(stat_result: StatResult, task: gtt.Task
-                 ) -> gr.Found | gr.StatDone | Failed[str]:
+                 ) -> gr.Found | gr.StatDone | Error:
     """
     Transform NotFound in Found if the task is a real object, and fails
     otherwise.
@@ -577,10 +571,10 @@ def no_not_found(stat_result: StatResult, task: gtt.Task
     if isinstance(task, gtt.TaskNode):
         return gr.Found(task_def=task.task_def)
 
-    return Failed(f'The task reference {task.name} could not be resolved to a'
+    return Error(f'The task reference {task.name} could not be resolved to a'
         ' definition')
 
-def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found, str]:
+def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found, Error]:
     """
     Chains no_not_found to a stat
     """
@@ -590,7 +584,7 @@ def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found, str]:
           )
 
 def ssubmit(task: gtt.Task, dry: bool = False
-            ) -> Command[gtt.ResultRef, str]:
+            ) -> Command[gtt.ResultRef, Error]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
@@ -598,7 +592,7 @@ def ssubmit(task: gtt.Task, dry: bool = False
     return safe_stat(task).then(lambda statr: _ssubmit(task, statr, dry))
 
 def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone, dry: bool
-             ) -> gtt.ResultRef | Command[gtt.ResultRef, str]:
+             ) -> gtt.ResultRef | Command[gtt.ResultRef, Error]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
@@ -656,7 +650,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone, dry: bool
             .then(lambda _: Submit(task_def)) # type: ignore[arg-type] # False positive
             )
 
-def rsubmit(task: gtt.Task, dry: bool = False) -> Command[gtt.RecResultRef, str]:
+def rsubmit(task: gtt.Task, dry: bool = False) -> Command[gtt.RecResultRef, Error]:
     """
     Recursive submit, with children, i.e a ssubmit plus a rsubmit per child
 
@@ -682,7 +676,7 @@ def rsubmit(task: gtt.Task, dry: bool = False) -> Command[gtt.RecResultRef, str]
                 )
             )
 
-def run(task: gtt.Task, dry=False) -> Command[Any, str]:
+def run(task: gtt.Task, dry=False) -> Command[Any, Error]:
     """
     Combined rsubmit + rget
 
