@@ -5,6 +5,7 @@ Since we don't need that much modularity this directly import the core layer
 writer, but should work with any layer.
 """
 
+from typing import TypeAlias
 from dataclasses import dataclass
 
 from galp.net.core.dump import Writer, Message, dump_message
@@ -26,6 +27,11 @@ def make_message_writer(write: Writer[list[bytes]],
     return lambda msg: write(dump_routed(is_router,
         Routed(incoming, forward, msg)
         ))
+
+SessionUid: TypeAlias = tuple[bytes, ...]
+"""
+Alias to the hashable type used to identify sessions
+"""
 
 @dataclass
 class ReplyFromSession:
@@ -52,7 +58,7 @@ class ReplyFromSession:
                 incoming=nat_origin, forward=self.forward)
 
     @property
-    def uid(self):
+    def uid(self) -> SessionUid:
         """
         Hashable identifier for this destination
         """

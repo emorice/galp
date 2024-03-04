@@ -4,7 +4,6 @@ Broker classes
 
 import logging
 
-from typing import Any
 from dataclasses import dataclass
 from collections import defaultdict
 from itertools import cycle
@@ -15,6 +14,7 @@ import zmq
 from galp.result import Error
 import galp.net.core.types as gm
 from galp.net.core.dump import add_request_id, Writer
+from galp.net.routing.dump import SessionUid
 import galp.net.requests.types as gr
 import galp.task_types as gtt
 
@@ -77,7 +77,10 @@ class CommonProtocol:
         self.alloc_from_task: dict[bytes, Allocation] = {}
 
         # Tasks currently running on a worker
-        self.alloc_from_wuid: dict[Any, Allocation] = {}
+        self.alloc_from_wuid: dict[SessionUid, Allocation] = {}
+
+        # Tasks queued from clients
+        self.pending_requests: dict[SessionUid, gm.Request] = {}
 
     def on_ready(self, session: ReplyFromSession, msg: gm.Ready
             ) -> list[TransportMessage]:
@@ -190,7 +193,26 @@ class CommonProtocol:
     def on_request(self, session: ReplyFromSession, msg: gm.Request
             ) -> list[TransportMessage]:
         """
-        Assign a worker
+        Queue or allocate a request
+        """
+        if session.uid in self.pending_requests:
+            # This should eventually be an error
+            pass
+
+        proceeds = self.attempt_allocate(session, msg)
+        if not proceeds:
+            self.pending_requests[session.uid] = msg
+        return proceeds
+
+    def attempt_allocate(self, session: ReplyFromSession, msg: gm.Request
+            ) -> list[TransportMessage]:
+        """
+        Try to assign a worker.
+
+        If conditions for allocation are not met (waiting for pool or other
+        tasks to free resources), return no messages. If conditions are met,
+        return messages to be sent to proceed, either to a worker or to the
+        pool.
         """
         claim = self.calc_resource_claim(msg)
 
