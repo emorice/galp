@@ -39,7 +39,13 @@ class ReplyFromSession:
     Session encapsulating a destination but letting the user fill in the origin
     part of the message
 
-    This is what is exposed to the user, and must be type safe.
+    This is what is exposed to the user, and must be type safe. It is hashable
+    and comparable, such that sessions obtained from the same peer on different
+    messages compare equal.
+
+    This comparability does not check anything concerning the layer below
+    routing. Concretely, don't try to compare sessions built on top of different
+    zmq sockets.
     """
     write_lower: Writer[list[bytes]]
     is_router: bool
@@ -63,6 +69,14 @@ class ReplyFromSession:
         Hashable identifier for this destination
         """
         return tuple(self.forward)
+
+    def __hash__(self) -> int:
+        return hash(self.uid)
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, self.__class__):
+            return self.uid == other.uid
+        return NotImplemented
 
 @dataclass
 class ForwardSessions:

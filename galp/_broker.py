@@ -80,7 +80,7 @@ class CommonProtocol:
         self.alloc_from_wuid: dict[SessionUid, Allocation] = {}
 
         # Tasks queued from clients
-        self.pending_requests: dict[SessionUid, gm.Request] = {}
+        self.pending_requests: dict[ReplyFromSession, gm.Request] = {}
 
     def on_ready(self, session: ReplyFromSession, msg: gm.Ready
             ) -> list[TransportMessage]:
@@ -122,10 +122,13 @@ class CommonProtocol:
         self.resources = Resources(cpus)
         return []
 
-    def free_resources(self, session: ReplyFromSession, reuse=True) -> None:
+    def _free_resources(self, session: ReplyFromSession, reuse=True) -> None:
         """
         Add a worker to the idle list after clearing the current task
-        information and freeing resources
+        information and freeing resources.
+
+        This should not be called directly, use reallocate which ensures the
+        free resources are reallocated to pending requests if possible.
         """
         # Get task
         alloc = self.alloc_from_wuid.pop(session.uid, None)
@@ -139,6 +142,52 @@ class CommonProtocol:
                 self.idle_workers[alloc.claim].append(session)
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
+
+    def reallocate(self, worker: ReplyFromSession, reuse: bool = True
+                   ) -> list[TransportMessage]:
+        """
+        Mark resources as unused, and allocate any possible pending task
+
+        If reuse is false, while the worker will not be directly reallocated, a
+        new worker with similar resource requirements may be created, the
+        resources may thus be reallocated even if the actual worker isn't.
+        """
+        self._free_resources(worker, reuse=reuse)
+        replies = []
+        # Try to allocate all pending requests
+        while self.pending_requests:
+            client, request = self.pending_requests.popitem()
+            proceeds = self.attempt_allocate(client, request)
+            # On first failure, re-queue the failed request, and stop further
+            # allocations
+            if not proceeds:
+                self.pending_requests[client] = request
+                break
+            replies += proceeds
+        return replies
+
+    def exited_errors(self, alloc: Allocation) -> list[TransportMessage]:
+        """
+        Generate error messages to propagate when a peer exits
+        """
+        # Note that we set the incoming to empty, which equals re-interpreting
+        # the message as addressed to us
+        write_client = alloc.client.reply_from(None)
+        orig_msg = alloc.msg
+
+        match orig_msg:
+            case gm.Get():
+                return [add_request_id(write_client, orig_msg)(gr.GetNotFound())]
+            case gm.Stat():
+                return [add_request_id(write_client, orig_msg)(gr.NotFound())]
+            case gm.Exec():
+                return [add_request_id(write_client, orig_msg.submit)(
+                    gr.Failed(task_def=orig_msg.submit.task_def)
+                    )]
+        logging.error(
+            'Worker died while handling %s, no error propagation', alloc
+            )
+        return []
 
     def on_exited(self, msg: gm.Exited
             ) -> list[TransportMessage]:
@@ -158,29 +207,14 @@ class CommonProtocol:
             logging.error("Worker %s was not assigned a task, ignoring exit", peer)
             return []
 
-        # Free resources, since a dead worker uses none, but of course don't
-        # mark the worker as reusable
-        self.free_resources(session, reuse=False)
-
-        # Note that we set the incoming to empty, which equals re-interpreting
-        # the message as addressed to us
-        write_client = alloc.client.reply_from(None)
-        orig_msg = alloc.msg
-
-        match orig_msg:
-            case gm.Get():
-                return [add_request_id(write_client, orig_msg)(gr.GetNotFound())]
-            case gm.Stat():
-                return [add_request_id(write_client, orig_msg)(gr.NotFound())]
-            case gm.Exec():
-                return [add_request_id(write_client, orig_msg.submit)(
-                    gr.Failed(task_def=orig_msg.submit.task_def)
-                    )]
-        logging.error(
-            'Worker %s died while handling %s, no error propagation',
-            peer, alloc
+        # Allocate new requests based on freed resources, and forward errors to
+        # client
+        return (
+            self.reallocate(session, reuse=False)
+            +
+            self.exited_errors(alloc)
             )
-        return []
+
 
     def calc_resource_claim(self, msg: gm.Message) -> gtt.ResourceClaim:
         """
@@ -190,18 +224,18 @@ class CommonProtocol:
             return msg.resources
         return gtt.ResourceClaim(cpus=1)
 
-    def on_request(self, session: ReplyFromSession, msg: gm.Request
+    def on_request(self, client: ReplyFromSession, msg: gm.Request
             ) -> list[TransportMessage]:
         """
         Queue or allocate a request
         """
-        if session.uid in self.pending_requests:
+        if client in self.pending_requests:
             # This should eventually be an error
             pass
 
-        proceeds = self.attempt_allocate(session, msg)
+        proceeds = self.attempt_allocate(client, msg)
         if not proceeds:
-            self.pending_requests[session.uid] = msg
+            self.pending_requests[client] = msg
         return proceeds
 
     def attempt_allocate(self, session: ReplyFromSession, msg: gm.Request
@@ -281,13 +315,14 @@ class CommonProtocol:
         """
         Handles only messages forwarded through broker
         """
+        replies = []
         # Free resources for all messages indicating end of task
         if isinstance(msg, gm.Reply):
             if not isinstance(msg.value, gr.Doing):
-                self.free_resources(sessions.origin)
+                replies = self.reallocate(sessions.origin)
         # Forward as-is.
         logging.debug('Forwarding %s', msg.__class__.__name__)
-        return [sessions.dest.reply_from(sessions.origin)(msg)]
+        return replies + [sessions.dest.reply_from(sessions.origin)(msg)]
 
     @on_message.register
     def _(self, session: ReplyFromSession, msg: gm.Message
