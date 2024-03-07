@@ -107,12 +107,12 @@ class CommonProtocol:
     def on_pool_ready(self, pool: ReplyFromSession, msg: gm.PoolReady
             ) -> list[TransportMessage]:
         """
-        Register pool route and resources
+        Register pool route and resources.
+
+        Sends out pending requests if some can now be allocated.
         """
         assert self.write_pool is None
 
-        # When the pool manager joins, record its route and set the available
-        # resources
         # We already set the forward-address to None since we will never need to
         # forward anything to pool.
         self.write_pool = pool.reply_from(None)
@@ -120,7 +120,8 @@ class CommonProtocol:
         # or repeting some as needed
         cpus = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
         self.resources = Resources(cpus)
-        return []
+
+        return self.allocate_any()
 
     def _free_resources(self, session: ReplyFromSession, reuse=True) -> None:
         """
@@ -143,18 +144,12 @@ class CommonProtocol:
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
-    def reallocate(self, worker: ReplyFromSession, reuse: bool = True
-                   ) -> list[TransportMessage]:
-        """
-        Mark resources as unused, and allocate any possible pending task
 
-        If reuse is false, while the worker will not be directly reallocated, a
-        new worker with similar resource requirements may be created, the
-        resources may thus be reallocated even if the actual worker isn't.
+    def allocate_any(self) -> list[TransportMessage]:
         """
-        self._free_resources(worker, reuse=reuse)
+        Go through the queue and try to allocate pending requests.
+        """
         replies = []
-        # Try to allocate all pending requests
         while self.pending_requests:
             client, request = self.pending_requests.popitem()
             proceeds = self.attempt_allocate(client, request)
@@ -165,6 +160,18 @@ class CommonProtocol:
                 break
             replies += proceeds
         return replies
+
+    def reallocate(self, worker: ReplyFromSession, reuse: bool = True
+                   ) -> list[TransportMessage]:
+        """
+        Mark resources as unused, and allocate any possible pending task
+
+        If reuse is false, while the worker will not be directly reallocated, a
+        new worker with similar resource requirements may be created, the
+        resources may thus be reallocated even if the actual worker isn't.
+        """
+        self._free_resources(worker, reuse=reuse)
+        return self.allocate_any()
 
     def exited_errors(self, alloc: Allocation) -> list[TransportMessage]:
         """
@@ -192,7 +199,7 @@ class CommonProtocol:
     def on_exited(self, msg: gm.Exited
             ) -> list[TransportMessage]:
         """
-        Propagate failuer messages and free resources when worker is killed
+        Propagate failure messages and free resources when worker is killed
         """
         peer = msg.peer
         logging.error("Worker %s exited", peer)
@@ -214,7 +221,6 @@ class CommonProtocol:
             +
             self.exited_errors(alloc)
             )
-
 
     def calc_resource_claim(self, msg: gm.Message) -> gtt.ResourceClaim:
         """
