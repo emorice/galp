@@ -244,7 +244,7 @@ class CommonProtocol:
             self.pending_requests[client] = msg
         return proceeds
 
-    def attempt_allocate(self, session: ReplyFromSession, msg: gm.Request
+    def attempt_allocate(self, client: ReplyFromSession, msg: gm.Request
             ) -> list[TransportMessage]:
         """
         Try to assign a worker.
@@ -252,7 +252,7 @@ class CommonProtocol:
         If conditions for allocation are not met (waiting for pool or other
         tasks to free resources), return no messages. If conditions are met,
         return messages to be sent to proceed, either to a worker or to the
-        pool.
+        pool, plus an event to client to queue next request.
         """
         claim = self.calc_resource_claim(msg)
 
@@ -278,6 +278,7 @@ class CommonProtocol:
 
         # Allocated. At this point the message can be considered
         # as accepted and queued
+        proceeds = [client.reply_from(None)(gm.NextRequest())]
 
         # For Submits, the worker will need to know the details of the
         # allocation, so wrap the original message
@@ -294,7 +295,7 @@ class CommonProtocol:
                 claim=claim,
                 resources=resources,
                 msg=new_msg,
-                client=session,
+                client=client,
                 task_id=task_id
                 )
         self.alloc_from_task[alloc.task_id] = alloc
@@ -309,11 +310,13 @@ class CommonProtocol:
             self.alloc_from_wuid[worker.uid] = alloc
 
             # We build the message and return it to transport
-            return [worker.reply_from(session)(new_msg)]
+            proceeds.append(worker.reply_from(client)(new_msg))
+        else:
+            # Else ask the pool to fork a new worker
+            # We'll send the request to the worker when it send us a READY
+            proceeds.append(self.write_pool(gm.Fork(alloc.task_id, alloc.claim)))
 
-        # Else, ask the pool to fork a new worker
-        # We'll send the request to the worker when it send us a READY
-        return [self.write_pool(gm.Fork(alloc.task_id, alloc.claim))]
+        return proceeds
 
     @singledispatchmethod
     def on_message(self, sessions: ForwardSessions, msg: gm.Message

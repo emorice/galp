@@ -76,6 +76,19 @@ class Client:
                         })
                     self.protocol.schedule_new(news)
                     return []
+                case gm.NextRequest():
+                    # FIXME: simplify queue
+                    command = self.command_queue.pop_now()
+                    if command is None:
+                        return []
+                    # FIXME: indirect access
+                    message = self.protocol.write_next(command)
+                    if message is None:
+                        return []
+                    # FIXME: requeue to avoid gc
+                    self.command_queue.requeue(command)
+                    # FIXME: indirect access
+                    return [self.transport.stack.write_local(message)]
                 case _:
                     return Error(f'Unexpected {msg}')
         self.transport = ZmqAsyncTransport(

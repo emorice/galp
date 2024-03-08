@@ -36,6 +36,15 @@ class CommandQueue:
         # Everything's empty
         return None, None
 
+    def pop_now(self) -> cm.InertCommand | None:
+        """Returns next command to send, no matter the time left"""
+        if self.asap_queue:
+            return self.asap_queue.popleft()
+        if self.retry_queue:
+            command, _time =  self.retry_queue.popleft()
+            return command
+        return None
+
     def enqueue(self, command: cm.InertCommand):
         """
         Adds a command to the end of the ASAP queue

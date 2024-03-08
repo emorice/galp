@@ -184,8 +184,12 @@ class Reply(MessageType, Generic[V], key='reply'):
     request: RequestId
     value: V
 
+@dataclass(frozen=True)
+class NextRequest(MessageType, key='next_request'):
+    """Event sent by broker when ready for next request"""
+
 Message: TypeAlias = (
         Exit | Exited | Fork | Ready | PoolReady |
         Request |
-        Exec | Reply
+        Exec | Reply | NextRequest
         )
