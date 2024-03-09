@@ -7,7 +7,6 @@ object that can be created and used as part of a larger program.
 
 import logging
 import asyncio
-import time
 
 from collections import defaultdict
 from typing import Callable, Iterable, Any
@@ -78,7 +77,7 @@ class Client:
                     return []
                 case gm.NextRequest():
                     # FIXME: simplify queue
-                    command = self.command_queue.pop_now()
+                    command = self.command_queue.on_next_request()
                     if command is None:
                         return []
                     # FIXME: indirect access
@@ -110,7 +109,7 @@ class Client:
         """
         while True:
             self.new_command.clear()
-            next_command, next_time = self.command_queue.pop()
+            next_command = self.command_queue.pop()
             if next_command:
                 logging.debug('SCHED: Ready command %s %s', *next_command.key)
                 next_msg = self.protocol.write_next(next_command)
@@ -122,17 +121,12 @@ class Client:
                 else:
                     logging.debug('SCHED: No message, dropping %s %s',
                             *next_command.key)
+                    # FIXME: we reset the flag manually here because we're not
+                    # sending anything and did not use a slot in the queue. But
+                    # ideally we should filter out these fake messages earlier
+                    # on and not need that at all
+                    self.command_queue.can_send = True
 
-            elif next_time:
-                # Wait for either a new command or the end of timeout
-                logging.debug('SCHED: No ready command, waiting %s', next_time - time.time())
-                try:
-                    await asyncio.wait_for(
-                        self.new_command.wait(),
-                        timeout=next_time - time.time())
-                    logging.debug('SCHED: new command signal')
-                except asyncio.TimeoutError:
-                    logging.debug('SCHED: time elapsed')
             else:
                 logging.debug('SCHED: No ready command, waiting forever')
                 await self.new_command.wait()
@@ -398,9 +392,7 @@ class BrokerProtocol:
     def schedule_new(self, commands: Iterable[cm.InertCommand]
             ) -> None:
         """
-        Transfer the command queue to the scheduler, and therefore only return
-        an empty list of immediate messages. Session argument is just for compat
-        with worker code and can be set to None.
+        Transfer the command queue to the scheduler.
         """
         for command in commands:
             self.schedule(command)

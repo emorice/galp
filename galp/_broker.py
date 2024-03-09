@@ -236,8 +236,8 @@ class CommonProtocol:
         Queue or allocate a request
         """
         if client in self.pending_requests:
-            # This should eventually be an error
-            pass
+            logging.error('Dropping %s (queue full)', msg)
+            return []
 
         proceeds = self.attempt_allocate(client, msg)
         if not proceeds:
@@ -262,18 +262,15 @@ class CommonProtocol:
         # operation
         task_id = gm.get_request_id(msg).as_word()
         if task_id in self.alloc_from_task:
-            logging.info('Dropping %s (already allocated)', task_id)
-            return []
+            logging.error('Reprocessing %s (already allocated)', task_id)
 
         # Drop if we don't have a way to spawn workers
         if not self.write_pool:
-            logging.info('Dropping %s (pool not joined)', task_id)
             return []
 
         # Try allocate and drop if we don't have any resources left
         resources, self.resources = self.resources.allocate(claim)
         if resources is None:
-            logging.info('Dropping %s (no resources)', task_id)
             return []
 
         # Allocated. At this point the message can be considered

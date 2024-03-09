@@ -313,8 +313,8 @@ async def test_parallel_tasks(client_pool):
     dtime2 = time.time() - time2
     assert set(ans) == set(range(10, 20))
 
-    print(f'Warmup: {dtime1}s')
-    print(f'Run   : {dtime2}s')
+    print(f'Warmup: {dtime1:.3f} s')
+    print(f'Run   : {dtime2:.3f} s')
 
 async def test_variadic(client):
     """

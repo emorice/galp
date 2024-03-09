@@ -1,8 +1,6 @@
 """
 Queue of active commands
 """
-
-import time
 from collections import deque
 
 import galp.commands as cm
@@ -11,38 +9,44 @@ class CommandQueue:
     """
     A queue of active commands that need periodic re-issuing
     """
-    def __init__(self, retry_interval: float=0.5):
+    def __init__(self) -> None:
         self.asap_queue : deque[cm.InertCommand] = deque()
-        self.retry_queue : deque[tuple[cm.InertCommand, float]] = deque()
-        self.retry_interval = retry_interval
+        self.retry_queue : deque[cm.InertCommand] = deque()
+        self.can_send: bool = True
 
-    def pop(self) -> tuple[cm.InertCommand | None, float | None]:
+    def pop(self) -> cm.InertCommand | None:
         """
         Returns the next command to send, if any, or the timepoint at which to
         try again
         """
-        if self.asap_queue:
-            return self.asap_queue.popleft(), None
+        # If remote is blocking, don't send anything
+        if not self.can_send:
+            return None
 
-        if self.retry_queue:
-            next_cmd, next_time = self.retry_queue[0]
-            now = time.time()
-            if next_time > now:
-                # Not time yet
-                return None, next_time
-            self.retry_queue.popleft()
-            return next_cmd, None
+        if self.asap_queue:
+            self.can_send = False
+            return self.asap_queue.popleft()
+
+        # FIXME: with retry disabled, we're leaking memory because we never empty
+        # retry queue
+        # if self.retry_queue:
+        #     next_cmd, next_time = self.retry_queue[0]
+        #     now = time.time()
+        #     if next_time > now:
+        #         # Not time yet
+        #         return None, next_time
+        #     self.retry_queue.popleft()
+        #     return next_cmd, None
 
         # Everything's empty
-        return None, None
+        return None
 
-    def pop_now(self) -> cm.InertCommand | None:
+    def on_next_request(self) -> cm.InertCommand | None:
         """Returns next command to send, no matter the time left"""
         if self.asap_queue:
             return self.asap_queue.popleft()
-        if self.retry_queue:
-            command, _time =  self.retry_queue.popleft()
-            return command
+        # If we fail a pop, remember we can send the next one right through
+        self.can_send = True
         return None
 
     def enqueue(self, command: cm.InertCommand):
@@ -53,8 +57,6 @@ class CommandQueue:
 
     def requeue(self, command: cm.InertCommand):
         """
-        Adds a command to the end of the retry queue, with a delay
+        Adds a command to the end of the retry queue
         """
-        self.retry_queue.append((
-            command, time.time() + self.retry_interval
-            ))
+        self.retry_queue.append(command)
