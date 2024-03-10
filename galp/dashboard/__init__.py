@@ -11,8 +11,8 @@ from flask import Flask, render_template, abort
 import galp.config
 import galp.commands as cm
 from galp.net.requests.types import Put
-from galp._client import BrokerProtocol, store_literals
-from galp.task_types import TaskSerializer
+from galp._client import store_literals
+from galp.task_types import TaskSerializer, TaskNode, CoreTaskDef
 from galp.cache import CacheStack
 from galp.result import Ok
 
@@ -93,32 +93,29 @@ def create_app(config):
         return 'Neither a view nor an object in store'
     return app
 
-def collect_kwargs(store, task):
+def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     """
     Re-use client logic to parse the graph and sort out which pieces
     need to be fetched from store
     """
     tdef = task.task_def
+    assert isinstance(tdef, CoreTaskDef)
 
     ## Define how to fetch missing pieces (direct read from store)
-    proto = None # fwd decl
-    def _schedule(command: cm.InertCommand):
+    mem_store = CacheStack(dirpath=None, serializer=TaskSerializer)
+    script = cm.Script()
+    def _exec(command: cm.InertCommand):
         if not isinstance(command, cm.Get):
             raise NotImplementedError
         name = command.name
-        if name not in proto.store:
+        if name not in mem_store:
             buf, children, _loads = store.get_serial(name)
-            proto.store.put_serial(name, (buf, children))
-        res = Put(*proto.store.get_serial(name))
-        proto.schedule_new(
-            proto.script.commands[command.key].done(res)
-            )
-    def _write_local(_msg):
-        raise NotImplementedError
+            mem_store.put_serial(name, (buf, children))
+        res = Put(*mem_store.get_serial(name))
+        for subcmd in script.commands[command.key].done(res):
+            _exec(subcmd)
 
-    mem_store = CacheStack(dirpath=None, serializer=TaskSerializer)
     store_literals(mem_store, [task])
-    proto = BrokerProtocol(_schedule, _write_local, cpus_per_task=1, store=mem_store)
 
     ## Collect args from local and remote store. Since we don't pass any
     ## argument to the step, all arguments are injected, and therefore keyword arguments
@@ -127,13 +124,11 @@ def collect_kwargs(store, task):
     for keyword, tin in tdef.kwargs.items():
         # You need to hold a reference, because advance_all won't !
         cmd = cm.rget(tin.name)
-        # This is recursive through _schedule, and will only return when no more
+        # This is recursive through _exec, and will only return when no more
         # commands are issued
-        proto.schedule_new(
-            cm.advance_all(proto.script, cm.get_leaves([cmd]))
-            )
+        for command in cm.advance_all(script, cm.get_leaves([cmd])):
+            _exec(command)
         if not isinstance(cmd.val, Ok):
-            # Error handling
             raise NotImplementedError(cmd.val)
         kwargs[keyword] = cmd.val.value
 
