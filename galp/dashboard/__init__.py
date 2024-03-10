@@ -113,10 +113,12 @@ def collect_kwargs(store, task):
         proto.schedule_new(
             proto.script.commands[command.key].done(res)
             )
+    def _write_local(_msg):
+        raise NotImplementedError
 
     mem_store = CacheStack(dirpath=None, serializer=TaskSerializer)
     store_literals(mem_store, [task])
-    proto = BrokerProtocol(_schedule, cpus_per_task=1, store=mem_store)
+    proto = BrokerProtocol(_schedule, _write_local, cpus_per_task=1, store=mem_store)
 
     ## Collect args from local and remote store. Since we don't pass any
     ## argument to the step, all arguments are injected, and therefore keyword arguments

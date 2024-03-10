@@ -57,11 +57,6 @@ class Client:
         self.store = CacheStack(
             dirpath=None,
             serializer=TaskSerializer)
-        self.protocol = BrokerProtocol(
-                schedule=self.schedule, # callback to add tasks to the scheduling queue
-                cpus_per_task=cpus_per_task or 1,
-                store=self.store
-                )
         def on_message(write: Writer[gm.Message], msg: gm.Message
                 ) -> Iterable[TransportMessage] | Error:
             match msg:
@@ -86,12 +81,18 @@ class Client:
                         return []
                     # FIXME: requeue to avoid gc
                     self.command_queue.requeue(command)
-                    # FIXME: indirect access
-                    return [self.transport.stack.write_local(message)]
+                    return [message]
                 case _:
                     return Error(f'Unexpected {msg}')
+        self.stack = make_stack(on_message, name='BK')
+        self.protocol = BrokerProtocol(
+                schedule=self.schedule, # callback to add tasks to the scheduling queue
+                write_local=self.stack.write_local,
+                cpus_per_task=cpus_per_task or 1,
+                store=self.store
+                )
         self.transport = ZmqAsyncTransport(
-            stack=make_stack(on_message, name='BK'),
+            stack=self.stack,
             # pylint: disable=no-member # False positive
             endpoint=endpoint, socket_type=zmq.DEALER
             )
@@ -108,28 +109,12 @@ class Client:
         externally.
         """
         while True:
+            messages = send_queue(self.protocol, self.command_queue)
             self.new_command.clear()
-            next_command = self.command_queue.pop()
-            if next_command:
-                logging.debug('SCHED: Ready command %s %s', *next_command.key)
-                next_msg = self.protocol.write_next(next_command)
-                if next_msg:
-                    await self.transport.send_message(next_msg)
-                    self.command_queue.requeue(next_command)
-                    logging.debug('SCHED: Sent message, requeuing %s %s',
-                            *next_command.key)
-                else:
-                    logging.debug('SCHED: No message, dropping %s %s',
-                            *next_command.key)
-                    # FIXME: we reset the flag manually here because we're not
-                    # sending anything and did not use a slot in the queue. But
-                    # ideally we should filter out these fake messages earlier
-                    # on and not need that at all
-                    self.command_queue.can_send = True
+            await self.transport.send_messages(messages)
 
-            else:
-                logging.debug('SCHED: No ready command, waiting forever')
-                await self.new_command.wait()
+            logging.debug('SCHED: No ready command, waiting forever')
+            await self.new_command.wait()
 
     def schedule(self, command: cm.InertCommand) -> None:
         """
@@ -244,7 +229,8 @@ class Client:
 
         try:
             _, cmds = script.callback(collect, _end)
-            self.protocol.schedule_new( cmds)
+            for command in cmds:
+                self.schedule(command)
 
             await async_utils.run(
                 self.process_scheduled(),
@@ -286,7 +272,9 @@ class BrokerProtocol:
     Main logic of the interaction of a client with a broker
     """
     def __init__(self, schedule: Callable[[cm.InertCommand], None],
+            write_local: Callable[[gm.Message], TransportMessage],
             cpus_per_task: int, store: CacheStack):
+        self.write_local = write_local
         self.schedule = schedule
         self.store = store
         # Commands
@@ -305,7 +293,7 @@ class BrokerProtocol:
         # Default resources
         self.resources = gtt.ResourceClaim(cpus=cpus_per_task)
 
-    def write_next(self, command: cm.InertCommand) -> gm.Message | None:
+    def write_next(self, command: cm.InertCommand) -> TransportMessage | None:
         """
         Returns the next nessage to be sent for a task given the information we
         have about it
@@ -326,13 +314,13 @@ class BrokerProtocol:
                 self.submitted_count[name] += 1
                 sub = gm.Submit(task_def=command.task_def,
                                 resources=self.get_resources(command.task_def))
-                return sub
+                return self.write_local(sub)
             case cm.Get():
                 get = self.get(command.name)
                 if get is not None:
-                    return get
+                    return self.write_local(get)
             case cm.Stat():
-                return gm.Stat(name=command.name)
+                return self.write_local(gm.Stat(name=command.name))
             case _:
                 raise NotImplementedError(command)
 
@@ -396,3 +384,27 @@ class BrokerProtocol:
         """
         for command in commands:
             self.schedule(command)
+
+def send_queue(protocol: BrokerProtocol, command_queue: CommandQueue
+               ) -> list[TransportMessage]:
+    """
+    Check command queue for sendable messages
+    """
+    messages = []
+    while (next_command := command_queue.pop()):
+        logging.debug('SCHED: Ready command %s %s', *next_command.key)
+        next_msg = protocol.write_next(next_command)
+        if next_msg:
+            messages.append(next_msg)
+            command_queue.requeue(next_command)
+            logging.debug('SCHED: Sent message, requeuing %s %s',
+                    *next_command.key)
+        else:
+            logging.debug('SCHED: No message, dropping %s %s',
+                    *next_command.key)
+            # FIXME: we reset the flag manually here because we're not
+            # sending anything and did not use a slot in the queue. But
+            # ideally we should filter out these fake messages earlier
+            # on and not need that at all
+            command_queue.can_send = True
+    return messages
