@@ -182,33 +182,26 @@ class WorkerProtocol:
         return replies
 
     def new_commands_to_replies(self, write: Writer[gm.Message], commands: list[cm.InertCommand]
-            ) -> list[list[bytes]]:
+            ) -> list[TransportMessage]:
         """
         Generate galp messages from a command reply list
         """
-        messages: list[list[bytes]] = []
 
-        while commands:
-            command = commands.pop()
+        def _filter_local(command: cm.InertCommand
+                    ) -> tuple[list[TransportMessage], list[cm.InertCommand]]:
+            """Filter out locally available resources, send queries for the rest"""
             if not isinstance(command, cm.Get):
                 raise NotImplementedError(command)
             name = command.name
             try:
                 res = gr.Put(*self.store.get_serial(name))
-                commands.extend(
-                    self.script.commands[command.key].done(res)
-                    )
-                continue
+                return [], self.script.commands[command.key].done(res)
             except StoreReadError:
                 logging.exception('In %s %s:', *command.key)
-                commands.extend(
-                    self.script.commands[command.key].failed(Error('StoreReadError'))
-                    )
-                continue
+                return [], self.script.commands[command.key].failed(Error('StoreReadError'))
             except KeyError:
-                pass
-            messages.append(write(gm.Get(name=name)))
-        return messages
+                return [write(gm.Get(name=name))], []
+        return cm.filter_commands(commands, _filter_local)
 
 @dataclass
 class JobResult:

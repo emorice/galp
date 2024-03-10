@@ -77,8 +77,6 @@ class Client:
                         return []
                     # FIXME: indirect access
                     message = self.protocol.write_next(command)
-                    if message is None:
-                        return []
                     # FIXME: requeue to avoid gc
                     self.command_queue.requeue(command)
                     return [message]
@@ -229,6 +227,7 @@ class Client:
 
         try:
             _, cmds = script.callback(collect, _end)
+            cmds = cm.filter_commands(cmds, self.protocol.filter_local_get)
             for command in cmds:
                 self.schedule(command)
 
@@ -293,38 +292,27 @@ class BrokerProtocol:
         # Default resources
         self.resources = gtt.ResourceClaim(cpus=cpus_per_task)
 
-    def write_next(self, command: cm.InertCommand) -> TransportMessage | None:
+    def write_next(self, command: cm.InertCommand) -> TransportMessage:
         """
         Returns the next nessage to be sent for a task given the information we
-        have about it
-
-        (Sorry for the None disjunction, this is in the middle of the part where
-        we supress messages whose result is already known)
+        have about it.
         """
-        if not command.is_pending():
-            # Promise has been fulfilled since before reaching here
-            return None
+        assert command.is_pending()
 
         match command:
             case cm.Submit():
                 name = command.task_def.name
-                if self._started[name]:
-                    # Early stop if we received DOING
-                    return None
+                assert not self._started[name]
                 self.submitted_count[name] += 1
                 sub = gm.Submit(task_def=command.task_def,
                                 resources=self.get_resources(command.task_def))
                 return self.write_local(sub)
             case cm.Get():
-                get = self.get(command.name)
-                if get is not None:
-                    return self.write_local(get)
+                return self.write_local(gm.Get(name=command.name))
             case cm.Stat():
                 return self.write_local(gm.Stat(name=command.name))
             case _:
                 raise NotImplementedError(command)
-
-        return None
 
     def get_resources(self, task_def: gtt.CoreTaskDef) -> gtt.ResourceClaim:
         """
@@ -332,26 +320,6 @@ class BrokerProtocol:
         """
         _ = task_def # to be used later
         return self.resources
-
-    # Custom protocol sender
-    # ======================
-
-    def get(self, name: TaskName) -> gm.Get | None:
-        """
-        Send GET for task if not locally available
-        """
-        try:
-            res = gr.Put(*self.store.get_serial(name))
-        except KeyError:
-            # Not found, send a normal GET
-            return gm.Get(name=name)
-
-        # Found, mark command as done and pass on children
-        self.schedule_new(
-            self.script.commands['GET', name].done(res)
-            )
-        # Supress normal output, removing task from queue
-        return None
 
     # Protocol callbacks
     # ==================
@@ -377,11 +345,31 @@ class BrokerProtocol:
                 # Mark fetch command as failed if pending
                 return sub_command.failed(Error(err_msg))
 
+    def filter_local_get(self, command: cm.InertCommand
+                         ) -> tuple[list[cm.InertCommand], list[cm.InertCommand]]:
+        """
+        Fulfill GETs that are locally available
+        """
+        # Not a Get, leave as-is
+        if not isinstance(command, cm.Get):
+            return [command], []
+
+        name = command.name
+        try:
+            res = gr.Put(*self.store.get_serial(name))
+        except KeyError:
+            # Not found, leave as-is
+            return [command], []
+
+        # Found, mark command as done and pass on children
+        return [], self.script.commands['GET', name].done(res)
+
     def schedule_new(self, commands: Iterable[cm.InertCommand]
             ) -> None:
         """
         Transfer the command queue to the scheduler.
         """
+        commands = cm.filter_commands(commands, self.filter_local_get)
         for command in commands:
             self.schedule(command)
 
@@ -393,18 +381,8 @@ def send_queue(protocol: BrokerProtocol, command_queue: CommandQueue
     messages = []
     while (next_command := command_queue.pop()):
         logging.debug('SCHED: Ready command %s %s', *next_command.key)
-        next_msg = protocol.write_next(next_command)
-        if next_msg:
-            messages.append(next_msg)
-            command_queue.requeue(next_command)
-            logging.debug('SCHED: Sent message, requeuing %s %s',
-                    *next_command.key)
-        else:
-            logging.debug('SCHED: No message, dropping %s %s',
-                    *next_command.key)
-            # FIXME: we reset the flag manually here because we're not
-            # sending anything and did not use a slot in the queue. But
-            # ideally we should filter out these fake messages earlier
-            # on and not need that at all
-            command_queue.can_send = True
+        messages.append(protocol.write_next(next_command))
+        command_queue.requeue(next_command)
+        logging.debug('SCHED: Sent message, requeuing %s %s',
+                *next_command.key)
     return messages

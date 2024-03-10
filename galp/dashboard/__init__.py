@@ -104,16 +104,17 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     ## Define how to fetch missing pieces (direct read from store)
     mem_store = CacheStack(dirpath=None, serializer=TaskSerializer)
     script = cm.Script()
-    def _exec(command: cm.InertCommand):
+    def _exec(command: cm.InertCommand
+              ) -> tuple[list[None], list[cm.InertCommand]]:
+        """Fulfill commands by reading from stores"""
         if not isinstance(command, cm.Get):
-            raise NotImplementedError
+            raise NotImplementedError(command)
         name = command.name
         if name not in mem_store:
             buf, children, _loads = store.get_serial(name)
             mem_store.put_serial(name, (buf, children))
         res = Put(*mem_store.get_serial(name))
-        for subcmd in script.commands[command.key].done(res):
-            _exec(subcmd)
+        return [], script.commands[command.key].done(res)
 
     store_literals(mem_store, [task])
 
@@ -124,10 +125,9 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     for keyword, tin in tdef.kwargs.items():
         # You need to hold a reference, because advance_all won't !
         cmd = cm.rget(tin.name)
-        # This is recursive through _exec, and will only return when no more
-        # commands are issued
-        for command in cm.advance_all(script, cm.get_leaves([cmd])):
-            _exec(command)
+        primitives = cm.advance_all(script, cm.get_leaves([cmd]))
+        unprocessed = cm.filter_commands(primitives, _exec)
+        assert not unprocessed
         if not isinstance(cmd.val, Ok):
             raise NotImplementedError(cmd.val)
         kwargs[keyword] = cmd.val.value

@@ -123,6 +123,8 @@ async def test_unique_submission(make_peer_client):
     try:
         async with timeout(6):
             # Process one STAT for the task, two for the args and reply NOTFOUND
+            # Note: this depends on the client sending the stats for args in
+            # said order, which is an implementation detail
             for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
                 await peer.send_message(Reply(RequestId(b'stat', name), NotFound()))

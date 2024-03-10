@@ -486,6 +486,31 @@ def get_leaves(commands):
             commands.extend(cmd.inputs)
     return all_commands
 
+R = TypeVar('R')
+
+def filter_commands(commands: Iterable[InertCommand],
+                    filt: Callable[[InertCommand], tuple[Iterable[R], Iterable[InertCommand]]]
+                    ) -> list[R]:
+    """
+    Functional helper to recursively apply to a list of commands a function that
+    may fulfill them and generate new commands to filter
+
+    Args:
+        commands: list of command to filter
+        filt: filter function that takes a command and return two lists of
+            objects, the first final objects that should not be filtered any
+            more, the other new commands that need recursive filtering.
+    """
+    commands = list(commands)
+    commands.reverse() # So that we .pop() in order
+    filtered: list[R] = []
+    while commands:
+        cmd = commands.pop()
+        cur_filtered, cur_tofilter = filt(cmd)
+        filtered.extend(cur_filtered)
+        commands.extend(cur_tofilter)
+    return filtered
+
 # End of machinery and start of app-specific types and logic
 # ==========================================================
 # To be cut into two modules
