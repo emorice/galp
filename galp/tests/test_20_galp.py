@@ -122,13 +122,9 @@ async def assert_cache(clients, task=galp.steps.galp_hello(),
 
     assert ans1 == ans2 == [expected]
 
-    # May be more that 1 since drop-n-retry was adopted
-    assert client1.protocol.submitted_count[task.name] >= 1
+    assert client1.protocol.submitted_count[task.name] == 1
     # Should be 0 since STAT commands were introduced
     assert client2.protocol.submitted_count[task.name] == 0
-
-    assert client1.protocol.run_count[task.name] == 1
-    assert client2.protocol.run_count[task.name] == 0
 
 async def test_mem_cache(client_pair):
     """

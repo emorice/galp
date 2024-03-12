@@ -243,15 +243,9 @@ class BrokerProtocol:
         # Commands
         self.script = cm.Script()
 
-        # Should be phased out, currently used to prevent re-sending a submit
-        # after receiving a DOING notification
-        self._started : defaultdict[TaskName, bool] = defaultdict(bool)
-
-        # Public attributes: counters for the number of SUBMITs sent and DOING
-        # received for each task
+        # Public attribute: counter for the number of SUBMITs for each task
         # Used for reporting and testing cache behavior
         self.submitted_count : defaultdict[TaskName, int] = defaultdict(int)
-        self.run_count : defaultdict[TaskName, int] = defaultdict(int)
 
         # Default resources
         self.resources = gtt.ResourceClaim(cpus=cpus_per_task)
@@ -266,7 +260,6 @@ class BrokerProtocol:
         match command:
             case cm.Submit():
                 name = command.task_def.name
-                assert not self._started[name]
                 self.submitted_count[name] += 1
                 sub = gm.Submit(task_def=command.task_def,
                                 resources=self.get_resources(command.task_def))
@@ -288,17 +281,12 @@ class BrokerProtocol:
     # Protocol callbacks
     # ==================
 
-    def on_submit_reply(self, sub_command, msg: gr.Done | gr.Failed | gr.Doing
+    def on_submit_reply(self, sub_command, msg: gr.Done | gr.Failed
             ) -> list[cm.InertCommand]:
         """
         Handle submit replies
         """
-        name = sub_command.name
         match msg:
-            case gr.Doing():
-                self.run_count[name] += 1
-                self._started[name] = True
-                return []
             case gr.Done():
                 return sub_command.done(msg.result)
             case gr.Failed():

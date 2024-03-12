@@ -169,17 +169,13 @@ class WorkerProtocol:
                     gr.Failed(task_def=task_def)
                     )]
 
-        # If not in cache, resolve metadata and run the task
-        replies : list[list[bytes]] = [write_reply(gr.Doing())]
-
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        replies.extend(self.new_commands_to_replies(write,
+        return self.new_commands_to_replies(write,
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
             self.worker.schedule_task(write_reply, sub)
-            ))
-        return replies
+            )
 
     def new_commands_to_replies(self, write: Writer[gm.Message], commands: list[cm.InertCommand]
             ) -> list[TransportMessage]:

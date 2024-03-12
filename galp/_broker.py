@@ -324,8 +324,7 @@ class CommonProtocol:
         replies = []
         # Free resources for all messages indicating end of task
         if isinstance(msg, gm.Reply):
-            if not isinstance(msg.value, gr.Doing):
-                replies = self.reallocate(sessions.origin)
+            replies = self.reallocate(sessions.origin)
         # Forward as-is.
         logging.debug('Forwarding %s', msg.__class__.__name__)
         return replies + [sessions.dest.reply_from(sessions.origin)(msg)]

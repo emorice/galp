@@ -21,12 +21,6 @@ class ReplyValue(MessageType, key='_rvalue'):
     """
 
 @dataclass(frozen=True)
-class Doing(ReplyValue, key='doing'):
-    """
-    A message signaling that a task has been allocated or started
-    """
-
-@dataclass(frozen=True)
 class Done(ReplyValue, key='done'):
     """
     A message signaling that a task has been succesful run
@@ -47,7 +41,7 @@ class Failed(ReplyValue, key='failed'):
     """
     task_def: CoreTaskDef
 
-SubmitReplyValue = Doing | Done | Failed
+SubmitReplyValue = Done | Failed
 
 @dataclass(frozen=True)
 class Found(ReplyValue, key='found'):

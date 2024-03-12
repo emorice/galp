@@ -15,7 +15,7 @@ import galp.task_types as gtt
 from galp.protocol import make_stack
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.net.core.types import Reply, RequestId, Submit, Stat, NextRequest
-from galp.net.requests.types import Doing, NotFound
+from galp.net.requests.types import NotFound
 
 # pylint: disable=redefined-outer-name
 
@@ -139,7 +139,6 @@ async def test_unique_submission(make_peer_client):
             await peer.recv_message()
             logging.info('Mock processing')
             await peer.send_message(NextRequest())
-            await peer.send_message(Reply(RequestId(b'submit', task.name), Doing())) # pylint: disable=no-member
 
             # We should not receive any further message, at least until we add status
             # update to the protocol
