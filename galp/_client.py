@@ -20,7 +20,6 @@ import galp.commands as cm
 import galp.task_types as gtt
 
 from galp.result import Ok, Error
-from galp import async_utils
 from galp.cache import CacheStack
 from galp.net_store import handle_get, on_get_reply, on_stat_reply
 from galp.req_rep import handle_reply
@@ -68,8 +67,7 @@ class Client:
                         'STAT': on_stat_reply,
                         'SUBMIT': self.protocol.on_submit_reply,
                         })
-                    self.protocol.schedule_new(news)
-                    return []
+                    return self.protocol.schedule_new(news)
                 case gm.NextRequest():
                     # FIXME: simplify queue
                     command = self.command_queue.on_next_request()
@@ -83,8 +81,9 @@ class Client:
                 case _:
                     return Error(f'Unexpected {msg}')
         self.stack = make_stack(on_message, name='BK')
+        self.command_queue = CommandQueue()
         self.protocol = BrokerProtocol(
-                schedule=self.schedule, # callback to add tasks to the scheduling queue
+                command_queue=self.command_queue,
                 write_local=self.stack.write_local,
                 cpus_per_task=cpus_per_task or 1,
                 store=self.store
@@ -94,37 +93,6 @@ class Client:
             # pylint: disable=no-member # False positive
             endpoint=endpoint, socket_type=zmq.DEALER
             )
-
-        # Request queue
-        self.command_queue = CommandQueue()
-        self.new_command = asyncio.Event()
-
-    async def process_scheduled(self) -> None:
-        """
-        Send submit/get requests from the queue.
-
-        Receives information from nowhere but the queue, so has to be cancelled
-        externally.
-        """
-        while True:
-            messages = send_queue(self.protocol, self.command_queue)
-            self.new_command.clear()
-            await self.transport.send_messages(messages)
-
-            logging.debug('SCHED: No ready command, waiting forever')
-            await self.new_command.wait()
-
-    def schedule(self, command: cm.InertCommand) -> None:
-        """
-        Add a task to the scheduling queue.
-
-        This asks the processing queue to consider the task at a later point to
-        submit or collect it depending on its state.
-        """
-
-        logging.debug("Scheduling %s %s", *command.key)
-        self.command_queue.enqueue(command)
-        self.new_command.set()
 
     async def gather(self, *tasks, return_exceptions: bool = False, timeout=None,
             dry_run: bool = False):
@@ -227,14 +195,10 @@ class Client:
 
         try:
             _, cmds = script.callback(collect, _end)
-            cmds = cm.filter_commands(cmds, self.protocol.filter_local_get)
-            for command in cmds:
-                self.schedule(command)
-
-            await async_utils.run(
-                self.process_scheduled(),
-                self.transport.listen_reply_loop()
-                )
+            await self.transport.send_messages(
+                    self.protocol.schedule_new(cmds)
+                    )
+            await self.transport.listen_reply_loop()
         except ProtocolEndException:
             pass
         # Issue 84: this work because End is only raised after collect is done,
@@ -270,11 +234,11 @@ class BrokerProtocol:
     """
     Main logic of the interaction of a client with a broker
     """
-    def __init__(self, schedule: Callable[[cm.InertCommand], None],
+    def __init__(self, command_queue: CommandQueue,
             write_local: Callable[[gm.Message], TransportMessage],
             cpus_per_task: int, store: CacheStack):
         self.write_local = write_local
-        self.schedule = schedule
+        self.command_queue = command_queue
         self.store = store
         # Commands
         self.script = cm.Script()
@@ -365,13 +329,14 @@ class BrokerProtocol:
         return [], self.script.commands['GET', name].done(res)
 
     def schedule_new(self, commands: Iterable[cm.InertCommand]
-            ) -> None:
+            ) -> list[TransportMessage]:
         """
         Transfer the command queue to the scheduler.
         """
         commands = cm.filter_commands(commands, self.filter_local_get)
         for command in commands:
-            self.schedule(command)
+            self.command_queue.enqueue(command)
+        return send_queue(self, self.command_queue)
 
 def send_queue(protocol: BrokerProtocol, command_queue: CommandQueue
                ) -> list[TransportMessage]:
