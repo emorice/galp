@@ -7,14 +7,12 @@ import logging
 
 from typing import Iterable
 
-import galp.commands as cm
 from galp.net.core.types import Get, Stat, Message
 from galp.net.core.dump import Writer
 from galp.net.requests.types import NotFound, Found, Put, StatDone, GetNotFound
 from galp.net.core.dump import add_request_id
 from galp.cache import CacheStack, StoreReadError
 from galp.protocol import TransportMessage
-from galp.result import Error
 
 def handle_get(write: Writer[Message], msg: Get, store: CacheStack
         ) -> Iterable[TransportMessage]:
@@ -83,22 +81,3 @@ def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:
     # Case 4: nothing
     logging.info('STAT: NOT FOUND %s', msg.name)
     return NotFound()
-
-# Reply adapters
-# ==============
-# Probably not needed on the long run
-
-def on_stat_reply(stat_command, msg: Found | StatDone | NotFound) -> list[cm.InertCommand]:
-    """Handle stat replies"""
-    return stat_command.done(msg)
-
-def on_get_reply(get_command, msg: Put | GetNotFound) -> list[cm.InertCommand]:
-    """
-    Handle get replies
-    """
-    match msg:
-        case Put():
-            return get_command.done(msg)
-        case GetNotFound():
-            logging.error('TASK RESULT FETCH FAILED: %s', get_command.name)
-            return get_command.failed(Error('NOTFOUND'))

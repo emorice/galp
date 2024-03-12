@@ -37,7 +37,7 @@ from galp.query import query
 from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
-from galp.net_store import handle_get, handle_stat, on_get_reply
+from galp.net_store import handle_get, handle_stat
 from galp.net.core.dump import add_request_id, Writer
 from galp.req_rep import handle_reply
 
@@ -234,8 +234,7 @@ class Worker:
                 case gm.Exec():
                     return protocol.on_routed_exec(write, msg)
                 case gm.Reply():
-                    news = handle_reply(msg, protocol.script,
-                            {'GET': on_get_reply})
+                    news = handle_reply(msg, protocol.script)
                     return protocol.new_commands_to_replies(write, news)
                 case _:
                     return Error(f'Unexpected {msg}')

@@ -5,7 +5,6 @@ In contrast with a worker which is written as a standalone process, a client is 
 object that can be created and used as part of a larger program.
 """
 
-import logging
 import asyncio
 
 from collections import defaultdict
@@ -21,7 +20,7 @@ import galp.task_types as gtt
 
 from galp.result import Ok, Error
 from galp.cache import CacheStack
-from galp.net_store import handle_get, on_get_reply, on_stat_reply
+from galp.net_store import handle_get
 from galp.req_rep import handle_reply
 from galp.protocol import (ProtocolEndException, make_stack,
     TransportMessage, Writer)
@@ -62,21 +61,13 @@ class Client:
                 case gm.Get():
                     return handle_get(write, msg, self.store)
                 case gm.Reply():
-                    news = handle_reply(msg, self.protocol.script, {
-                        'GET': on_get_reply,
-                        'STAT': on_stat_reply,
-                        'SUBMIT': self.protocol.on_submit_reply,
-                        })
+                    news = handle_reply(msg, self.protocol.script)
                     return self.protocol.schedule_new(news)
                 case gm.NextRequest():
-                    # FIXME: simplify queue
                     command = self.command_queue.on_next_request()
                     if command is None:
                         return []
-                    # FIXME: indirect access
                     message = self.protocol.write_next(command)
-                    # FIXME: requeue to avoid gc
-                    self.command_queue.requeue(command)
                     return [message]
                 case _:
                     return Error(f'Unexpected {msg}')
@@ -278,25 +269,6 @@ class BrokerProtocol:
         _ = task_def # to be used later
         return self.resources
 
-    # Protocol callbacks
-    # ==================
-
-    def on_submit_reply(self, sub_command, msg: gr.Done | gr.Failed
-            ) -> list[cm.InertCommand]:
-        """
-        Handle submit replies
-        """
-        match msg:
-            case gr.Done():
-                return sub_command.done(msg.result)
-            case gr.Failed():
-                task_def = msg.task_def
-                err_msg = f'Failed to execute task {task_def}, check worker logs'
-                logging.error('TASK FAILED: %s', err_msg)
-
-                # Mark fetch command as failed if pending
-                return sub_command.failed(Error(err_msg))
-
     def filter_local_get(self, command: cm.InertCommand
                          ) -> tuple[list[cm.InertCommand], list[cm.InertCommand]]:
         """
@@ -319,23 +291,8 @@ class BrokerProtocol:
     def schedule_new(self, commands: Iterable[cm.InertCommand]
             ) -> list[TransportMessage]:
         """
-        Transfer the command queue to the scheduler.
+        Fulfill, queue, select and covert commands to be sent
         """
         commands = cm.filter_commands(commands, self.filter_local_get)
-        for command in commands:
-            self.command_queue.enqueue(command)
-        return send_queue(self, self.command_queue)
-
-def send_queue(protocol: BrokerProtocol, command_queue: CommandQueue
-               ) -> list[TransportMessage]:
-    """
-    Check command queue for sendable messages
-    """
-    messages = []
-    while (next_command := command_queue.pop()):
-        logging.debug('SCHED: Ready command %s %s', *next_command.key)
-        messages.append(protocol.write_next(next_command))
-        command_queue.requeue(next_command)
-        logging.debug('SCHED: Sent message, requeuing %s %s',
-                *next_command.key)
-    return messages
+        commands = self.command_queue.enqueue(commands)
+        return [self.write_next(cmd) for cmd in commands]

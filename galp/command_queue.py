@@ -1,6 +1,7 @@
 """
 Queue of active commands
 """
+from typing import Iterable
 from collections import deque
 
 import galp.commands as cm
@@ -10,53 +11,47 @@ class CommandQueue:
     A queue of active commands that need periodic re-issuing
     """
     def __init__(self) -> None:
-        self.asap_queue : deque[cm.InertCommand] = deque()
-        self.retry_queue : deque[cm.InertCommand] = deque()
-        self.can_send: bool = True
-
-    def pop(self) -> cm.InertCommand | None:
-        """
-        Returns the next command to send, if any, or the timepoint at which to
-        try again
-        """
-        # If remote is blocking, don't send anything
-        if not self.can_send:
-            return None
-
-        if self.asap_queue:
-            self.can_send = False
-            return self.asap_queue.popleft()
-
-        # FIXME: with retry disabled, we're leaking memory because we never empty
-        # retry queue
-        # if self.retry_queue:
-        #     next_cmd, next_time = self.retry_queue[0]
-        #     now = time.time()
-        #     if next_time > now:
-        #         # Not time yet
-        #         return None, next_time
-        #     self.retry_queue.popleft()
-        #     return next_cmd, None
-
-        # Everything's empty
-        return None
+        self._queue : deque[cm.InertCommand] = deque()
+        self._can_send: bool = True
 
     def on_next_request(self) -> cm.InertCommand | None:
         """Returns next command to send, no matter the time left"""
-        if self.asap_queue:
-            return self.asap_queue.popleft()
-        # If we fail a pop, remember we can send the next one right through
-        self.can_send = True
+        if self._queue:
+            return self._queue.popleft()
+        # If we fail a pop on next request, remember we can send the next one
+        # right through
+        self._can_send = True
         return None
 
-    def enqueue(self, command: cm.InertCommand):
+    def enqueue(self, commands: Iterable[cm.InertCommand]) -> list[cm.InertCommand]:
         """
-        Adds a command to the end of the ASAP queue
-        """
-        self.asap_queue.append(command)
+        Adds a command to the end of queue, and return any command ready to be
+        sent.
 
-    def requeue(self, command: cm.InertCommand):
+        Typically, the returned list is a subset of the input limited by buffer
+        capacity.
         """
-        Adds a command to the end of the retry queue
+        for command in commands:
+            self._queue.append(command)
+        return self._get_ready_commands()
+
+    def _pop(self) -> cm.InertCommand | None:
         """
-        self.retry_queue.append(command)
+        Returns the next command to send, if any.
+        """
+        # If remote is blocking, don't send anything
+        if not self._can_send:
+            return None
+
+        if self._queue:
+            self._can_send = False
+            return self._queue.popleft()
+        return None
+
+    def _get_ready_commands(self) -> list[cm.InertCommand]:
+        """
+        Return the list of all commands that we're allowed to send
+        """
+        # For now it can only be one
+        cmd = self._pop()
+        return [] if cmd is None else [cmd]
