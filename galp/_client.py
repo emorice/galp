@@ -25,7 +25,7 @@ from galp.req_rep import handle_reply
 from galp.protocol import (ProtocolEndException, make_stack,
     TransportMessage, Writer)
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.command_queue import CommandQueue
+from galp.control_queue import ControlQueue
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef,
     ensure_task_node, TaskSerializer)
@@ -64,7 +64,7 @@ class Client:
                     news = handle_reply(msg, self.protocol.script)
                     return self.protocol.schedule_new(news)
                 case gm.NextRequest():
-                    command = self.command_queue.on_next_request()
+                    command = self.command_queue.on_next_item()
                     if command is None:
                         return []
                     message = self.protocol.write_next(command)
@@ -72,7 +72,7 @@ class Client:
                 case _:
                     return Error(f'Unexpected {msg}')
         self.stack = make_stack(on_message, name='BK')
-        self.command_queue = CommandQueue()
+        self.command_queue: ControlQueue[cm.InertCommand] = ControlQueue()
         self.protocol = BrokerProtocol(
                 command_queue=self.command_queue,
                 write_local=self.stack.write_local,
@@ -225,7 +225,7 @@ class BrokerProtocol:
     """
     Main logic of the interaction of a client with a broker
     """
-    def __init__(self, command_queue: CommandQueue,
+    def __init__(self, command_queue: ControlQueue[cm.InertCommand],
             write_local: Callable[[gm.Message], TransportMessage],
             cpus_per_task: int, store: CacheStack):
         self.write_local = write_local
@@ -294,5 +294,5 @@ class BrokerProtocol:
         Fulfill, queue, select and covert commands to be sent
         """
         commands = cm.filter_commands(commands, self.filter_local_get)
-        commands = self.command_queue.enqueue(commands)
+        commands = self.command_queue.push_through(commands)
         return [self.write_next(cmd) for cmd in commands]
