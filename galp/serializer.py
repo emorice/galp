@@ -176,15 +176,15 @@ def load_model(model_type: type[T], payload: bytes) -> Result[T, LoadError]:
     # "unpack may raise exception other than subclass of UnpackException.
     # If you want to catch all error, catch Exception instead.:
     except Exception: # pylint: disable=broad-except
-        err = 'Invalid msgpack message'
+        err = f'Invalid msgpack message: {payload!r}'
         logging.exception(err)
+        logging.error('%s', LoadError(err))
         return LoadError(err)
 
     try:
         return Ok(TypeAdapter(model_type).validate_python(doc))
     except ValidationError:
         err = 'Invalid model data'
-        logging.exception(err)
         return LoadError(err)
 
 # Private serializer helpers

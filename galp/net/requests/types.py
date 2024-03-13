@@ -5,6 +5,7 @@ Models for Galp messages
 from typing import Any, Callable
 from dataclasses import dataclass
 
+from galp.result import Error
 from galp.net.base.types import MessageType
 from galp.task_types import (
         TaskDef, CoreTaskDef, TaskRef, FlatResultRef
@@ -75,10 +76,6 @@ class StatDone(ReplyValue, key='statdone'):
 StatReplyValue = Found | NotFound | StatDone
 
 @dataclass(frozen=True)
-class GetNotFound(ReplyValue, key='getnotfound'):
-    """A message indicating that no trace of a task was found"""
-
-@dataclass(frozen=True)
 class Put(ReplyValue, key='put'):
     """
     A message sending a serialized task result
@@ -99,4 +96,8 @@ class Put(ReplyValue, key='put'):
         """
         return self._loads(self.data, children)
 
-GetReplyValue = GetNotFound | Put
+# All-purpose error
+# =================
+
+class RemoteError(Error[str]):
+    """Remote encountered an error when processing"""

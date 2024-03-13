@@ -6,6 +6,7 @@ object that can be created and used as part of a larger program.
 """
 
 import asyncio
+import logging
 
 from collections import defaultdict
 from typing import Callable, Iterable, Any
@@ -189,7 +190,9 @@ class Client:
             await self.transport.send_messages(
                     self.protocol.schedule_new(cmds)
                     )
-            await self.transport.listen_reply_loop()
+            err = await self.transport.listen_reply_loop()
+            if err is not None:
+                logging.error('Communication error: %s', err)
         except ProtocolEndException:
             pass
         # Issue 84: this work because End is only raised after collect is done,

@@ -14,7 +14,7 @@ import logging
 import argparse
 import resource
 
-from typing import Awaitable, Iterable
+from typing import Awaitable, Iterable, TypeAlias
 from dataclasses import dataclass
 
 import psutil
@@ -27,7 +27,7 @@ import galp.net.core.types as gm
 import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
-from galp.result import Result, Error
+from galp.result import Result, Ok, Error
 
 from galp.config import load_config
 from galp.cache import StoreReadError, CacheStack
@@ -161,12 +161,12 @@ class WorkerProtocol:
                 result_ref = self.store.get_children(name)
                 logging.info('SUBMIT: Cache HIT: %s', name)
                 return [write_reply(
-                    gr.Done(result=result_ref)
+                    Ok(gr.Done(result=result_ref))
                     )]
             except StoreReadError:
                 logging.exception('SUBMIT: Failed cache hit: %s', name)
                 return [write_reply(
-                    gr.Failed(task_def=task_def)
+                    Ok(gr.Failed(task_def=task_def))
                     )]
 
         # Process the list of GETs. This checks if they're in store,
@@ -199,6 +199,8 @@ class WorkerProtocol:
                 return [write(gm.Get(name=name))], []
         return cm.filter_commands(commands, _filter_local)
 
+SubReplyWriter: TypeAlias = Writer[Result[gr.SubmitReplyValue, gr.RemoteError]]
+
 @dataclass
 class JobResult:
     """
@@ -209,7 +211,7 @@ class JobResult:
         result: None iff the task has failed, other wise a reference to the
             stored result.
     """
-    write_reply: Writer[gr.SubmitReplyValue]
+    write_reply: SubReplyWriter
     submit: gm.Submit
     result: gtt.FlatResultRef | None
 
@@ -276,11 +278,11 @@ class Worker:
             else:
                 reply = gr.Failed(task_def=task_def)
             await self.transport.send_raw(
-                    job.write_reply(reply)
+                    job.write_reply(Ok(reply))
                     )
 
-    def schedule_task(self, write_reply: Writer[gr.SubmitReplyValue], msg: gm.Submit
-            ) -> list[cm.InertCommand]:
+    def schedule_task(self, write_reply: SubReplyWriter, msg: gm.Submit
+                      ) -> list[cm.InertCommand]:
         """
         Callback to schedule a task for execution.
         """
@@ -342,7 +344,7 @@ class Worker:
 
         return args, kwargs
 
-    async def run_submission(self, write_reply: Writer[gr.SubmitReplyValue], msg: gm.Submit,
+    async def run_submission(self, write_reply: SubReplyWriter, msg: gm.Submit,
                              inputs: Result[list, Error]) -> JobResult:
         """
         Actually run the task

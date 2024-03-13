@@ -7,9 +7,10 @@ import logging
 
 from typing import Iterable
 
+from galp.result import Ok
 from galp.net.core.types import Get, Stat, Message
 from galp.net.core.dump import Writer
-from galp.net.requests.types import NotFound, Found, Put, StatDone, GetNotFound
+from galp.net.requests.types import NotFound, Found, Put, StatDone, RemoteError
 from galp.net.core.dump import add_request_id
 from galp.cache import CacheStack, StoreReadError
 from galp.protocol import TransportMessage
@@ -25,12 +26,14 @@ def handle_get(write: Writer[Message], msg: Get, store: CacheStack
     try:
         res = Put(*store.get_serial(name))
         logging.info('GET: Cache HIT: %s', name)
-        return [write_reply(res)]
+        return [write_reply(Ok(res))]
     except KeyError:
-        logging.info('GET: Cache MISS: %s', name)
+        err = 'Object not found in store'
+        logging.error('GET: %s: %s', err, name)
     except StoreReadError:
-        logging.exception('GET: Cache ERROR: %s', name)
-    return [write_reply(GetNotFound())]
+        err = 'Error when trying to read object from store, see worker logs'
+        logging.exception('GET: %s: %s', err, name)
+    return [write_reply(RemoteError(err))]
 
 def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
         ) -> Iterable[TransportMessage]:
@@ -39,10 +42,10 @@ def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
     """
     write_reply = add_request_id(write, msg)
     try:
-        return [write_reply(_on_stat_io_unsafe(store, msg))]
+        return [write_reply(Ok(_on_stat_io_unsafe(store, msg)))]
     except StoreReadError:
         logging.exception('STAT: ERROR %s', msg.name)
-    return [write_reply(NotFound())]
+    return [write_reply(Ok(NotFound()))]
 
 def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:
     """

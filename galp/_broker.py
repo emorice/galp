@@ -11,7 +11,7 @@ from functools import singledispatchmethod
 
 import zmq
 
-from galp.result import Error
+from galp.result import Error, Ok
 import galp.net.core.types as gm
 from galp.net.core.dump import add_request_id, Writer
 from galp.net.routing.dump import SessionUid
@@ -184,12 +184,14 @@ class CommonProtocol:
 
         match orig_msg:
             case gm.Get():
-                return [add_request_id(write_client, orig_msg)(gr.GetNotFound())]
+                return [add_request_id(write_client, orig_msg)(
+                    gr.RemoteError('Worker died when processing request')
+                    )]
             case gm.Stat():
-                return [add_request_id(write_client, orig_msg)(gr.NotFound())]
+                return [add_request_id(write_client, orig_msg)(Ok(gr.NotFound()))]
             case gm.Exec():
                 return [add_request_id(write_client, orig_msg.submit)(
-                    gr.Failed(task_def=orig_msg.submit.task_def)
+                    Ok(gr.Failed(task_def=orig_msg.submit.task_def))
                     )]
         logging.error(
             'Worker died while handling %s, no error propagation', alloc

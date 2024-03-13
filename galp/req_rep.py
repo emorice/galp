@@ -24,14 +24,20 @@ def handle_reply(msg: Reply, script: Script) -> list[InertCommand]:
     if not command:
         logging.error('Dropping answer to missing promise %s', promise_id)
         return []
+    # Handle remote failures
+    maybe_value = msg.value
+    if isinstance(maybe_value, gr.RemoteError):
+        command.failed(f'RemoteError: {maybe_value.error}')
+        return []
+    value = maybe_value.value
     # Try dispatch based on request verb:
     match verb:
         case 'STAT':
-            return _on_stat_reply(command, msg.value)
+            return _on_stat_reply(command, value)
         case 'GET':
-            return _on_get_reply(command, msg.value)
+            return _on_get_reply(command, value)
         case 'SUBMIT':
-            return _on_submit_reply(command, msg.value)
+            return _on_submit_reply(command, value)
     logging.error('No handler for reply to %s', verb)
     return []
 
@@ -43,16 +49,11 @@ def _on_stat_reply(stat_command, msg: gr.Found | gr.StatDone | gr.NotFound) -> l
     """Handle stat replies"""
     return stat_command.done(msg)
 
-def _on_get_reply(get_command, msg: gr.Put | gr.GetNotFound) -> list[InertCommand]:
+def _on_get_reply(get_command, msg: gr.Put) -> list[InertCommand]:
     """
     Handle get replies
     """
-    match msg:
-        case gr.Put():
-            return get_command.done(msg)
-        case gr.GetNotFound():
-            logging.error('TASK RESULT FETCH FAILED: %s', get_command.name)
-            return get_command.failed(Error('NOTFOUND'))
+    return get_command.done(msg)
 
 def _on_submit_reply(sub_command, msg: gr.Done | gr.Failed) -> list[InertCommand]:
     """
