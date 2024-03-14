@@ -6,8 +6,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
-from typing import (Any, Literal, Union, Annotated, TypeAlias, TypeVar, Generic,
-        Iterable)
+from typing import (Any, Literal, Union, Annotated, TypeAlias, TypeVar,
+        Iterable, Sequence)
 
 import msgpack # type: ignore[import] # Issue #85
 from pydantic_core import CoreSchema, core_schema
@@ -403,31 +403,28 @@ def make_child_task(parent: TaskNode, index: int) -> TaskNode:
             task_def=make_child_task_def(parent.name, index),
             dependencies=[parent]
             )
-TaskT_co = TypeVar('TaskT_co', TaskRef, Task, covariant=True)
 
 @dataclass
-class GenericResultRef(Generic[TaskT_co]):
+class ResultRef:
     """
     A reference to the sucessful result of task execution.
 
-    Not recursive, the task can have child tasks still to be executed. On the
-    other hand, child tasks must be at least registered, as shown by the
-    children field being typed as TaskRef.
-
-    This is intended to be created when a task result is commited to storage, so
-    that a result reference exists if and only if a task has been run and the
-    result stored succesfully.
-
-    We have two instances of this template: with a TaskRef, it is serializable
-    and can be included in messages. With an arbitary Task object (i.e., with
-    TaskNodes too), it is intended only for local use since we never want to
-    automatically serialize a whole task graph.
+    To be created when a task result is commited to storage, and child tasks are
+    not run yet but are somewhere defined.
     """
     name: TaskName
-    children: list[TaskT_co]
+    children: Sequence[Task]
 
-ResultRef: TypeAlias = GenericResultRef[Task]
-FlatResultRef: TypeAlias = GenericResultRef[TaskRef]
+@dataclass
+class FlatResultRef(ResultRef):
+    """
+    A reference to the sucessful result of task execution.
+
+    To be created when a task result is commited to storage, and child tasks are
+    not run yet but are remotely defined.
+    """
+    name: TaskName
+    children: Sequence[TaskRef]
 
 @dataclass
 class RecResultRef(ResultRef):

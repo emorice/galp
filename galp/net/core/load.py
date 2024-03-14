@@ -7,10 +7,11 @@ from galp.serialize import LoadError
 from galp.serializer import load_model
 from galp.net.base.load import LoaderDict, default_loader, UnionLoader
 from galp.net.requests.load import Put, put_loader
+from galp.task_types import FlatResultRef
 
-from .types import Message, Reply, RequestId, ReplyValue, RemoteError
+from .types import Message, Reply, RequestId, RemoteError
 
-def _get_reply_value_type(request_id: RequestId) -> type[ReplyValue]:
+def _get_reply_value_type(request_id: RequestId) -> type:
     """
     Magic to extract type of reply value associated with request key
 
@@ -30,8 +31,15 @@ def _remote_error_loader(request_id: RequestId, frames: list[bytes]) -> Result[R
 
 def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Result[Reply, LoadError]:
     rep_type = _get_reply_value_type(request_id)
+    loaded: Result
     if rep_type is Put:
         loaded = put_loader(frames)
+    elif rep_type is FlatResultRef:
+        match frames:
+            case [frame]:
+                loaded = load_model(FlatResultRef, frame)
+            case _:
+                loaded = LoadError('Wrong number of frames')
     else:
         loaded = UnionLoader[rep_type].load(frames) # type: ignore
     return loaded.then(lambda value: Ok(Reply(request_id, Ok(value))))

@@ -7,7 +7,7 @@ of the serialization interface.
 
 from __future__ import annotations
 
-from typing import Any, List, Callable, TypeVar
+from typing import Any, Callable, TypeVar, Sequence
 import logging
 
 import msgpack # type: ignore[import] # Issue 85
@@ -33,7 +33,7 @@ class Serializer(BaseSerializer[Nat, Ref]):
     """
 
     @classmethod
-    def loads(cls, data: bytes, native_children: List[Any]
+    def loads(cls, data: bytes, native_children: Sequence[Any]
             ) -> Result[Any, LoadError]:
         """
         Unserialize the data in the payload, possibly using metadata from the

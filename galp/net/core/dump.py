@@ -9,7 +9,7 @@ from galp.result import Result
 from galp.serializer import dump_model
 from galp.net.requests.dump import dump_reply_value
 from galp.net.base.dump import Writer
-from .types import Message, Reply, ReplyValue, get_request_id, BaseRequest, RemoteError
+from .types import Message, Reply, get_request_id, BaseRequest, RemoteError
 
 @singledispatch
 def _dump_message_data(message: Message) -> list[bytes]:
@@ -27,7 +27,7 @@ def dump_message(message: Message) -> list[bytes]:
     """
     return [message.message_get_key(), *_dump_message_data(message)]
 
-V = TypeVar('V', bound=ReplyValue)
+V = TypeVar('V')
 
 def add_request_id(write: Writer[Message], request: BaseRequest[V]
                    ) -> Writer[Result[V, RemoteError]]:

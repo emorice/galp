@@ -190,9 +190,11 @@ class CommonProtocol:
             case gm.Stat():
                 return [add_request_id(write_client, orig_msg)(Ok(gr.NotFound()))]
             case gm.Exec():
-                return [add_request_id(write_client, orig_msg.submit)(
-                    Ok(gr.Failed(task_def=orig_msg.submit.task_def))
-                    )]
+                task_def = orig_msg.submit.task_def
+                reply = gr.RemoteError(
+                        f'Failed to execute task {task_def}: worker died'
+                        )
+                return [add_request_id(write_client, orig_msg.submit)(reply)]
         logging.error(
             'Worker died while handling %s, no error propagation', alloc
             )

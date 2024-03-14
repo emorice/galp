@@ -2,7 +2,7 @@
 Caching utils
 """
 
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable, TypeAlias, Sequence
 
 import diskcache # type: ignore[import] # Issue 85
 import msgpack # type: ignore[import] # Issue 85
@@ -20,8 +20,8 @@ class StoreReadError(Exception):
     store raises KeyError instead).
     """
 
-Serialized: TypeAlias = tuple[bytes, list[TaskRef],
-        Callable[[bytes, list[Any]], Ok | LoadError]]
+Serialized: TypeAlias = tuple[bytes, Sequence[TaskRef],
+        Callable[[bytes, Sequence[Any]], Ok | LoadError]]
 """
 Tuple representing the result of a serialization: a buffer with the data, a list
 of object referenced inside, and a function that can be used to re-assemble the
@@ -175,7 +175,7 @@ class CacheStack():
 
         return gtt.FlatResultRef(name, children)
 
-    def put_serial(self, name: TaskName, serialized: tuple[bytes, list[TaskRef]]):
+    def put_serial(self, name: TaskName, serialized: tuple[bytes, Sequence[TaskRef]]):
         """
         Simply pass the underlying object to the underlying cold cache.
 

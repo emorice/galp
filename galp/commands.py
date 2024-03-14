@@ -6,7 +6,7 @@ import sys
 import time
 import logging
 from weakref import WeakSet, WeakValueDictionary
-from typing import TypeVar, Generic, Callable, Any, Iterable, TypeAlias
+from typing import TypeVar, Generic, Callable, Any, Iterable, TypeAlias, Sequence
 from dataclasses import dataclass
 from itertools import chain
 from functools import wraps
@@ -552,7 +552,7 @@ class Put(NamedPrimitive[gtt.ResultRef, Error]):
         super().__init__(name)
         self.data = data
 
-def safe_deserialize(res: gr.Put, children: list):
+def safe_deserialize(res: gr.Put, children: Sequence):
     """
     Wrap serializer in a guard for invalid payloads
     """

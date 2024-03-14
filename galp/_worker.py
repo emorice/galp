@@ -160,14 +160,11 @@ class WorkerProtocol:
             try:
                 result_ref = self.store.get_children(name)
                 logging.info('SUBMIT: Cache HIT: %s', name)
-                return [write_reply(
-                    Ok(gr.Done(result=result_ref))
-                    )]
+                return [write_reply(Ok(result_ref))]
             except StoreReadError:
-                logging.exception('SUBMIT: Failed cache hit: %s', name)
-                return [write_reply(
-                    Ok(gr.Failed(task_def=task_def))
-                    )]
+                err = f'Failed cache hit: {name}'
+                logging.exception(err)
+                return [write_reply(gr.RemoteError(err))]
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
@@ -199,7 +196,7 @@ class WorkerProtocol:
                 return [write(gm.Get(name=name))], []
         return cm.filter_commands(commands, _filter_local)
 
-SubReplyWriter: TypeAlias = Writer[Result[gr.SubmitReplyValue, gr.RemoteError]]
+SubReplyWriter: TypeAlias = Writer[Result[gtt.FlatResultRef, gr.RemoteError]]
 
 @dataclass
 class JobResult:
@@ -268,18 +265,18 @@ class Worker:
         """
         Loop that waits for tasks to finish to send back done/failed messages
         """
-        reply: gr.Failed | gr.Done
+        reply: gr.RemoteError | Ok[gtt.FlatResultRef]
         while True:
             task = await self.galp_jobs.get()
             job = await task
             task_def = job.submit.task_def
             if job.result is not None:
-                reply = gr.Done(result=job.result)
+                reply = Ok(job.result)
             else:
-                reply = gr.Failed(task_def=task_def)
-            await self.transport.send_raw(
-                    job.write_reply(Ok(reply))
-                    )
+                reply = gr.RemoteError(
+                        f'Failed to execute task {task_def}, check worker logs'
+                        )
+            await self.transport.send_raw(job.write_reply(reply))
 
     def schedule_task(self, write_reply: SubReplyWriter, msg: gm.Submit
                       ) -> list[cm.InertCommand]:

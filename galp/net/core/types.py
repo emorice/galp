@@ -15,7 +15,7 @@ import galp.net.requests.types as gr
 
 from galp.result import Result
 from galp.net.base.types import MessageType
-from galp.net.requests.types import ReplyValue, RemoteError
+from galp.net.requests.types import RemoteError
 
 # Messages
 # ========
@@ -74,7 +74,7 @@ class PoolReady(MessageType, key='poolReady'):
 # Requests
 # --------
 
-V = TypeVar('V', bound=ReplyValue)
+V = TypeVar('V')
 
 # pylint: disable=too-few-public-methods
 class BaseRequest(MessageType, Generic[V], key=None):
@@ -130,7 +130,7 @@ class Stat(BaseRequest[gr.StatReplyValue], key='stat'):
         return self.name
 
 @dataclass(frozen=True)
-class Submit(BaseRequest[gr.SubmitReplyValue], key='submit'):
+class Submit(BaseRequest[gtt.FlatResultRef], key='submit'):
     """
     A message asking for a task to be executed
 
