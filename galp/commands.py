@@ -219,7 +219,7 @@ class InertCommand(Command[OkT, ErrT]):
     # turns drops the master when the last copy gets collected
     # This is purely for memory management and should not be used for any other
     # purpose
-    master: 'PrimitiveProxy'
+    master: '_PrimitiveProxy'
 
     def _eval(self, *_):
         # Never changes by itself
@@ -256,7 +256,7 @@ class NamedPrimitive(InertCommand[OkT, ErrT]):
 
 Ok_contra = TypeVar('Ok_contra', contravariant=True)
 
-class PrimitiveProxy(Generic[Ok_contra, ErrT]):
+class _PrimitiveProxy(Generic[Ok_contra, ErrT]):
     """
     Helper class to propagate results to several logical instances of the same
     primitive
@@ -300,7 +300,7 @@ class PrimitiveProxy(Generic[Ok_contra, ErrT]):
 
 class Script:
     """
-    A collection of maker methods for Commands
+    Interface to a DAG of promises.
 
     Args:
         verbose: whether to print brief summary of command completion to stderr
@@ -309,13 +309,29 @@ class Script:
             soon as any command fails.
     """
     def __init__(self, verbose=True, keep_going: bool = False):
-        # Strong references to all pending commands
-        self.pending: set[Command] = set()
-
-        super().__init__()
-        self.commands : WeakValueDictionary[CommandKey, PrimitiveProxy] = WeakValueDictionary()
         self.verbose = verbose
         self.keep_going = keep_going
+
+        # Strong references to all pending callbacks
+        self._pending: set[Command] = set()
+        # Weak references to all primitives
+        self.commands : WeakValueDictionary[CommandKey, _PrimitiveProxy] = WeakValueDictionary()
+
+    def done(self, key: CommandKey, result: Result) -> list[InertCommand]:
+        """
+        Mark a command as done, and return new primitives.
+
+        If the command cannot be found or is already done, log a warning and
+        ignore the result.
+        """
+        cmd = self.commands.get(key)
+        if cmd is None:
+            logging.error('Dropping answer to missing promise %s', key)
+            return []
+        if not cmd.is_pending():
+            logging.error('Dropping answer to finished promise %s', key)
+            return []
+        return cmd.done(result)
 
     def collect(self, commands: list[Command[OkT, ErrT]]) -> Command[list[OkT], ErrT]:
         """
@@ -338,10 +354,10 @@ class Script:
         @wraps(callback)
         def _dereference(value: Result[InOkT, ErrT]) -> CallbackRet[OkT, ErrT]:
             ret = callback(value)
-            self.pending.remove(cb_command)
+            self._pending.remove(cb_command)
             return ret
         cb_command = DeferredCommand(Deferred(_dereference, command))
-        self.pending.add(cb_command)
+        self._pending.add(cb_command)
 
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
@@ -433,7 +449,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                 master = script.commands.get(command.key)
                 if master is None:
                     # If not create it, and add it to the new primitives to return
-                    master = PrimitiveProxy(script, command)
+                    master = _PrimitiveProxy(script, command)
                     command.master = master # strong
                     script.commands[command.key] = master # weak
                     primitives.append(command)

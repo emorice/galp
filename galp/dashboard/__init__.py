@@ -114,7 +114,7 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
             buf, children, _loads = store.get_serial(name)
             mem_store.put_serial(name, (buf, children))
         res = Put(*mem_store.get_serial(name))
-        return [], script.commands[command.key].done(Ok(res))
+        return [], script.done(command.key, Ok(res))
 
     store_literals(mem_store, [task])
 

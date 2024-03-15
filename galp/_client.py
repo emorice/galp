@@ -289,7 +289,7 @@ class BrokerProtocol:
             return [command], []
 
         # Found, mark command as done and pass on children
-        return [], self.script.commands['GET', name].done(Ok(res))
+        return [], self.script.done(command.key, Ok(res))
 
     def schedule_new(self, commands: Iterable[cm.InertCommand]
             ) -> list[TransportMessage]:
