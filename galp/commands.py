@@ -269,29 +269,19 @@ class PrimitiveProxy(Generic[Ok_contra, ErrT]):
         self.instances = WeakSet(instances)
         self.script = script
 
-    def done(self, result: Ok_contra) -> list[InertCommand]:
+    def done(self, result: Result[Ok_contra, ErrT]) -> list[InertCommand]:
         """
         Mark all instances as done
         """
-        self.val = Ok(result)
-        return self._advance_all()
-
-    def __repr__(self):
-        return f'PrimitiveProxy({repr(set(self.instances))} = {self.val})'
-
-    def failed(self, error: ErrT) -> list[InertCommand]:
-        """
-        Mark all instances as failed
-        """
-        self.val = error
-        return self._advance_all()
-
-    def _advance_all(self) -> list[InertCommand]:
+        self.val = result
         for cmd in self.instances:
             cmd.val = self.val
         return advance_all(self.script,
                 list(chain.from_iterable(cmd.outputs for cmd in self.instances))
                 )
+
+    def __repr__(self):
+        return f'PrimitiveProxy({repr(set(self.instances))} = {self.val})'
 
     def is_pending(self) -> bool:
         """

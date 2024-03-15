@@ -44,8 +44,9 @@ def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
     try:
         return [write_reply(Ok(_on_stat_io_unsafe(store, msg)))]
     except StoreReadError:
-        logging.exception('STAT: ERROR %s', msg.name)
-    return [write_reply(Ok(NotFound()))]
+        err = 'Error when trying to read object from store, see worker logs'
+        logging.exception('STAT: %s: %s', err, msg.name)
+    return [write_reply(RemoteError(err))]
 
 def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:
     """

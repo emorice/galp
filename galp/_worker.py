@@ -188,10 +188,10 @@ class WorkerProtocol:
             name = command.name
             try:
                 res = gr.Put(*self.store.get_serial(name))
-                return [], self.script.commands[command.key].done(res)
+                return [], self.script.commands[command.key].done(Ok(res))
             except StoreReadError:
                 logging.exception('In %s %s:', *command.key)
-                return [], self.script.commands[command.key].failed(Error('StoreReadError'))
+                return [], self.script.commands[command.key].done(Error('StoreReadError'))
             except KeyError:
                 return [write(gm.Get(name=name))], []
         return cm.filter_commands(commands, _filter_local)
