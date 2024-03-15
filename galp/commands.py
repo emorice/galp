@@ -543,9 +543,7 @@ class Submit(InertCommand[gtt.ResultRef, Error]):
         """Task name"""
         return self.task_def.name
 
-StatResult: TypeAlias = gr.Found | gr.StatDone | gr.NotFound
-
-class Stat(NamedPrimitive[StatResult, Error]):
+class Stat(NamedPrimitive[gr.StatReplyValue, Error]):
     """
     Get a task's metadata
     """
@@ -590,7 +588,7 @@ def sget(name: gtt.TaskName) -> Command[Any, Error]:
         .then(lambda res: safe_deserialize(res, res.children))
         )
 
-def no_not_found(stat_result: StatResult, task: gtt.Task
+def no_not_found(stat_result: gr.StatReplyValue, task: gtt.Task
                  ) -> gr.Found | gr.StatDone | Error:
     """
     Transform NotFound in Found if the task is a real object, and fails
