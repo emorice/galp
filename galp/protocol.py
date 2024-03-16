@@ -13,8 +13,6 @@ from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
         ForwardSessions)
 from galp.net.routing.load import Routed, load_routed
 from galp.writer import TransportMessage
-from galp.lower_protocol import (TransportHandler, TransportReturn,
-        handle_routing)
 from galp.result import Error
 
 # Errors and exceptions
@@ -25,6 +23,37 @@ class ProtocolEndException(Exception):
     Exception thrown by a handler to signal that no more messages are expected
     and the transport should be closed
     """
+
+# Routing-layer handlers
+# ======================
+
+TransportReturn: TypeAlias = Iterable[TransportMessage] | Error
+TransportHandler: TypeAlias = Callable[
+        [Writer[list[bytes]], list[bytes]], TransportReturn]
+"""
+Type of handler implemented by this layer and intended to be passed to the
+transport
+"""
+
+def _handle_routing(is_router: bool, session: Writer[list[bytes]], msg: Routed
+        ) -> ReplyFromSession | ForwardSessions:
+    """
+    Creates one or two sessions: one associated with the original recipient
+    (forward session), and one associated with the original sender (reply
+    session).
+
+    Args:
+        is_router: True if sending function should move a routing id in the
+            first routing segment.
+    """
+
+    reply = ReplyFromSession(session, is_router, msg.incoming)
+
+    if msg.forward:
+        forward = ReplyFromSession(session, is_router, msg.forward)
+        return ForwardSessions(origin=reply, dest=forward)
+
+    return reply
 
 # Core-layer handlers
 # ===================
@@ -76,7 +105,7 @@ def make_forward_stack(app_handler: Callable[
             ) -> TransportReturn:
         return load_routed(msg).then(
                 lambda routed: app_handler(
-                    handle_routing(router, writer, _log_message(routed, name)),
+                    _handle_routing(router, writer, _log_message(routed, name)),
                     routed.body
                     )
                 )
