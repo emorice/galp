@@ -39,7 +39,6 @@ from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
 from galp.net_store import handle_get, handle_stat
 from galp.net.core.dump import add_request_id, Writer
-from galp.req_rep import handle_reply
 from galp.asyn import filter_commands
 
 class NonFatalTaskError(RuntimeError):
@@ -240,8 +239,9 @@ class Worker:
                 case gm.Exec():
                     return protocol.on_routed_exec(write, msg)
                 case gm.Reply():
-                    news = handle_reply(msg, protocol.script)
-                    return protocol.new_commands_to_replies(write, news)
+                    return protocol.new_commands_to_replies(
+                            write, protocol.script.done(msg.request, msg.value)
+                            )
                 case _:
                     return Error(f'Unexpected {msg}')
 

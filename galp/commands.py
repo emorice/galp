@@ -71,36 +71,20 @@ class Script(ga.Script):
 
 # Primitives
 # ----------
-class Submit(InertCommand[gtt.ResultRef, Error]):
-    """
-    Remotely execute a single step
-    """
-    def __init__(self, task_def: gtt.CoreTaskDef):
-        self.task_def = task_def
-        super().__init__()
 
-    @property
-    def key(self):
-        return (self.__class__.__name__.upper(), self.task_def.name)
+T_co = TypeVar('T_co', covariant=True)
 
-    @property
-    def name(self):
-        """Task name"""
-        return self.task_def.name
-
-T = TypeVar('T')
-
-class Send(InertCommand[T, Error]):
+class Send(InertCommand[T_co, Error]):
     """Send an arbitrary request"""
     request: gm.Request
-    def __init__(self, request: gm.BaseRequest[T]):
+    def __init__(self, request: gm.BaseRequest[T_co]):
         super().__init__()
         assert isinstance(request, gm.Request) # type: ignore # bug
         self.request = request # type: ignore # guarded by assertion
 
     @property
     def key(self) -> Hashable:
-        return gm.get_request_id(self.request).as_legacy_key()
+        return gm.get_request_id(self.request)
 
 # Parameters
 # ----------
@@ -118,6 +102,7 @@ class ExecOptions:
     """
     dry: bool = False
     keep_going: bool = False
+    resources: gtt.ResourceClaim = gtt.ResourceClaim(cpus=1)
 
 # Routines
 # --------
@@ -248,7 +233,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
 
     return (
             gather_deps
-            .then(lambda _: Submit(task_def)) # type: ignore[arg-type] # False positive
+            .then(lambda _: Send(gm.Submit(task_def, options.resources)))
             )
 
 def rsubmit(task: gtt.Task, options: ExecOptions

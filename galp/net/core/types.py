@@ -74,7 +74,7 @@ class PoolReady(MessageType, key='poolReady'):
 # Requests
 # --------
 
-V = TypeVar('V')
+V = TypeVar('V', covariant=True) # pylint: disable=typevar-name-incorrect-variance
 
 # pylint: disable=too-few-public-methods
 class BaseRequest(MessageType, Generic[V], key=None):
@@ -160,10 +160,6 @@ class RequestId:
         Converts self to a printable, space-less string
         """
         return self.verb + f':{self.name.hex()}'.encode('ascii')
-
-    def as_legacy_key(self) -> tuple[str, gtt.TaskName]:
-        """For compat only"""
-        return self.verb.decode('ascii').upper(), self.name
 
 def get_request_id(req: BaseRequest) -> RequestId:
     """

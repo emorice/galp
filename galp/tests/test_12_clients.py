@@ -20,6 +20,7 @@ from galp.net.core.types import Reply, RequestId, Submit, Stat, NextRequest
 from galp.net.requests.types import NotFound
 
 # pylint: disable=redefined-outer-name
+# pylint: disable=protected-access
 
 @pytest.fixture
 async def make_peer_client():
@@ -46,7 +47,7 @@ async def make_peer_client():
     for peer in peers:
         peer.socket.close(linger=1)
     for client in clients:
-        client.transport.socket.close(linger=1)
+        client._transport.socket.close(linger=1)
 
 @pytest.fixture
 def make_blocked_client(make_peer_client):
@@ -58,13 +59,13 @@ def make_blocked_client(make_peer_client):
 
         # Lower the HWMs first, else filling the queues takes lots of messages
         # 0 creates problems, 1 seems the minimum still safe
-        client.transport.socket.hwm = 1
+        client._transport.socket.hwm = 1
         peer.socket.hwm = 1
 
         fillers = [0]
         async def _fill():
             # pylint: disable=no-member
-            await client.transport.socket.send(b'FILLER', flags=zmq.NOBLOCK)
+            await client._transport.socket.send(b'FILLER', flags=zmq.NOBLOCK)
             fillers[0] += 1
 
         with pytest.raises(zmq.ZMQError):
@@ -94,7 +95,7 @@ async def test_fill_queue(make_blocked_client):
     # Check that client blocks
     with pytest.raises(asyncio.TimeoutError):
         async with timeout(1):
-            await client.transport.send_message(
+            await client._transport.send_message(
                     # pylint: disable=no-member
                     Submit(task_def=task.task_def,
                            resources=gtt.Resources(cpus=1))

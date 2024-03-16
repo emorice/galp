@@ -9,7 +9,7 @@ import asyncio
 import logging
 
 from collections import defaultdict
-from typing import Callable, Iterable, Any
+from typing import Iterable, Any
 
 import zmq
 import zmq.asyncio
@@ -22,7 +22,6 @@ import galp.task_types as gtt
 from galp.result import Result, Ok, Error
 from galp.cache import CacheStack
 from galp.net_store import handle_get
-from galp.req_rep import handle_reply
 from galp.protocol import (ProtocolEndException, make_stack,
     TransportMessage, Writer)
 from galp.zmq_async_transport import ZmqAsyncTransport
@@ -47,44 +46,48 @@ class Client:
     context instance, creating it if needed -- and implicitely reusing it.
 
     Args:
-       endpoint: a ZeroMQ endpoint string to the worker. The client will create
+        endpoint: a ZeroMQ endpoint string to the worker. The client will create
             its own socket and destroy it in the end, using the global sync context.
-        n_cpus: number of cpus *per task* to allocate
+        cpus_per_task: number of cpus *per task* to allocate
     """
 
     def __init__(self, endpoint: str, cpus_per_task: int | None = None):
-        # Memory only native+serial cache
-        self.store = CacheStack(
+        # Public attribute: counter for the number of SUBMITs for each task
+        # Used for reporting and testing cache behavior
+        self.submitted_count : defaultdict[TaskName, int] = defaultdict(int)
+
+        # State keeping:
+        # Literals to be exposed on the network
+        self._store = CacheStack(
             dirpath=None,
             serializer=TaskSerializer)
+        # Pending requests
+        self._command_queue: ControlQueue[cm.InertCommand] = ControlQueue()
+        # Async graph
+        self._script = cm.Script()
+        # Misc param
+        self._cpus_per_task = cpus_per_task or 1
+
+        # Communication
         def on_message(write: Writer[gm.Message], msg: gm.Message
                 ) -> Iterable[TransportMessage] | Error:
             match msg:
                 case gm.Get():
-                    return handle_get(write, msg, self.store)
+                    return handle_get(write, msg, self._store)
                 case gm.Reply():
-                    news = handle_reply(msg, self.protocol.script)
-                    return self.protocol.schedule_new(news)
+                    return self._schedule_new(
+                        self._script.done(msg.request, msg.value)
+                        )
                 case gm.NextRequest():
-                    command = self.command_queue.on_next_item()
-                    if command is None:
-                        return []
-                    message = self.protocol.write_next(command)
-                    return [message]
+                    command = self._command_queue.on_next_item()
+                    return ([] if command is None
+                            else [self._write_next(command)]
+                            )
                 case _:
                     return Error(f'Unexpected {msg}')
-        self.stack = make_stack(on_message, name='BK')
-        self.command_queue: ControlQueue[cm.InertCommand] = ControlQueue()
-        self.protocol = BrokerProtocol(
-                command_queue=self.command_queue,
-                write_local=self.stack.write_local,
-                cpus_per_task=cpus_per_task or 1,
-                store=self.store
-                )
-        self.transport = ZmqAsyncTransport(
-            stack=self.stack,
-            # pylint: disable=no-member # False positive
-            endpoint=endpoint, socket_type=zmq.DEALER
+        self._stack = make_stack(on_message, name='BK')
+        self._transport = ZmqAsyncTransport(
+            stack=self._stack, endpoint=endpoint, socket_type=zmq.DEALER
             )
 
     async def gather(self, *tasks, return_exceptions: bool = False, timeout=None,
@@ -107,11 +110,12 @@ class Client:
         task_nodes = list(map(ensure_task_node, tasks))
 
         # Populate the store
-        store_literals(self.store, task_nodes)
+        store_literals(self._store, task_nodes)
 
         cmd_vals = await asyncio.wait_for(
             self._run_collection(task_nodes, cm.ExecOptions(
-                    keep_going=return_exceptions, dry=dry_run
+                    keep_going=return_exceptions, dry=dry_run,
+                    resources=gtt.ResourceClaim(cpus=self._cpus_per_task)
                     )),
             timeout=timeout)
 
@@ -168,17 +172,15 @@ class Client:
         def _end(value):
             raise ProtocolEndException(value)
 
-        script = self.protocol.script
-
         commands = [run_task(t, exec_options) for t in tasks]
-        collect = script.collect(commands, exec_options.keep_going)
+        collect = self._script.collect(commands, exec_options.keep_going)
 
         try:
-            _, cmds = script.callback(collect, _end)
-            await self.transport.send_messages(
-                    self.protocol.schedule_new(cmds)
+            _, cmds = self._script.callback(collect, _end)
+            await self._transport.send_messages(
+                    self._schedule_new(cmds)
                     )
-            err = await self.transport.listen_reply_loop()
+            err = await self._transport.listen_reply_loop()
             if err is not None:
                 logging.error('Communication error: %s', err)
         except ProtocolEndException:
@@ -186,6 +188,56 @@ class Client:
         # Issue 84: this work because End is only raised after collect is done,
         # but that's bad style.
         return [c.val for c in commands]
+
+    def _write_next(self, command: cm.InertCommand) -> TransportMessage:
+        """
+        Returns the next nessage to be sent for a task given the information we
+        have about it.
+        """
+        assert command.is_pending()
+
+        match command:
+            case cm.Send():
+                match command.request:
+                    case gm.Submit(task_def):
+                        self.submitted_count[task_def.name] += 1
+                return self._stack.write_local(command.request)
+            case _:
+                raise NotImplementedError(command)
+
+    def _filter_local_get(self, command: cm.InertCommand
+                         ) -> tuple[list[cm.InertCommand], list[cm.InertCommand]]:
+        """
+        Fulfill GETs that are locally available
+        """
+        # Not a Get, leave as-is
+        match command:
+            case cm.Send():
+                match command.request:
+                    case gm.Get():
+                        name = command.request.name
+                    case _:
+                        return [command], []
+            case _:
+                return [command], []
+
+        try:
+            res = gr.Put(*self._store.get_serial(name))
+        except KeyError:
+            # Not found, leave as-is
+            return [command], []
+
+        # Found, mark command as done and pass on children
+        return [], self._script.done(command.key, Ok(res))
+
+    def _schedule_new(self, commands: Iterable[cm.InertCommand]
+            ) -> list[TransportMessage]:
+        """
+        Fulfill, queue, select and covert commands to be sent
+        """
+        commands = filter_commands(commands, self._filter_local_get)
+        commands = self._command_queue.push_through(commands)
+        return [self._write_next(cmd) for cmd in commands]
 
 def store_literals(store: CacheStack, tasks: list[TaskNode]):
     """
@@ -211,83 +263,3 @@ def store_literals(store: CacheStack, tasks: list[TaskNode]):
         # Store the embedded object if literal task
         if isinstance(task_node.task_def, LiteralTaskDef):
             store.put_native(name, task_node.data)
-
-class BrokerProtocol:
-    """
-    Main logic of the interaction of a client with a broker
-    """
-    def __init__(self, command_queue: ControlQueue[cm.InertCommand],
-            write_local: Callable[[gm.Message], TransportMessage],
-            cpus_per_task: int, store: CacheStack):
-        self.write_local = write_local
-        self.command_queue = command_queue
-        self.store = store
-        # Commands
-        self.script = cm.Script()
-
-        # Public attribute: counter for the number of SUBMITs for each task
-        # Used for reporting and testing cache behavior
-        self.submitted_count : defaultdict[TaskName, int] = defaultdict(int)
-
-        # Default resources
-        self.resources = gtt.ResourceClaim(cpus=cpus_per_task)
-
-    def write_next(self, command: cm.InertCommand) -> TransportMessage:
-        """
-        Returns the next nessage to be sent for a task given the information we
-        have about it.
-        """
-        assert command.is_pending()
-
-        match command:
-            case cm.Submit():
-                name = command.task_def.name
-                self.submitted_count[name] += 1
-                sub = gm.Submit(task_def=command.task_def,
-                                resources=self.get_resources(command.task_def))
-                return self.write_local(sub)
-            case cm.Send():
-                return self.write_local(command.request)
-            case _:
-                raise NotImplementedError(command)
-
-    def get_resources(self, task_def: gtt.CoreTaskDef) -> gtt.ResourceClaim:
-        """
-        Decide how much resources to allocate to a task
-        """
-        _ = task_def # to be used later
-        return self.resources
-
-    def filter_local_get(self, command: cm.InertCommand
-                         ) -> tuple[list[cm.InertCommand], list[cm.InertCommand]]:
-        """
-        Fulfill GETs that are locally available
-        """
-        # Not a Get, leave as-is
-        match command:
-            case cm.Send():
-                match command.request:
-                    case gm.Get():
-                        name = command.request.name
-                    case _:
-                        return [command], []
-            case _:
-                return [command], []
-
-        try:
-            res = gr.Put(*self.store.get_serial(name))
-        except KeyError:
-            # Not found, leave as-is
-            return [command], []
-
-        # Found, mark command as done and pass on children
-        return [], self.script.done(command.key, Ok(res))
-
-    def schedule_new(self, commands: Iterable[cm.InertCommand]
-            ) -> list[TransportMessage]:
-        """
-        Fulfill, queue, select and covert commands to be sent
-        """
-        commands = filter_commands(commands, self.filter_local_get)
-        commands = self.command_queue.push_through(commands)
-        return [self.write_next(cmd) for cmd in commands]
