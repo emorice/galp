@@ -10,6 +10,7 @@ from flask import Flask, render_template, abort
 
 import galp.config
 import galp.commands as cm
+import galp.asyn as ga
 from galp.net.core.types import Get
 from galp.net.requests.types import Put
 from galp._client import store_literals
@@ -128,8 +129,8 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     for keyword, tin in tdef.kwargs.items():
         # You need to hold a reference, because advance_all won't !
         cmd = cm.rget(tin.name)
-        primitives = cm.advance_all(script, cm.get_leaves([cmd]))
-        unprocessed = cm.filter_commands(primitives, _exec)
+        primitives = ga.advance_all(script, ga.get_leaves([cmd]))
+        unprocessed = ga.filter_commands(primitives, _exec)
         assert not unprocessed
         if not isinstance(cmd.val, Ok):
             raise NotImplementedError(cmd.val)

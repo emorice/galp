@@ -19,7 +19,7 @@ import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
 
-from galp.result import Ok, Error
+from galp.result import Result, Ok, Error
 from galp.cache import CacheStack
 from galp.net_store import handle_get
 from galp.req_rep import handle_reply
@@ -30,6 +30,7 @@ from galp.control_queue import ControlQueue
 from galp.query import run_task
 from galp.task_types import (TaskName, TaskNode, LiteralTaskDef,
     ensure_task_node, TaskSerializer)
+from galp.asyn import filter_commands
 
 class TaskFailedError(RuntimeError):
     """
@@ -118,12 +119,6 @@ class Client:
             match val:
                 case Ok():
                     results.append(val.value)
-                case cm.Pending():
-                    # This should only be found if keep_going is False and an
-                    # other command fails, so we should find a Failed and raise
-                    # without actually returning this one.
-                    # Fill it in anyway, to avoid confusions
-                    results.append(val)
                 case Error():
                     exc = TaskFailedError(
                         f'Failed to collect task: {val.error}'
@@ -132,6 +127,12 @@ class Client:
                         results.append(exc)
                     else:
                         raise exc
+                case _: # Pending()
+                    # This should only be found if keep_going is False and an
+                    # other command fails, so we should find a Failed and raise
+                    # without actually returning this one.
+                    # Fill it in anyway, to avoid confusions
+                    results.append(val)
 
         # Conventional result for dry runs, as results would then only contain
         # internal objects that shouldn't be exposed
@@ -159,7 +160,7 @@ class Client:
 
     async def run_collection(self, tasks: list[TaskNode],
             return_exceptions: bool, dry_run: bool
-            ) -> list[cm.Result]:
+            ) -> list[Result]:
         """
         Processes messages until the collection target is achieved
         """
@@ -300,6 +301,6 @@ class BrokerProtocol:
         """
         Fulfill, queue, select and covert commands to be sent
         """
-        commands = cm.filter_commands(commands, self.filter_local_get)
+        commands = filter_commands(commands, self.filter_local_get)
         commands = self.command_queue.push_through(commands)
         return [self.write_next(cmd) for cmd in commands]
