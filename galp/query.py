@@ -13,19 +13,19 @@ from . import task_types as gtt
 from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .cache import StoreReadError
 
-def run_task(task: TaskNode, dry: bool = False) -> cm.Command:
+def run_task(task: TaskNode, options: cm.ExecOptions) -> cm.Command:
     """
     Creates command appropriate to type of task (query or non-query)
     """
     task_def = task.task_def
     if isinstance(task_def, QueryTaskDef):
-        if dry:
+        if options.dry:
             raise NotImplementedError('Cannot dry-run queries yet')
         subject, = task.dependencies
         # Issue #81 unsafe reference
         return query(subject, task_def.query)
 
-    return cm.run(task, dry)
+    return cm.run(task, options)
 
 def query(subject: gtt.Task, _query):
     """
@@ -34,7 +34,8 @@ def query(subject: gtt.Task, _query):
     operator = query_to_op(subject, _query)
 
     return operator.requires(subject).then(
-            lambda *required: cm.Gather(operator.recurse(*required)).then(
+            lambda *required: cm.Gather(operator.recurse(*required),
+                                        keep_going=False).then(
                 operator.safe_result
                 )
             )
@@ -97,7 +98,7 @@ class Operator:
         Pre-req
         """
         _ = task
-        return cm.Gather([])
+        return cm.Gather([], keep_going=False)
 
     _ops: 'dict[str, Type[Operator]]' = {}
     def __init_subclass__(cls, /, named=True, **kwargs):

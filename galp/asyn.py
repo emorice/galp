@@ -26,6 +26,38 @@ class Pending():
 
 State = Pending | Result[OkT, ErrT]
 
+def state_conj(states: list[State[OkT, ErrT]], keep_going: bool
+                ) -> State[list[OkT], ErrT]:
+    """
+    State conjunction respecting keep_going
+
+    If all commands are Ok, returns Ok with the list of results.
+    If any fails, returns Error with one of the errors.
+
+    If keep_going is True, this may return Error when a failure is found
+    even if some commands are still Pending (but see Bugs below).
+
+    Bugs: this doesn't look exactly correct, when keep_going is False, it
+    looks like this returns Pending in input is (Pending, Error) but Error
+    if it's (Failed, Error).
+    """
+    results = []
+    failed = None
+    for val in states:
+        match val:
+            case Pending():
+                return Pending()
+            case Ok():
+                results.append(val.value)
+            case Error():
+                if not keep_going:
+                    return val
+                if failed is None:
+                    failed = val
+    if failed is None:
+        return Ok(results)
+    return failed
+
 # Commands
 # ========
 
@@ -178,9 +210,12 @@ class Gather(Command[list[OkT], ErrT]):
     Then-able list
     """
     commands: list[Command[OkT, ErrT]]
+    keep_going: bool
 
-    def __init__(self, commands: 'Command[OkT, ErrT]' | Iterable['Command[OkT, ErrT]']):
+    def __init__(self, commands: 'Command[OkT, ErrT]' | Iterable['Command[OkT, ErrT]'],
+                 keep_going: bool):
         super().__init__()
+        self.keep_going = keep_going
         self.commands = list(commands) if isinstance(commands, Iterable) else [commands]
         for inp in self.commands:
             inp.outputs.add(self)
@@ -189,7 +224,7 @@ class Gather(Command[list[OkT], ErrT]):
         """
         State-based handling
         """
-        self.val = script.value_conj(self.commands)
+        self.val = state_conj([cmd.val for cmd in self.commands], self.keep_going)
         return []
 
     def __repr__(self):
@@ -270,17 +305,8 @@ class _PrimitiveProxy(Generic[Ok_contra, ErrT]):
 class Script:
     """
     Interface to a DAG of promises.
-
-    Args:
-        verbose: whether to print brief summary of command completion to stderr
-        keep_going: whether to attempt to complete independent commands when one
-            fails. If False, attempts to "fail fast" instead, and finishes as
-            soon as any command fails.
     """
-    def __init__(self, verbose=True, keep_going: bool = False):
-        self.verbose = verbose
-        self.keep_going = keep_going
-
+    def __init__(self) -> None:
         # Strong references to all pending callbacks
         self._pending: set[Command] = set()
         # Weak references to all primitives
@@ -302,11 +328,12 @@ class Script:
             return []
         return cmd.done(result)
 
-    def collect(self, commands: list[Command[OkT, ErrT]]) -> Command[list[OkT], ErrT]:
+    def collect(self, commands: list[Command[OkT, ErrT]], keep_going: bool
+                ) -> Command[list[OkT], ErrT]:
         """
         Creates a command representing a collection of other commands
         """
-        return Gather(commands)
+        return Gather(commands, keep_going)
 
     def callback(self, command: Command[InOkT, ErrT],
             callback: PlainCallback[InOkT, ErrT, OkT]) -> tuple[Command[OkT, ErrT],
@@ -331,39 +358,6 @@ class Script:
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
         return cb_command, advance_all(self, get_leaves([cb_command]))
-
-
-    def value_conj(self, commands: list[Command[OkT, ErrT]]
-                    ) -> State[list[OkT], ErrT]:
-        """
-        Value conjunction respecting self.keep_going
-
-        If all commands are Done, returns Done with the list of results.
-        If any fails, returns Failed with one of the errors.
-
-        If keep_going is True, this may return Failed when a failure is found
-        even if some commands are still Pending (but see Bugs below).
-
-        Bugs: this doesn't look exactly correct, when keep_going is False, it
-        looks like this returns Pending in input is (Pending, Failed) but Failed
-        if it's (Failed, Pending).
-        """
-        results = []
-        failed = None
-        for val in (cmd.val for cmd in commands):
-            match val:
-                case Pending():
-                    return Pending()
-                case Ok():
-                    results.append(val.value)
-                case Error():
-                    if not self.keep_going:
-                        return val
-                    if failed is None:
-                        failed = val
-        if failed is None:
-            return Ok(results)
-        return failed
 
     def notify_change(self, command: Command, old_value: State,
                       new_value: State) -> None:

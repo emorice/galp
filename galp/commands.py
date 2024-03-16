@@ -5,6 +5,7 @@ Lists of internal commands
 import sys
 import time
 from typing import Sequence, Hashable, TypeVar
+from dataclasses import dataclass
 
 import galp.net.requests.types as gr
 import galp.net.core.types as gm
@@ -15,10 +16,20 @@ from galp.result import Ok, Error
 from galp.serialize import LoadError
 from galp.asyn import Command, Gather, InertCommand
 
+# Custom Script
+# -------------
+
 class Script(ga.Script):
     """
     Override script hook with domain-specific logger
+
+    Args:
+        verbose: whether to print brief summary of command completion to stderr
     """
+    def __init__(self, verbose: bool = True) -> None:
+        self.verbose = verbose
+        super().__init__()
+
     def notify_change(self, command: Command, old_value: ga.State,
                       new_value: ga.State) -> None:
         """
@@ -58,7 +69,8 @@ class Script(ga.Script):
                 case Error():
                     print_status('FAIL', name, step_name_s)
 
-
+# Primitives
+# ----------
 class Submit(InertCommand[gtt.ResultRef, Error]):
     """
     Remotely execute a single step
@@ -76,7 +88,6 @@ class Submit(InertCommand[gtt.ResultRef, Error]):
         """Task name"""
         return self.task_def.name
 
-
 T = TypeVar('T')
 
 class Send(InertCommand[T, Error]):
@@ -91,7 +102,27 @@ class Send(InertCommand[T, Error]):
     def key(self) -> Hashable:
         return gm.get_request_id(self.request).as_legacy_key()
 
-def safe_deserialize(res: gr.Put, children: Sequence):
+# Parameters
+# ----------
+
+@dataclass
+class ExecOptions:
+    """
+    Collection of parameters that affect how a graph should be executed
+
+    Attributes:
+        dry: whether to perform a dry-run or real run
+        keep_going: whether to continue executing independent branches of the
+            graph after a failure
+        resources: how much resources to require for each task
+    """
+    dry: bool = False
+    keep_going: bool = False
+
+# Routines
+# --------
+
+def _safe_deserialize(res: gr.Put, children: Sequence):
     """
     Wrap serializer in a guard for invalid payloads
     """
@@ -104,12 +135,14 @@ def safe_deserialize(res: gr.Put, children: Sequence):
 def rget(name: gtt.TaskName) -> Command[object, Error]:
     """
     Get a task result, then rescursively get all the sub-parts of it
+
+    This unconditionally fails if a sub-part fails.
     """
     return (
         Send(gm.Get(name))
         .then(lambda res: (
-            Gather([rget(c.name) for c in res.children])
-            .then(lambda children: safe_deserialize(res, children))
+            Gather([rget(c.name) for c in res.children], keep_going=False)
+            .then(lambda children: _safe_deserialize(res, children))
             ))
         )
 
@@ -120,10 +153,10 @@ def sget(name: gtt.TaskName) -> Command[object, Error]:
     """
     return (
         Send(gm.Get(name))
-        .then(lambda res: safe_deserialize(res, res.children))
+        .then(lambda res: _safe_deserialize(res, res.children))
         )
 
-def no_not_found(stat_result: gr.StatReplyValue, task: gtt.Task
+def _no_not_found(stat_result: gr.StatReplyValue, task: gtt.Task
                  ) -> gr.Found | gr.StatDone | Error:
     """
     Transform NotFound in Found if the task is a real object, and fails
@@ -144,19 +177,22 @@ def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found, Error]:
     """
     return (
             Send(gm.Stat(task.name))
-            .then(lambda statr: no_not_found(statr, task))
+            .then(lambda statr: _no_not_found(statr, task))
           )
 
-def ssubmit(task: gtt.Task, dry: bool = False
+# Note: the default exec options is just for compat with Query and to be removed
+# once galp.query gets re-written more flexibly
+
+def ssubmit(task: gtt.Task, options: ExecOptions = ExecOptions()
             ) -> Command[gtt.ResultRef, Error]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
     """
-    return safe_stat(task).then(lambda statr: _ssubmit(task, statr, dry))
+    return safe_stat(task).then(lambda statr: _ssubmit(task, statr, options))
 
-def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone, dry: bool
-             ) -> gtt.ResultRef | Command[gtt.ResultRef, Error]:
+def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
+             options: ExecOptions) -> gtt.ResultRef | Command[gtt.ResultRef, Error]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
@@ -203,10 +239,11 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone, dry: bool
     # Issue 79: optimize type of command based on type of link
     # Always doing a RSUB will work, but it will run things more eagerly that
     # needed or propagate failures too aggressively.
-    gather_deps = Gather([rsubmit(dep, dry) for dep in deps])
+    gather_deps = Gather([rsubmit(dep, options) for dep in deps],
+                         options.keep_going)
 
     # Issue final command
-    if dry or isinstance(task_def, gtt.ChildTaskDef):
+    if options.dry or isinstance(task_def, gtt.ChildTaskDef):
         return gather_deps.then(lambda _: gtt.ResultRef(task.name, []))
 
     return (
@@ -214,7 +251,8 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone, dry: bool
             .then(lambda _: Submit(task_def)) # type: ignore[arg-type] # False positive
             )
 
-def rsubmit(task: gtt.Task, dry: bool = False) -> Command[gtt.RecResultRef, Error]:
+def rsubmit(task: gtt.Task, options: ExecOptions
+            ) -> Command[gtt.RecResultRef, Error]:
     """
     Recursive submit, with children, i.e a ssubmit plus a rsubmit per child
 
@@ -232,27 +270,32 @@ def rsubmit(task: gtt.Task, dry: bool = False) -> Command[gtt.RecResultRef, Erro
     part of the task graph is unknown before we actually start executing it.
     """
     return (
-            ssubmit(task, dry)
-            .then(lambda res: Gather([rsubmit(c, dry) for c in res.children])
-                .then(
-                    lambda child_results: gtt.RecResultRef(res, child_results)
-                    )
-                )
+            ssubmit(task, options)
+            .then(lambda res: Gather(
+                [rsubmit(c, options) for c in res.children],
+                options.keep_going)
+                  .then(
+                      lambda child_results: gtt.RecResultRef(res, child_results)
+                      )
+                  )
             )
 
-def run(task: gtt.Task, dry=False) -> Command[object, Error]:
+def run(task: gtt.Task, options: ExecOptions) -> Command[object, Error]:
     """
     Combined rsubmit + rget
 
     If dry, just a dry rsubmit
     """
-    if dry:
-        return rsubmit(task, dry=True)
-    return rsubmit(task).then(lambda _: rget(task.name))
+    if options.dry:
+        return rsubmit(task, options)
+    return rsubmit(task, options).then(lambda _: rget(task.name))
 
-def srun(task: gtt.Task):
+# Note: the default exec options is just for compat with Query and to be removed
+# once galp.query gets re-written more flexibly
+
+def srun(task: gtt.Task, options: ExecOptions = ExecOptions()):
     """
     Shallow run: combined ssubmit + sget, fetches the raw result of a task but
     not its children
     """
-    return ssubmit(task).then(lambda _: sget(task.name))
+    return ssubmit(task, options).then(lambda _: sget(task.name))

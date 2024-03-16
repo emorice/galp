@@ -110,8 +110,9 @@ class Client:
         store_literals(self.store, task_nodes)
 
         cmd_vals = await asyncio.wait_for(
-            self.run_collection(task_nodes, return_exceptions=return_exceptions,
-                dry_run=dry_run),
+            self._run_collection(task_nodes, cm.ExecOptions(
+                    keep_going=return_exceptions, dry=dry_run
+                    )),
             timeout=timeout)
 
         results: list[Any] = []
@@ -158,33 +159,19 @@ class Client:
             return results[0]
         return results
 
-    async def run_collection(self, tasks: list[TaskNode],
-            return_exceptions: bool, dry_run: bool
-            ) -> list[Result]:
+    async def _run_collection(self, tasks: list[TaskNode],
+                              exec_options: cm.ExecOptions) -> list[Result]:
         """
         Processes messages until the collection target is achieved
         """
-
         # Register the termination command
         def _end(value):
             raise ProtocolEndException(value)
 
         script = self.protocol.script
 
-        # Note: this is shared by different calls to the collection methods. We
-        # currently don't have a way to specify that the same task should be
-        # considered as either failed or pending depending on the caller. Doing
-        # so would require duplicating the command graph. So for now, calling
-        # collection routines twice simulatenously on the same client with
-        # different keep_going parameters is not allowed and will result in
-        # unspecified behavior.
-        if return_exceptions:
-            script.keep_going = True
-        else:
-            script.keep_going = False
-
-        commands = [run_task(t, dry=dry_run) for t in tasks]
-        collect = script.collect(commands)
+        commands = [run_task(t, exec_options) for t in tasks]
+        collect = script.collect(commands, exec_options.keep_going)
 
         try:
             _, cmds = script.callback(collect, _end)

@@ -306,7 +306,7 @@ class Worker:
                     *task_def.args,
                     *task_def.kwargs.values()
                     ]
-                ])
+                ], keep_going=False)
         _, primitives = script.callback(collect, _start_task)
         return primitives
 
