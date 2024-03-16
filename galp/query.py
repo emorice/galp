@@ -31,14 +31,7 @@ def query(subject: gtt.Task, _query):
     """
     Process the query and decide on further commands to issue
     """
-    operator = query_to_op(subject, _query)
-
-    return operator.requires(subject).then(
-            lambda *required: cm.Gather(operator.recurse(*required),
-                                        keep_going=False).then(
-                operator.safe_result
-                )
-            )
+    return query_to_op(subject, _query)()
 
 def parse_query(_query):
     """
@@ -113,6 +106,16 @@ class Operator:
         Return operator by dollar-less name or None
         """
         return cls._ops.get(name)
+
+    def __call__(self) -> cm.Command:
+        """
+        Old-style operators
+        """
+        return self.requires(self.subject).then(
+                lambda *required: cm.Gather(
+                    self.recurse(*required), keep_going=False
+                    ).then(self.safe_result)
+                )
 
     def recurse(self, required=None):
         """
@@ -189,43 +192,33 @@ class Base(Operator):
     Base operator, returns shallow object itself with the linked tasks left as
     references
     """
-    @staticmethod
-    def requires(task: gtt.Task):
-        return cm.sget(task.name)
-
-    def _result(self, sget_result, _subs):
-        return sget_result
+    def __call__(self) -> cm.Command:
+        return cm.sget(self.subject.name)
 
 class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
-    requires = staticmethod(lambda task: cm.rget(task.name))
-
-    def _result(self, rget_result, _subs):
-        return rget_result
+    def __call__(self) -> cm.Command:
+        return cm.rget(self.subject.name)
 
 class Done(Operator):
     """
     Completion state operator
     """
-    @staticmethod
-    def requires(task: gtt.Task):
-        return cm.Send(gm.Stat(task.name))
-
-    def _result(self, stat_result: gr.StatDone | gr.Found, _subs):
-        return isinstance(stat_result, gr.StatDone)
+    def __call__(self) -> cm.Command:
+        return cm.Send(gm.Stat(self.subject.name)).then(
+                lambda statr: isinstance(statr, gr.StatDone)
+                )
 
 class Def(Operator):
     """
     Definition oerator
     """
-    @staticmethod
-    def requires(task: gtt.Task):
-        return cm.safe_stat(task)
-
-    def _result(self, stat_result: gr.StatDone | gr.Found, _subs):
-        return stat_result.task_def
+    def __call__(self) -> cm.Command:
+        return cm.safe_stat(self.subject).then(
+                lambda statr: statr.task_def
+                )
 
 class Args(Operator):
     """
@@ -379,15 +372,13 @@ class Compound(Operator, named=False):
         super().__init__(subject, None)
         self.sub_queries = sub_queries
 
-    def _recurse(self, _no_cmd):
-        return [
-            query(self.subject, sub_query)
-            for sub_query in self.sub_queries
-            ]
-
-    def _result(self, _no_cmd, results):
-        return { query[0]: result
-                for query, result in zip(self.sub_queries, results)}
+    def __call__(self) -> cm.Command:
+        return cm.Gather([
+                query(self.subject, sub_query) for sub_query in self.sub_queries
+            ], keep_going=False
+         ).then(lambda results: {
+             query[0]: result for query, result in zip(self.sub_queries, results)
+         })
 
 class Iterate(Operator, named=False):
     """
