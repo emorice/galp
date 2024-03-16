@@ -7,6 +7,7 @@ from typing import Type
 
 from galp.result import Error
 import galp.net.requests.types as gr
+import galp.net.core.types as gm
 from . import commands as cm
 from . import task_types as gtt
 from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
@@ -209,7 +210,7 @@ class Done(Operator):
     """
     @staticmethod
     def requires(task: gtt.Task):
-        return cm.Stat(task.name)
+        return cm.Send(gm.Stat(task.name))
 
     def _result(self, stat_result: gr.StatDone | gr.Found, _subs):
         return isinstance(stat_result, gr.StatDone)

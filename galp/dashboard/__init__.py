@@ -10,6 +10,7 @@ from flask import Flask, render_template, abort
 
 import galp.config
 import galp.commands as cm
+from galp.net.core.types import Get
 from galp.net.requests.types import Put
 from galp._client import store_literals
 from galp.task_types import TaskSerializer, TaskNode, CoreTaskDef
@@ -107,9 +108,11 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     def _exec(command: cm.InertCommand
               ) -> tuple[list[None], list[cm.InertCommand]]:
         """Fulfill commands by reading from stores"""
-        if not isinstance(command, cm.Get):
+        if not isinstance(command, cm.Send):
             raise NotImplementedError(command)
-        name = command.name
+        if not isinstance(command.request, Get):
+            raise NotImplementedError(command)
+        name = command.request.name
         if name not in mem_store:
             buf, children, _loads = store.get_serial(name)
             mem_store.put_serial(name, (buf, children))

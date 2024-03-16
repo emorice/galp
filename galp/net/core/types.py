@@ -87,7 +87,7 @@ class BaseRequest(MessageType, Generic[V], key=None):
 
     @property
     def input_id(self) -> gtt.TaskName:
-        """Unique key to idenify request input"""
+        """Unique key to identify request input"""
         raise NotImplementedError
 
     def __class_getitem__(cls, item):
@@ -160,6 +160,10 @@ class RequestId:
         Converts self to a printable, space-less string
         """
         return self.verb + f':{self.name.hex()}'.encode('ascii')
+
+    def as_legacy_key(self) -> tuple[str, gtt.TaskName]:
+        """For compat only"""
+        return self.verb.decode('ascii').upper(), self.name
 
 def get_request_id(req: BaseRequest) -> RequestId:
     """

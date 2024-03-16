@@ -258,10 +258,8 @@ class BrokerProtocol:
                 sub = gm.Submit(task_def=command.task_def,
                                 resources=self.get_resources(command.task_def))
                 return self.write_local(sub)
-            case cm.Get():
-                return self.write_local(gm.Get(name=command.name))
-            case cm.Stat():
-                return self.write_local(gm.Stat(name=command.name))
+            case cm.Send():
+                return self.write_local(command.request)
             case _:
                 raise NotImplementedError(command)
 
@@ -278,10 +276,16 @@ class BrokerProtocol:
         Fulfill GETs that are locally available
         """
         # Not a Get, leave as-is
-        if not isinstance(command, cm.Get):
-            return [command], []
+        match command:
+            case cm.Send():
+                match command.request:
+                    case gm.Get():
+                        name = command.request.name
+                    case _:
+                        return [command], []
+            case _:
+                return [command], []
 
-        name = command.name
         try:
             res = gr.Put(*self.store.get_serial(name))
         except KeyError:

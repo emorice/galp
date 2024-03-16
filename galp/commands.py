@@ -6,12 +6,14 @@ import sys
 import time
 import logging
 from weakref import WeakSet, WeakValueDictionary
-from typing import TypeVar, Generic, Callable, Any, Iterable, TypeAlias, Sequence
+from typing import (TypeVar, Generic, Callable, Any, Iterable, TypeAlias,
+    Sequence, Hashable)
 from dataclasses import dataclass
 from itertools import chain
 from functools import wraps
 
 import galp.net.requests.types as gr
+import galp.net.core.types as gm
 import galp.task_types as gtt
 from galp.serialize import LoadError
 from galp.result import Ok, Error, Result
@@ -207,7 +209,7 @@ class Gather(Command[list[OkT], ErrT]):
         """
         return self.commands
 
-CommandKey = tuple[str, gtt.TaskName]
+CommandKey: TypeAlias = Hashable
 
 class InertCommand(Command[OkT, ErrT]):
     """
@@ -238,21 +240,6 @@ class InertCommand(Command[OkT, ErrT]):
         Commands we depend on
         """
         return []
-
-class NamedPrimitive(InertCommand[OkT, ErrT]):
-    """
-    Primitive made of just a task name
-    """
-    def __init__(self, name: gtt.TaskName):
-        self.name = name
-        super().__init__()
-
-    @property
-    def key(self) -> CommandKey:
-        """
-        Unique key
-        """
-        return (self.__class__.__name__.upper(), self.name)
 
 Ok_contra = TypeVar('Ok_contra', contravariant=True)
 
@@ -363,7 +350,8 @@ class Script:
         # need an external trigger, so we need to advance it
         return cb_command, advance_all(self, get_leaves([cb_command]))
 
-    def notify_change(self, command: Command, old_value: State, new_value: State):
+    def notify_change(self, command: Command, old_value: State,
+                      new_value: State) -> None:
         """
         Hook called when the graph status changes
         """
@@ -376,18 +364,22 @@ class Script:
                     f' {step_name}',
                     file=sys.stderr, flush=True)
 
-        if isinstance(command, Stat):
+        if not isinstance(command, Send):
+            return
+        req = command.request
+
+        if isinstance(req, gm.Stat):
             if isinstance(new_value, Ok):
                 task_done, task_def, _children = new_value.value
                 if not task_done and isinstance(self, gtt.CoreTaskDef):
-                    print_status('PLAN', command.name, task_def.step)
+                    print_status('PLAN', req.name, task_def.step)
 
-        if isinstance(command, Submit):
-            step_name_s = command.task_def.step
-            name = command.task_def.name
+        if isinstance(req, gm.Submit):
+            step_name_s = req.task_def.step
+            name = req.task_def.name
 
-            # We log 'SUB' every time a submit command's status "changes" to
-            # PENDING. Currently this only happens when the command is
+            # We log 'SUB' every time a submit req's status "changes" to
+            # PENDING. Currently this only happens when the req is
             # created.
             match new_value:
                 case Pending():
@@ -521,10 +513,20 @@ def filter_commands(commands: Iterable[InertCommand],
 # ==========================================================
 # To be cut into two modules
 
-class Get(NamedPrimitive[gr.Put, Error]):
+class _NamedPrimitive(InertCommand[OkT, ErrT]):
     """
-    Get a single resource part
+    Primitive made of just a task name
     """
+    def __init__(self, name: gtt.TaskName):
+        self.name = name
+        super().__init__()
+
+    @property
+    def key(self) -> CommandKey:
+        """
+        Unique key
+        """
+        return (self.__class__.__name__.upper(), self.name)
 
 class Submit(InertCommand[gtt.ResultRef, Error]):
     """
@@ -543,18 +545,19 @@ class Submit(InertCommand[gtt.ResultRef, Error]):
         """Task name"""
         return self.task_def.name
 
-class Stat(NamedPrimitive[gr.StatReplyValue, Error]):
-    """
-    Get a task's metadata
-    """
+T = TypeVar('T')
 
-class Put(NamedPrimitive[gtt.ResultRef, Error]):
-    """
-    Upload the object of a literal task
-    """
-    def __init__(self, name: gtt.TaskName, data: Any):
-        super().__init__(name)
-        self.data = data
+class Send(InertCommand[T, Error]):
+    """Send an arbitrary request"""
+    request: gm.Request
+    def __init__(self, request: gm.BaseRequest[T]):
+        super().__init__()
+        assert isinstance(request, gm.Request) # type: ignore # bug
+        self.request = request # type: ignore # guarded by assertion
+
+    @property
+    def key(self) -> Hashable:
+        return gm.get_request_id(self.request).as_legacy_key()
 
 def safe_deserialize(res: gr.Put, children: Sequence):
     """
@@ -571,7 +574,7 @@ def rget(name: gtt.TaskName) -> Command[Any, Error]:
     Get a task result, then rescursively get all the sub-parts of it
     """
     return (
-        Get(name)
+        Send(gm.Get(name))
         .then(lambda res: (
             Gather([rget(c.name) for c in res.children])
             .then(lambda children: safe_deserialize(res, children))
@@ -584,7 +587,7 @@ def sget(name: gtt.TaskName) -> Command[Any, Error]:
     children as references instead of recursing on them like rget
     """
     return (
-        Get(name)
+        Send(gm.Get(name))
         .then(lambda res: safe_deserialize(res, res.children))
         )
 
@@ -608,7 +611,7 @@ def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found, Error]:
     Chains no_not_found to a stat
     """
     return (
-            Stat(task.name)
+            Send(gm.Stat(task.name))
             .then(lambda statr: no_not_found(statr, task))
           )
 

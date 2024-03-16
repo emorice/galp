@@ -183,14 +183,20 @@ class WorkerProtocol:
         def _filter_local(command: cm.InertCommand
                     ) -> tuple[list[TransportMessage], list[cm.InertCommand]]:
             """Filter out locally available resources, send queries for the rest"""
-            if not isinstance(command, cm.Get):
-                raise NotImplementedError(command)
-            name = command.name
+            match command:
+                case cm.Send():
+                    match command.request:
+                        case gm.Get():
+                            name = command.request.name
+                        case _:
+                            raise NotImplementedError(command)
+                case _:
+                    raise NotImplementedError(command)
             try:
                 res = gr.Put(*self.store.get_serial(name))
                 return [], self.script.done(command.key, Ok(res))
             except StoreReadError:
-                logging.exception('In %s %s:', *command.key)
+                logging.exception('In %s:', command.key)
                 return [], self.script.done(command.key, Error('StoreReadError'))
             except KeyError:
                 return [write(gm.Get(name=name))], []
