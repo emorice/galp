@@ -14,7 +14,7 @@ import logging
 import argparse
 import resource
 
-from typing import Awaitable, Iterable, TypeAlias
+from typing import Iterable, TypeAlias
 from dataclasses import dataclass
 
 import psutil
@@ -30,7 +30,7 @@ import galp.task_types as gtt
 from galp.result import Result, Ok, Error
 
 from galp.config import load_config
-from galp.cache import StoreReadError, CacheStack
+from galp.cache import StoreReadError
 from galp.protocol import ProtocolEndException, make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
@@ -124,14 +124,54 @@ def make_worker_init(config):
         return Worker(setup)
     return _make_worker
 
-class WorkerProtocol:
+SubReplyWriter: TypeAlias = Writer[Result[gtt.FlatResultRef, gr.RemoteError]]
+
+@dataclass
+class Job:
     """
-    Handler for messages from the broker
+    A job to execute
     """
-    def __init__(self, worker: 'Worker', store: CacheStack):
-        self.worker = worker
-        self.store = store
+    write_reply: SubReplyWriter
+    submit: gm.Submit
+    inputs: Result[list[object], Error]
+
+class Worker:
+    """
+    Class representing an an async worker, wrapping transport, protocol and task
+    execution logic.
+    """
+    def __init__(self, setup: dict):
+        def on_message(write: Writer[gm.Message], msg: gm.Message
+                ) -> Iterable[TransportMessage] | Error:
+            match msg:
+                case gm.Exit():
+                    logging.info('Received EXIT, terminating')
+                    raise ProtocolEndException('Incoming EXIT')
+                case gm.Get():
+                    return handle_get(write, msg, setup['store'])
+                case gm.Stat():
+                    return handle_stat(write, msg, setup['store'])
+                case gm.Exec():
+                    return self.on_routed_exec(write, msg)
+                case gm.Reply():
+                    return self.new_commands_to_replies(
+                            write, self.script.done(msg.request, msg.value)
+                            )
+                case _:
+                    return Error(f'Unexpected {msg}')
+
+        self.transport = ZmqAsyncTransport(
+                make_stack(on_message, name='BK'),
+                setup['endpoint'], zmq.DEALER # pylint: disable=no-member
+                )
+        self.step_dir = setup['steps']
+        self.profiler = Profiler(setup.get('profile'))
+        self.mission = setup.get('mission', b'')
+        self.store = setup['store']
         self.script = cm.Script()
+
+        # Submitted jobs
+        self.pending_jobs: dict[gtt.TaskName, cm.Command] = {}
 
     def on_routed_exec(self, write: Writer[gm.Message], msg: gm.Exec
             ) -> list[list[bytes]]:
@@ -171,7 +211,7 @@ class WorkerProtocol:
         return self.new_commands_to_replies(write,
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
-            self.worker.schedule_task(write_reply, sub)
+            self.schedule_task(write_reply, sub)
             )
 
     def new_commands_to_replies(self, write: Writer[gm.Message], commands: list[cm.InertCommand]
@@ -190,6 +230,8 @@ class WorkerProtocol:
                             name = command.request.name
                         case _:
                             raise NotImplementedError(command)
+                case cm.End():
+                    return [self.run_submission(command.value)], []
                 case _:
                     raise NotImplementedError(command)
             try:
@@ -202,113 +244,27 @@ class WorkerProtocol:
                 return [write(gm.Get(name=name))], []
         return filter_commands(commands, _filter_local)
 
-SubReplyWriter: TypeAlias = Writer[Result[gtt.FlatResultRef, gr.RemoteError]]
-
-@dataclass
-class JobResult:
-    """
-    Result of executing a step
-
-    Attributes:
-        session: communication handle to the client to use to send a reply back
-        result: None iff the task has failed, other wise a reference to the
-            stored result.
-    """
-    write_reply: SubReplyWriter
-    submit: gm.Submit
-    result: gtt.FlatResultRef | None
-
-class Worker:
-    """
-    Class representing an an async worker, wrapping transport, protocol and task
-    execution logic.
-    """
-    def __init__(self, setup: dict):
-        protocol = WorkerProtocol(self, setup['store'])
-
-        def on_message(write: Writer[gm.Message], msg: gm.Message
-                ) -> Iterable[TransportMessage] | Error:
-            match msg:
-                case gm.Exit():
-                    logging.info('Received EXIT, terminating')
-                    raise ProtocolEndException('Incoming EXIT')
-                case gm.Get():
-                    return handle_get(write, msg, setup['store'])
-                case gm.Stat():
-                    return handle_stat(write, msg, setup['store'])
-                case gm.Exec():
-                    return protocol.on_routed_exec(write, msg)
-                case gm.Reply():
-                    return protocol.new_commands_to_replies(
-                            write, protocol.script.done(msg.request, msg.value)
-                            )
-                case _:
-                    return Error(f'Unexpected {msg}')
-
-        self.protocol : 'WorkerProtocol' = protocol
-        self.transport = ZmqAsyncTransport(
-                make_stack(on_message, name='BK'),
-                setup['endpoint'], zmq.DEALER # pylint: disable=no-member
-                )
-        self.step_dir = setup['steps']
-        self.profiler = Profiler(setup.get('profile'))
-        self.mission = setup.get('mission', b'')
-
-        # Submitted jobs
-        self.galp_jobs : asyncio.Queue[Awaitable[JobResult]] = asyncio.Queue()
-
-    def run(self) -> list[asyncio.Task]:
-        """
-        Starts and returns life-long tasks. You should cancel the others as soon
-        as any finishes or raises
-        """
-        tasks = [
-            asyncio.create_task(self.monitor_jobs()),
-            asyncio.create_task(self.listen())
-            ]
-        return tasks
-
-    async def monitor_jobs(self) -> None:
-        """
-        Loop that waits for tasks to finish to send back done/failed messages
-        """
-        reply: gr.RemoteError | Ok[gtt.FlatResultRef]
-        while True:
-            task = await self.galp_jobs.get()
-            job = await task
-            task_def = job.submit.task_def
-            if job.result is not None:
-                reply = Ok(job.result)
-            else:
-                reply = gr.RemoteError(
-                        f'Failed to execute task {task_def}, check worker logs'
-                        )
-            await self.transport.send_raw(job.write_reply(reply))
-
     def schedule_task(self, write_reply: SubReplyWriter, msg: gm.Submit
                       ) -> list[cm.InertCommand]:
         """
         Callback to schedule a task for execution.
         """
         task_def = msg.task_def
-        def _start_task(inputs: Result[list, Error]):
-            task = asyncio.create_task(
-                self.run_submission(write_reply, msg, inputs)
-                )
-            self.galp_jobs.put_nowait(task)
 
-        script = self.protocol.script
         # References are safe by contract: a submit should only ever be sent
         # after its inputs are done
-        collect = script.collect([
+        collect = self.script.collect([
                 query(TaskRef(tin.name), tin.op)
                 for tin in [
                     *task_def.args,
                     *task_def.kwargs.values()
                     ]
                 ], keep_going=False)
-        _, primitives = script.callback(collect, _start_task)
-        return primitives
+        end: cm.Command = collect.eventually(lambda inputs: cm.End(
+            Job(write_reply, msg, inputs)
+            ))
+        self.pending_jobs[task_def.name] = end
+        return self.script.init_command(end)
 
     async def listen(self) -> Error | None:
         """
@@ -328,7 +284,7 @@ class Worker:
     def prepare_submit_arguments(self, step: Step, task_def: CoreTaskDef, inputs: list
                                      ) -> tuple[list, dict]:
         """
-        Unflatten collected arguments and inject path makek if requested
+        Unflatten collected arguments and inject path maker if requested
         """
         r_inputs = list(reversed(inputs))
         args = []
@@ -341,20 +297,21 @@ class Worker:
         # Inject path maker if requested
         if '_galp' in step.kw_names:
             path_maker = PathMaker(
-                self.protocol.store.dirpath,
+                self.store.dirpath,
                 task_def.name.hex()
                 )
             kwargs['_galp'] = path_maker
 
         return args, kwargs
 
-    async def run_submission(self, write_reply: SubReplyWriter, msg: gm.Submit,
-                             inputs: Result[list, Error]) -> JobResult:
+    def run_submission(self, job: Job) -> TransportMessage:
         """
         Actually run the task
         """
-        task_def = msg.task_def
+        task_def = job.submit.task_def
+        inputs = job.inputs
         name = task_def.name
+        del self.pending_jobs[name]
         step_name = task_def.step
 
         try:
@@ -383,15 +340,17 @@ class Worker:
                 raise NonFatalTaskError from exc
 
             # Store the result back, along with the task definition
-            self.protocol.store.put_task_def(task_def)
-            result_ref = self.protocol.store.put_native(name, result, task_def.scatter)
+            self.store.put_task_def(task_def)
+            result_ref = self.store.put_native(name, result, task_def.scatter)
 
-            return JobResult(write_reply, msg, result_ref)
+            return job.write_reply(Ok(result_ref))
 
         except NonFatalTaskError:
             # All raises include exception logging so it's safe to discard the
             # exception here
-            return JobResult(write_reply, msg, None)
+            return job.write_reply(gr.RemoteError(
+                f'Failed to execute task {task_def}, check worker logs'
+                ))
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be
             # re-logged afterwards.
@@ -443,7 +402,7 @@ def main(config):
     make_worker = make_worker_init(config)
     async def _coro(make_worker):
         worker = make_worker()
-        ret = await galp.cli.wait(worker.run())
+        ret = await worker.listen()
         logging.info("Worker terminating normally")
         return ret
     return asyncio.run(_coro(make_worker))

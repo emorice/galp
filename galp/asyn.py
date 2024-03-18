@@ -313,8 +313,6 @@ class Script:
     Interface to a DAG of promises.
     """
     def __init__(self) -> None:
-        # Strong references to all pending callbacks
-        self._pending: set[Command] = set()
         # Weak references to all primitives
         self.commands : WeakValueDictionary[Hashable, _PrimitiveProxy] = WeakValueDictionary()
 
@@ -344,30 +342,6 @@ class Script:
     def init_command(self, command: Command) -> list[InertCommand]:
         """Return the first initial primitives this command depends on"""
         return _advance_all(self, _get_leaves([command]))
-
-    def callback(self, command: Command[InOkT, ErrT],
-            callback: PlainCallback[InOkT, ErrT, OkT]) -> tuple[Command[OkT, ErrT],
-                    list[InertCommand]]:
-        """
-        Adds an arbitrary callback to an existing command. This triggers
-        execution of the command as far as possible, and of the callback if
-        ready.
-        """
-
-        # Add the command to a strong list and dereference it at the end. This
-        # ensures the callback object won't be deleted before getting triggered,
-        # but will once it has
-        @wraps(callback)
-        def _dereference(value: Result[InOkT, ErrT]) -> CallbackRet[OkT, ErrT]:
-            ret = callback(value)
-            self._pending.remove(cb_command)
-            return ret
-        cb_command = command.eventually(_dereference)
-        self._pending.add(cb_command)
-
-        # The callback is set as a downstream link to the command, but it still
-        # need an external trigger, so we need to advance it
-        return cb_command, self.init_command(cb_command)
 
     def notify_change(self, command: Command, old_value: State,
                       new_value: State) -> None:
