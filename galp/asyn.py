@@ -85,9 +85,15 @@ class Command(Generic[OkT, ErrT]):
 
     def then(self, callback: 'Callback[OkT, OutOkT, ErrT]') -> 'Command[OutOkT, ErrT]':
         """
+        Chain callback to this command on sucess
+        """
+        return self.eventually(ok_callback(callback))
+
+    def eventually(self, callback: 'PlainCallback[OkT, ErrT, OutOkT]') -> 'Command[OutOkT, ErrT]':
+        """
         Chain callback to this command
         """
-        return DeferredCommand(Deferred(ok_callback(callback), self))
+        return DeferredCommand(Deferred(callback, self))
 
     def advance(self, script: 'Script'):
         """
@@ -289,7 +295,7 @@ class _PrimitiveProxy(Generic[Ok_contra, ErrT]):
         self.val = result
         for cmd in self.instances:
             cmd.val = self.val
-        return advance_all(self.script,
+        return _advance_all(self.script,
                 list(chain.from_iterable(cmd.outputs for cmd in self.instances))
                 )
 
@@ -335,6 +341,10 @@ class Script:
         """
         return Gather(commands, keep_going)
 
+    def init_command(self, command: Command) -> list[InertCommand]:
+        """Return the first initial primitives this command depends on"""
+        return _advance_all(self, _get_leaves([command]))
+
     def callback(self, command: Command[InOkT, ErrT],
             callback: PlainCallback[InOkT, ErrT, OkT]) -> tuple[Command[OkT, ErrT],
                     list[InertCommand]]:
@@ -352,12 +362,12 @@ class Script:
             ret = callback(value)
             self._pending.remove(cb_command)
             return ret
-        cb_command = DeferredCommand(Deferred(_dereference, command))
+        cb_command = command.eventually(_dereference)
         self._pending.add(cb_command)
 
         # The callback is set as a downstream link to the command, but it still
         # need an external trigger, so we need to advance it
-        return cb_command, advance_all(self, get_leaves([cb_command]))
+        return cb_command, self.init_command(cb_command)
 
     def notify_change(self, command: Command, old_value: State,
                       new_value: State) -> None:
@@ -365,7 +375,7 @@ class Script:
         Hook called when the graph status changes
         """
 
-def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
+def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
     """
     Try to advance all given commands, and all downstream depending on them the
     case being
@@ -381,6 +391,10 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
             continue
         match command:
             case InertCommand():
+                # If it's an output-style primitive, just add it
+                if command.key is None:
+                    primitives.append(command)
+                    continue
                 # Check if we already have instances of that command
                 master = script.commands.get(command.key)
                 if master is None:
@@ -403,7 +417,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                 # For now, subcommands need to be recursively initialized
                 sub_commands = command.advance(script)
                 if sub_commands:
-                    sub_commands = get_leaves(sub_commands)
+                    sub_commands = _get_leaves(sub_commands)
                     commands.extend(sub_commands)
                 # Maybe this caused the command to advance to a terminal state (DONE or
                 # FAILED). In that case downstream commands must be checked too.
@@ -412,7 +426,7 @@ def advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
 
     return primitives
 
-def get_leaves(commands):
+def _get_leaves(commands):
     """
     Collect all the leaves of a command tree
 

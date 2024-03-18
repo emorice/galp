@@ -4,7 +4,7 @@ Lists of internal commands
 
 import sys
 import time
-from typing import Sequence, Hashable, TypeVar
+from typing import Sequence, Hashable, TypeVar, Never
 from dataclasses import dataclass
 
 import galp.net.requests.types as gr
@@ -85,6 +85,17 @@ class Send(InertCommand[T_co, Error]):
     @property
     def key(self) -> Hashable:
         return gm.get_request_id(self.request)
+
+class End(InertCommand[Never, Never]):
+    """Finish the command processing"""
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    # This marks the command as output-style
+    @property
+    def key(self) -> Hashable:
+        return None
 
 # Parameters
 # ----------

@@ -127,9 +127,9 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     assert not tdef.args
     kwargs = {}
     for keyword, tin in tdef.kwargs.items():
-        # You need to hold a reference, because advance_all won't !
+        # You need to hold a reference, because script won't !
         cmd = cm.rget(tin.name)
-        primitives = ga.advance_all(script, ga.get_leaves([cmd]))
+        primitives = script.init_command(cmd)
         unprocessed = ga.filter_commands(primitives, _exec)
         assert not unprocessed
         if not isinstance(cmd.val, Ok):

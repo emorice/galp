@@ -168,17 +168,14 @@ class Client:
         """
         Processes messages until the collection target is achieved
         """
-        # Register the termination command
-        def _end(value):
-            raise ProtocolEndException(value)
-
         commands = [run_task(t, exec_options) for t in tasks]
         collect = self._script.collect(commands, exec_options.keep_going)
+        end: cm.Command = collect.eventually(cm.End)
 
         try:
-            _, cmds = self._script.callback(collect, _end)
+            primitives = self._script.init_command(end)
             await self._transport.send_messages(
-                    self._schedule_new(cmds)
+                    self._schedule_new(primitives)
                     )
             err = await self._transport.listen_reply_loop()
             if err is not None:
@@ -218,6 +215,8 @@ class Client:
                         name = command.request.name
                     case _:
                         return [command], []
+            case cm.End():
+                raise ProtocolEndException(command.value)
             case _:
                 return [command], []
 
