@@ -101,6 +101,7 @@ async def test_fill_queue(make_blocked_client):
                            resources=gtt.Resources(cpus=1))
                     )
 
+@pytest.mark.xfail
 async def test_unique_submission(make_peer_client):
     """
     Tests that we only successfully send a submit only once

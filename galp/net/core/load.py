@@ -7,9 +7,9 @@ from galp.serialize import LoadError
 from galp.serializer import load_model
 from galp.net.base.load import LoaderDict, default_loader, UnionLoader
 from galp.net.requests.load import Put, put_loader
-from galp.task_types import FlatResultRef
+from galp.task_types import FlatResultRef, TaskDef
 
-from .types import Message, Reply, RequestId, RemoteError
+from .types import Message, Reply, RequestId, RemoteError, Upload
 
 def _get_reply_value_type(request_id: RequestId) -> type:
     """
@@ -66,8 +66,20 @@ def _reply_loader(frames: list[bytes]) -> Result[Reply, LoadError]:
         case _:
             return LoadError('Wrong number of frames')
 
+def _load_upload(frames: list[bytes]) -> Result[Upload, LoadError]:
+    match frames:
+        case [task_def_frame, *put_frames]:
+            return load_model(TaskDef, task_def_frame).then( # type: ignore[arg-type]
+                    lambda task_def: put_loader(put_frames).then(
+                        lambda put: Ok(Upload(task_def, put))
+                        )
+                    )
+        case _:
+            return LoadError('Wrong number of frames')
+
 _message_loaders = LoaderDict(default_loader)
 _message_loaders[Reply] = _reply_loader
+_message_loaders[Upload] = _load_upload
 
 class MessageLoader(UnionLoader[Message]): # pylint: disable=too-few-public-methods
     """Loader for Message union"""

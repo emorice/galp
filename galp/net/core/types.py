@@ -145,7 +145,19 @@ class Submit(BaseRequest[gtt.FlatResultRef], key='submit'):
     def input_id(self) -> gtt.TaskName:
         return self.task_def.name
 
-Request: TypeAlias = Get | Stat | Submit
+@dataclass(frozen=True)
+class Upload(BaseRequest[gtt.FlatResultRef], key='upload'):
+    """
+    Ask for a task result to be written in store
+    """
+    task_def: gtt.TaskDef
+    payload: gr.Put
+
+    @property
+    def input_id(self) -> gtt.TaskName:
+        return self.task_def.name
+
+Request: TypeAlias = Get | Stat | Submit | Upload
 
 @dataclass(frozen=True)
 class RequestId:

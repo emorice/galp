@@ -50,7 +50,7 @@ class Allocation:
     """
     claim: gtt.ResourceClaim
     resources: Resources
-    msg: gm.Message
+    msg: gm.Request | gm.Exec
     client: ReplyFromSession
     task_id: bytes
 
@@ -183,24 +183,16 @@ class CommonProtocol:
         orig_msg = alloc.msg
 
         match orig_msg:
-            case gm.Get():
-                return [add_request_id(write_client, orig_msg)(
-                    gr.RemoteError('Worker died when processing request')
-                    )]
-            case gm.Stat():
-                return [add_request_id(write_client, orig_msg)(
-                    gr.RemoteError('Worker died when processing request')
-                    )]
             case gm.Exec():
                 task_def = orig_msg.submit.task_def
                 reply = gr.RemoteError(
                         f'Failed to execute task {task_def}: worker died'
                         )
                 return [add_request_id(write_client, orig_msg.submit)(reply)]
-        logging.error(
-            'Worker died while handling %s, no error propagation', alloc
-            )
-        return []
+            case _:
+                return [add_request_id(write_client, orig_msg)(
+                    gr.RemoteError('Worker died when processing request')
+                    )]
 
     def on_exited(self, msg: gm.Exited
             ) -> list[TransportMessage]:
@@ -285,7 +277,7 @@ class CommonProtocol:
 
         # For Submits, the worker will need to know the details of the
         # allocation, so wrap the original message
-        new_msg: gm.Message
+        new_msg: gm.Request | gm.Exec
         if isinstance(msg, gm.Submit):
             new_msg = gm.Exec(submit=msg, resources=resources)
         else:
@@ -354,8 +346,8 @@ class CommonProtocol:
 
         # Else, we may have to forward or queue the message. We decide based on
         # the verb whether this should be ultimately sent to a worker
-        if isinstance(msg, gm.Stat | gm.Submit | gm.Get):
-            return self.on_request(session, msg)
+        if isinstance(msg, gm.Request): # type: ignore[arg-type] # mypy bug
+            return self.on_request(session, msg) # type: ignore[arg-type] # mypy bug
 
         # If we reach this point, we received a message we know nothing about
         logging.error('Unknown message %s', msg)

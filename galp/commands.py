@@ -211,9 +211,22 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
                         list(map(gtt.TaskRef, task_def.children))
                         )
             case gtt.TaskNode():
-                # Else, we can't hand out references but we have the true tasks
-                # instead
-                return gtt.ResultRef(task.name, task.dependencies)
+                # Else, we have a literal that wasn't found on the remote,
+                # upload it.
+                data, children = gtt.TaskSerializer.dumps(task.data,
+                        lambda child: gtt.TaskRef(child.name))
+                return (
+                        Send(gm.Upload(
+                            task_def,
+                            gr.Put(data, children, gtt.TaskSerializer.loads))
+                             )
+                        .then(
+                            # We still return a full ref, not a flat ref,
+                            # because we do have the child tasks available locally,
+                            # but maybe not remotely yet
+                            lambda _flat_ref: gtt.ResultRef(task.name, task.dependencies)
+                            )
+                        )
 
     # Query, should never have reached this layer as queries have custom run
     # mechanics

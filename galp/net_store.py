@@ -8,7 +8,7 @@ import logging
 from typing import Iterable
 
 from galp.result import Ok
-from galp.net.core.types import Get, Stat, Message
+from galp.net.core.types import Get, Stat, Upload, Message
 from galp.net.core.dump import Writer
 from galp.net.requests.types import NotFound, Found, Put, StatDone, RemoteError
 from galp.net.core.dump import add_request_id
@@ -47,6 +47,19 @@ def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
         err = 'Error when trying to read object from store, see worker logs'
         logging.exception('STAT: %s: %s', err, msg.name)
     return [write_reply(RemoteError(err))]
+
+def handle_upload(write: Writer[Message], msg: Upload, store: CacheStack
+                  ) -> Iterable[TransportMessage]:
+    """
+    Check object into store
+    """
+    write_reply = add_request_id(write, msg)
+    store.put_task_def(msg.task_def)
+    result_ref = store.put_serial(
+            msg.task_def.name,
+            (msg.payload.data, msg.payload.children)
+            )
+    return [write_reply(Ok(result_ref))]
 
 def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:
     """

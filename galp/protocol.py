@@ -62,7 +62,7 @@ def _log_message(routed: Routed, proto_name: str) -> Routed:
     msg = routed.body
     verb = msg.message_get_key()
     match msg:
-        case gm.Submit():
+        case gm.Submit() | gm.Upload():
             arg = str(msg.task_def.name)
         case _:
             arg = getattr(msg, 'name', '')

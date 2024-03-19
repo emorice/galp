@@ -14,9 +14,15 @@ from .types import ReplyValue, Put, RemoteError
 def _dump_ok_reply_value_data(ok_value) -> list[bytes]:
     return [ok_value.message_get_key(), dump_model(ok_value)]
 
+def dump_put(put: Put) -> list[bytes]:
+    """
+    Special serialization for Put, the data is out of band
+    """
+    return [dump_model(put.children), put.data]
+
 @_dump_ok_reply_value_data.register
 def _(value: Put) -> list[bytes]:
-    return [dump_model(value.children), value.data]
+    return dump_put(value)
 
 @_dump_ok_reply_value_data.register
 def _(value: FlatResultRef) -> list[bytes]:

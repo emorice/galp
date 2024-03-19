@@ -37,7 +37,7 @@ from galp.query import query
 from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
-from galp.net_store import handle_get, handle_stat
+from galp.net_store import handle_get, handle_stat, handle_upload
 from galp.net.core.dump import add_request_id, Writer
 from galp.asyn import filter_commands
 
@@ -151,6 +151,8 @@ class Worker:
                     return handle_get(write, msg, setup['store'])
                 case gm.Stat():
                     return handle_stat(write, msg, setup['store'])
+                case gm.Upload():
+                    return handle_upload(write, msg, setup['store'])
                 case gm.Exec():
                     return self.on_routed_exec(write, msg)
                 case gm.Reply():

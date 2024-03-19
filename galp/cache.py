@@ -171,11 +171,10 @@ class CacheStack():
 
         data, children = self.serializer.dumps(obj, self.put_task)
 
-        self.put_serial(name, (data, children))
+        return self.put_serial(name, (data, children))
 
-        return gtt.FlatResultRef(name, children)
-
-    def put_serial(self, name: TaskName, serialized: tuple[bytes, Sequence[TaskRef]]):
+    def put_serial(self, name: TaskName, serialized: tuple[bytes, Sequence[TaskRef]]
+                   ) -> gtt.FlatResultRef:
         """
         Simply pass the underlying object to the underlying cold cache.
 
@@ -190,6 +189,8 @@ class CacheStack():
         self.serialcache[name + b'.children'] = msgpack.packb(
                 [c.name for c in children]
                 )
+
+        return gtt.FlatResultRef(name, children)
 
     def put_task_def(self, task_def: TaskDef) -> None:
         """
