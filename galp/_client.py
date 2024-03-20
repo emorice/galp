@@ -21,7 +21,6 @@ import galp.task_types as gtt
 
 from galp.result import Result, Ok, Error
 from galp.cache import CacheStack
-from galp.net_store import handle_get
 from galp.protocol import (ProtocolEndException, make_stack,
     TransportMessage, Writer)
 from galp.zmq_async_transport import ZmqAsyncTransport
@@ -69,11 +68,9 @@ class Client:
         self._cpus_per_task = cpus_per_task or 1
 
         # Communication
-        def on_message(write: Writer[gm.Message], msg: gm.Message
+        def on_message(_write: Writer[gm.Message], msg: gm.Message
                 ) -> Iterable[TransportMessage] | Error:
             match msg:
-                case gm.Get():
-                    return handle_get(write, msg, self._store)
                 case gm.Reply():
                     return self._schedule_new(
                         self._script.done(msg.request, msg.value)

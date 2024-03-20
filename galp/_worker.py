@@ -156,8 +156,8 @@ class Worker:
                 case gm.Exec():
                     return self.on_routed_exec(write, msg)
                 case gm.Reply():
-                    return self.new_commands_to_replies(
-                            write, self.script.done(msg.request, msg.value)
+                    return self._new_commands_to_replies(
+                            self.script.done(msg.request, msg.value)
                             )
                 case _:
                     return Error(f'Unexpected {msg}')
@@ -210,41 +210,49 @@ class Worker:
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        return self.new_commands_to_replies(write,
+        return self._new_commands_to_replies(
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
             self.schedule_task(write_reply, sub)
             )
 
-    def new_commands_to_replies(self, write: Writer[gm.Message], commands: list[cm.InertCommand]
+    def _get_serial(self, name: gtt.TaskName) -> Result[gr.Put, Error]:
+        """
+        Helper to safely attempt to read from store
+        """
+        try:
+            return Ok(gr.Put(*self.store.get_serial(name)))
+        except StoreReadError:
+            logging.exception('In %s:', name)
+            return Error('StoreReadError')
+        except KeyError:
+            return Error('Not found in store')
+
+
+    def _filter_local(self, command: cm.InertCommand
+                    ) -> tuple[list[TransportMessage], list[cm.InertCommand]]:
+        """Filter out locally available resources, send queries for the rest"""
+        match command:
+            case cm.Send():
+                match (req := command.request):
+                    case gm.Get():
+                        return [], self.script.done(
+                                command.key,
+                                self._get_serial(req.name)
+                                )
+                    case _:
+                        raise NotImplementedError(command)
+            case cm.End():
+                return [self.run_submission(command.value)], []
+            case _:
+                raise NotImplementedError(command)
+
+    def _new_commands_to_replies(self, commands: list[cm.InertCommand]
             ) -> list[TransportMessage]:
         """
         Generate galp messages from a command reply list
         """
-
-        def _filter_local(command: cm.InertCommand
-                    ) -> tuple[list[TransportMessage], list[cm.InertCommand]]:
-            """Filter out locally available resources, send queries for the rest"""
-            match command:
-                case cm.Send():
-                    match command.request:
-                        case gm.Get():
-                            name = command.request.name
-                        case _:
-                            raise NotImplementedError(command)
-                case cm.End():
-                    return [self.run_submission(command.value)], []
-                case _:
-                    raise NotImplementedError(command)
-            try:
-                res = gr.Put(*self.store.get_serial(name))
-                return [], self.script.done(command.key, Ok(res))
-            except StoreReadError:
-                logging.exception('In %s:', command.key)
-                return [], self.script.done(command.key, Error('StoreReadError'))
-            except KeyError:
-                return [write(gm.Get(name=name))], []
-        return filter_commands(commands, _filter_local)
+        return filter_commands(commands, self._filter_local)
 
     def schedule_task(self, write_reply: SubReplyWriter, msg: gm.Submit
                       ) -> list[cm.InertCommand]:
