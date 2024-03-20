@@ -12,9 +12,8 @@ import galp.config
 import galp.commands as cm
 import galp.asyn as ga
 from galp.net.core.types import Get
-from galp.net.requests.types import Put
 from galp._client import store_literals
-from galp.task_types import TaskSerializer, TaskNode, CoreTaskDef
+from galp.task_types import TaskSerializer, TaskNode, CoreTaskDef, Serialized
 from galp.cache import CacheStack
 from galp.result import Ok
 
@@ -115,9 +114,9 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
             raise NotImplementedError(command)
         name = command.request.name
         if name not in mem_store:
-            buf, children, _loads = store.get_serial(name)
-            mem_store.put_serial(name, (buf, children))
-        res = Put(*mem_store.get_serial(name))
+            serialized = store.get_serial(name)
+            mem_store.put_serial(name, serialized)
+        res = mem_store.get_serial(name)
         return [], script.done(command.key, Ok(res))
 
     store_literals(mem_store, [task])

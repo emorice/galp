@@ -6,23 +6,23 @@ from functools import singledispatch
 
 from galp.result import Ok, Result
 from galp.serializer import dump_model
-from galp.task_types import FlatResultRef
+from galp.task_types import FlatResultRef, Serialized
 
-from .types import ReplyValue, Put, RemoteError
+from .types import ReplyValue, RemoteError
 
 @singledispatch
 def _dump_ok_reply_value_data(ok_value) -> list[bytes]:
     return [ok_value.message_get_key(), dump_model(ok_value)]
 
-def dump_put(put: Put) -> list[bytes]:
+def dump_serialized(obj: Serialized) -> list[bytes]:
     """
     Special serialization for Put, the data is out of band
     """
-    return [dump_model(put.children), put.data]
+    return [dump_model(obj.children), obj.data]
 
 @_dump_ok_reply_value_data.register
-def _(value: Put) -> list[bytes]:
-    return dump_put(value)
+def _(value: Serialized) -> list[bytes]:
+    return dump_serialized(value)
 
 @_dump_ok_reply_value_data.register
 def _(value: FlatResultRef) -> list[bytes]:

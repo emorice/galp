@@ -15,7 +15,8 @@ import dill # type: ignore[import] # Issue 85
 
 from pydantic import ValidationError, TypeAdapter, RootModel
 
-from galp.serialize import LoadError, Serializer as BaseSerializer
+from galp.serialize import (LoadError, Serializer as BaseSerializer,
+                            GenSerialized)
 from galp.result import Result, Ok
 
 Nat = TypeVar('Nat')
@@ -30,6 +31,10 @@ class Serializer(BaseSerializer[Nat, Ref]):
     objects are objects that should be handled out of band in a custom way by
     the serializer. Ref are objects created as the result of such handling,
     to be understood as references to out-of-band data.
+    """
+    serialized_cls: type[GenSerialized[Ref]] = GenSerialized[Ref]
+    """
+    Override this if you need a custom Serialized subclass
     """
 
     @classmethod
@@ -51,7 +56,7 @@ class Serializer(BaseSerializer[Nat, Ref]):
 
     @classmethod
     def dumps(cls, obj: Any, save: Callable[[Nat], Ref]
-              ) -> tuple[bytes, list[Ref]]:
+              ) -> GenSerialized[Ref]:
         """
         Serialize the data.
 
@@ -71,7 +76,7 @@ class Serializer(BaseSerializer[Nat, Ref]):
         children : list[Ref] = []
         # Modifies children in place
         payload = msgpack.packb(obj, default=cls._default(children, save), use_bin_type=True)
-        return payload, children
+        return cls.serialized_cls(payload, children, cls.loads)
 
     @classmethod
     def as_nat(cls, obj: Any) -> Nat | None:

@@ -6,7 +6,7 @@ from galp.result import Result, Ok
 from galp.serialize import LoadError
 from galp.serializer import load_model
 from galp.net.base.load import LoaderDict, default_loader, UnionLoader
-from galp.net.requests.load import Put, put_loader
+from galp.net.requests.load import Serialized, load_serialized
 from galp.task_types import FlatResultRef, TaskDef
 
 from .types import Message, Reply, RequestId, RemoteError, Upload
@@ -32,8 +32,8 @@ def _remote_error_loader(request_id: RequestId, frames: list[bytes]) -> Result[R
 def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Result[Reply, LoadError]:
     rep_type = _get_reply_value_type(request_id)
     loaded: Result
-    if rep_type is Put:
-        loaded = put_loader(frames)
+    if rep_type is Serialized:
+        loaded = load_serialized(frames)
     elif rep_type is FlatResultRef:
         match frames:
             case [frame]:
@@ -68,10 +68,10 @@ def _reply_loader(frames: list[bytes]) -> Result[Reply, LoadError]:
 
 def _load_upload(frames: list[bytes]) -> Result[Upload, LoadError]:
     match frames:
-        case [task_def_frame, *put_frames]:
+        case [task_def_frame, *ser_frames]:
             return load_model(TaskDef, task_def_frame).then( # type: ignore[arg-type]
-                    lambda task_def: put_loader(put_frames).then(
-                        lambda put: Ok(Upload(task_def, put))
+                    lambda task_def: load_serialized(ser_frames).then(
+                        lambda ser: Ok(Upload(task_def, ser))
                         )
                     )
         case _:

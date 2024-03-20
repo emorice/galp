@@ -5,7 +5,8 @@ Many code paths may need to deal with an object that is serialized or with a
 serializer but do not depend on what is the actual serialization strategy used.
 """
 
-from typing import Any, TypeVar, Generic, Callable
+from typing import Any, TypeVar, Generic, Callable, Sequence
+from dataclasses import dataclass
 from galp.result import Result, Error
 
 
@@ -14,6 +15,29 @@ class LoadError(Error[str]):
 
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
+
+Ref_co = TypeVar('Ref_co', covariant=True)
+
+@dataclass(frozen=True)
+class GenSerialized(Generic[Ref_co]):
+    """
+    A serialized object
+
+    Attributes:
+        data: the serialized object data
+        children: the subordinate object references that are linked from within the
+            serialized data
+    """
+    data: bytes
+    children: Sequence[Ref_co]
+    _loads: Callable[[bytes, Sequence[object]], Result[object, LoadError]]
+
+    def deserialize(self, children: Sequence[object]) -> Result[object, LoadError]:
+        """
+        Given the native objects that children are references to, deserialize
+        this resource by injecting the corresponding objects into it.
+        """
+        return self._loads(self.data, children)
 
 class Serializer(Generic[Nat, Ref]):
     """
@@ -37,10 +61,9 @@ class Serializer(Generic[Nat, Ref]):
         """
         raise NotImplementedError
 
-
     @classmethod
     def dumps(cls, obj: Any, save: Callable[[Nat], Ref]
-              ) -> tuple[bytes, list[Ref]]:
+              ) -> GenSerialized[Ref]:
         """
         Serialize the data.
 

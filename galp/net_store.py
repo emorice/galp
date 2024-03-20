@@ -10,7 +10,7 @@ from typing import Iterable
 from galp.result import Ok
 from galp.net.core.types import Get, Stat, Upload, Message
 from galp.net.core.dump import Writer
-from galp.net.requests.types import NotFound, Found, Put, StatDone, RemoteError
+from galp.net.requests.types import NotFound, Found, StatDone, RemoteError
 from galp.net.core.dump import add_request_id
 from galp.cache import CacheStack, StoreReadError
 from galp.protocol import TransportMessage
@@ -24,7 +24,7 @@ def handle_get(write: Writer[Message], msg: Get, store: CacheStack
     name = msg.name
     logging.debug('Received GET for %s', name)
     try:
-        res = Put(*store.get_serial(name))
+        res = store.get_serial(name)
         logging.info('GET: Cache HIT: %s', name)
         return [write_reply(Ok(res))]
     except KeyError:
@@ -55,10 +55,7 @@ def handle_upload(write: Writer[Message], msg: Upload, store: CacheStack
     """
     write_reply = add_request_id(write, msg)
     store.put_task_def(msg.task_def)
-    result_ref = store.put_serial(
-            msg.task_def.name,
-            (msg.payload.data, msg.payload.children)
-            )
+    result_ref = store.put_serial(msg.task_def.name, msg.payload)
     return [write_reply(Ok(result_ref))]
 
 def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:

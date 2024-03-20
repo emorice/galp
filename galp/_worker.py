@@ -216,12 +216,12 @@ class Worker:
             self.schedule_task(write_reply, sub)
             )
 
-    def _get_serial(self, name: gtt.TaskName) -> Result[gr.Put, Error]:
+    def _get_serial(self, name: gtt.TaskName) -> Result[gtt.Serialized, Error]:
         """
         Helper to safely attempt to read from store
         """
         try:
-            return Ok(gr.Put(*self.store.get_serial(name)))
+            return Ok(self.store.get_serial(name))
         except StoreReadError:
             logging.exception('In %s:', name)
             return Error('StoreReadError')

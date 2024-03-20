@@ -102,7 +102,7 @@ class BaseRequest(MessageType, Generic[V], key=None):
         return _Request
 
 @dataclass(frozen=True)
-class Get(BaseRequest[gr.Put], key='get'):
+class Get(BaseRequest[gtt.Serialized], key='get'):
     """
     A message asking for an already computed resource
 
@@ -151,7 +151,7 @@ class Upload(BaseRequest[gtt.FlatResultRef], key='upload'):
     Ask for a task result to be written in store
     """
     task_def: gtt.TaskDef
-    payload: gr.Put
+    payload: gtt.Serialized
 
     @property
     def input_id(self) -> gtt.TaskName:

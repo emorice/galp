@@ -2,13 +2,11 @@
 Models for Galp messages
 """
 
-from typing import Any, Callable, Sequence
 from dataclasses import dataclass
 
 from galp.result import Error
 from galp.net.base.types import MessageType
-from galp.task_types import TaskDef, TaskRef, FlatResultRef
-from galp.serialize import Result, LoadError
+from galp.task_types import TaskDef, FlatResultRef
 
 # Replies
 # ========
@@ -49,27 +47,6 @@ class StatDone(ReplyValue, key='statdone'):
     result: FlatResultRef
 
 StatReplyValue = Found | NotFound | StatDone
-
-@dataclass(frozen=True)
-class Put(ReplyValue, key='put'):
-    """
-    A message sending a serialized task result
-
-    Atrributes:
-        data: the serialized result data
-        children: the subordinate task references that are linked from within the
-            serialized data
-    """
-    data: bytes
-    children: Sequence[TaskRef]
-    _loads: Callable[[bytes, Sequence[Any]], Any]
-
-    def deserialize(self, children: Sequence[Any]) -> Result[Any, LoadError]:
-        """
-        Given the native objects that children are references to, deserialize
-        this resource by injecting the corresponding objects into it.
-        """
-        return self._loads(self.data, children)
 
 # All-purpose error
 # =================

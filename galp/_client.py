@@ -15,7 +15,6 @@ import zmq
 import zmq.asyncio
 
 import galp.net.core.types as gm
-import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
 
@@ -26,8 +25,6 @@ from galp.protocol import (ProtocolEndException, make_stack,
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.control_queue import ControlQueue
 from galp.query import run_task
-from galp.task_types import (TaskName, TaskNode, LiteralTaskDef,
-    ensure_task_node, TaskSerializer)
 from galp.asyn import filter_commands
 
 class TaskFailedError(RuntimeError):
@@ -53,13 +50,13 @@ class Client:
     def __init__(self, endpoint: str, cpus_per_task: int | None = None):
         # Public attribute: counter for the number of SUBMITs for each task
         # Used for reporting and testing cache behavior
-        self.submitted_count : defaultdict[TaskName, int] = defaultdict(int)
+        self.submitted_count : defaultdict[gtt.TaskName, int] = defaultdict(int)
 
         # State keeping:
         # Literals to be exposed on the network
         self._store = CacheStack(
             dirpath=None,
-            serializer=TaskSerializer)
+            serializer=gtt.TaskSerializer)
         # Pending requests
         self._command_queue: ControlQueue[cm.InertCommand] = ControlQueue()
         # Async graph
@@ -104,7 +101,7 @@ class Client:
                 required tasks are either done or failed.
         """
 
-        task_nodes = list(map(ensure_task_node, tasks))
+        task_nodes = list(map(gtt.ensure_task_node, tasks))
 
         # Populate the store
         store_literals(self._store, task_nodes)
@@ -160,7 +157,7 @@ class Client:
             return results[0]
         return results
 
-    async def _run_collection(self, tasks: list[TaskNode],
+    async def _run_collection(self, tasks: list[gtt.TaskNode],
                               exec_options: cm.ExecOptions) -> list[Result]:
         """
         Processes messages until the collection target is achieved
@@ -218,7 +215,7 @@ class Client:
                 return [command], []
 
         try:
-            res = gr.Put(*self._store.get_serial(name))
+            res = self._store.get_serial(name)
         except KeyError:
             # Not found, leave as-is
             return [command], []
@@ -235,12 +232,12 @@ class Client:
         commands = self._command_queue.push_through(commands)
         return [self._write_next(cmd) for cmd in commands]
 
-def store_literals(store: CacheStack, tasks: list[TaskNode]):
+def store_literals(store: CacheStack, tasks: list[gtt.TaskNode]):
     """
     Walk the graph and commit all the literal tasks encountered to the store
     """
     oset = {t.name: t for t in tasks}
-    cset: set[TaskName] = set()
+    cset: set[gtt.TaskName] = set()
 
     while oset:
         # Get a task
@@ -253,9 +250,9 @@ def store_literals(store: CacheStack, tasks: list[TaskNode]):
             if dep_name not in cset:
                 # The graph should be locally generated, and only contain
                 # true tasks not references
-                assert isinstance(dep_node, TaskNode)
+                assert isinstance(dep_node, gtt.TaskNode)
                 oset[dep_name] = dep_node
 
         # Store the embedded object if literal task
-        if isinstance(task_node.task_def, LiteralTaskDef):
-            store.put_native(name, task_node.data)
+        if isinstance(task_node, gtt.LiteralTaskNode):
+            store.put_serial(name, task_node.serialized)

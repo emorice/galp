@@ -2,7 +2,7 @@
 Caching utils
 """
 
-from typing import Any, Callable, TypeAlias, Sequence
+from typing import Any, Sequence
 
 import diskcache # type: ignore[import] # Issue 85
 import msgpack # type: ignore[import] # Issue 85
@@ -10,7 +10,7 @@ import msgpack # type: ignore[import] # Issue 85
 import galp.task_types as gtt
 from galp.result import Result, Ok
 from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
-        TaskNode, LiteralTaskDef, TaskSerializer)
+        TaskNode, TaskSerializer, Serialized, LiteralTaskNode)
 from galp.serializer import serialize_child, dump_model, load_model, LoadError
 
 class StoreReadError(Exception):
@@ -19,17 +19,6 @@ class StoreReadError(Exception):
     reading the result despite it seemingly being in the store (object not in
     store raises KeyError instead).
     """
-
-Serialized: TypeAlias = tuple[bytes, Sequence[TaskRef],
-        Callable[[bytes, Sequence[Any]], Ok | LoadError]]
-"""
-Tuple representing the result of a serialization: a buffer with the data, a list
-of object referenced inside, and a function that can be used to re-assemble the
-object from the buffer and referenced objects.
-
-This is meant to work with the Put message of the protocol, which can be
-created by passing this tuple directly to its constructor.
-"""
 
 class CacheStack():
     """Synchronous cache proxy.
@@ -64,7 +53,7 @@ class CacheStack():
     def __contains__(self, name: TaskName) -> bool:
         return self.contains(name)
 
-    def get_native(self, name: TaskName, shallow=False) -> Any:
+    def get_native(self, name: TaskName, shallow=False) -> object:
         """
         Get a native object form the cache.
 
@@ -78,19 +67,20 @@ class CacheStack():
                 the root object is returned with any linked task replaced by a
                 TaskRef.
         """
-        data, children, loads = self.get_serial(name)
+        serialized = self.get_serial(name)
 
         if shallow:
-            native_children = children
+            native_children: Sequence[object] = serialized.children
         else:
             native_children = [self.get_native(child.name)
-                    for child in children]
+                    for child in serialized.children]
 
-        match loads(data, native_children):
+        match serialized.deserialize(native_children):
             case LoadError() as err:
                 raise StoreReadError(err)
             case Ok(native):
                 return native
+        assert False # type check bug ?
 
     def get_children(self, name: TaskName) -> gtt.FlatResultRef:
         """
@@ -129,7 +119,7 @@ class CacheStack():
             data = self.serialcache[name + b'.data']
         except KeyError:
             data = None
-        return data, children_ref.children, self.serializer.loads
+        return Serialized(data, children_ref.children, self.serializer.loads)
 
     def put_native(self, name: TaskName, obj: Any, scatter: int | None = None
                    ) -> gtt.FlatResultRef:
@@ -166,14 +156,15 @@ class CacheStack():
             assert _len == scatter
 
             payload = msgpack.packb(struct)
-            self.put_serial(name, (payload, child_refs))
+            self.put_serial(name, Serialized(payload, child_refs,
+                                             TaskSerializer.loads))
             return gtt.FlatResultRef(name, children=[])
 
-        data, children = self.serializer.dumps(obj, self.put_task)
+        serialized = self.serializer.dumps(obj, self.put_task)
 
-        return self.put_serial(name, (data, children))
+        return self.put_serial(name, serialized)
 
-    def put_serial(self, name: TaskName, serialized: tuple[bytes, Sequence[TaskRef]]
+    def put_serial(self, name: TaskName, serialized: Serialized
                    ) -> gtt.FlatResultRef:
         """
         Simply pass the underlying object to the underlying cold cache.
@@ -181,16 +172,12 @@ class CacheStack():
         This inherently low-level and unsafe, this is only meant to transfer
         objects effictiently between caches sharing a serializer.
         """
-        data, children = serialized
-
-        assert not isinstance(children, bytes) # guard against legacy code
-
-        self.serialcache[name + b'.data'] = data
+        self.serialcache[name + b'.data'] = serialized.data
         self.serialcache[name + b'.children'] = msgpack.packb(
-                [c.name for c in children]
+                [c.name for c in serialized.children]
                 )
 
-        return gtt.FlatResultRef(name, children)
+        return gtt.FlatResultRef(name, serialized.children)
 
     def put_task_def(self, task_def: TaskDef) -> None:
         """
@@ -233,8 +220,8 @@ class CacheStack():
         for child in task.dependencies:
             self.put_task(child)
 
-        if isinstance(task.task_def, LiteralTaskDef):
-            self.put_native(task.name, task.data)
+        if isinstance(task, LiteralTaskNode):
+            self.put_serial(task.name, task.serialized)
 
         return TaskRef(task.name)
 

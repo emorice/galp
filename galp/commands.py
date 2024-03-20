@@ -118,7 +118,7 @@ class ExecOptions:
 # Routines
 # --------
 
-def _safe_deserialize(res: gr.Put, children: Sequence):
+def _safe_deserialize(res: gtt.Serialized, children: Sequence[object]):
     """
     Wrap serializer in a guard for invalid payloads
     """
@@ -210,23 +210,20 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
                 return gtt.ResultRef(task.name,
                         list(map(gtt.TaskRef, task_def.children))
                         )
-            case gtt.TaskNode():
+            case gtt.LiteralTaskNode():
                 # Else, we have a literal that wasn't found on the remote,
                 # upload it.
-                data, children = gtt.TaskSerializer.dumps(task.data,
-                        lambda child: gtt.TaskRef(child.name))
+                # We still return a full ref, not a flat ref,
+                # because we do have the child tasks available locally,
+                # but maybe not remotely yet
                 return (
-                        Send(gm.Upload(
-                            task_def,
-                            gr.Put(data, children, gtt.TaskSerializer.loads))
-                             )
+                        Send(gm.Upload(task_def, task.serialized))
                         .then(
-                            # We still return a full ref, not a flat ref,
-                            # because we do have the child tasks available locally,
-                            # but maybe not remotely yet
                             lambda _flat_ref: gtt.ResultRef(task.name, task.dependencies)
                             )
                         )
+            case _:
+                assert False, 'Bad task type'
 
     # Query, should never have reached this layer as queries have custom run
     # mechanics

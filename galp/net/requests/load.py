@@ -3,17 +3,16 @@ Specific logic to parsing request-layer objects
 """
 
 from galp.result import Result, Ok
-from galp.task_types import TaskRef, TaskSerializer
+from galp.task_types import TaskRef, TaskSerializer, Serialized
 from galp.serialize import LoadError
 from galp.serializer import load_model
-from .types import Put
 
-def put_loader(frames: list[bytes]) -> Result[Put, LoadError]:
-    """Loads a Put with data frame"""
+def load_serialized(frames: list[bytes]) -> Result[Serialized, LoadError]:
+    """Loads a Serialized with data frame"""
     match frames:
         case [core_frame, data_frame]:
             return load_model(list[TaskRef], core_frame).then(
-                    lambda children: Ok(Put(children=children, data=data_frame,
+                    lambda children: Ok(Serialized(children=children, data=data_frame,
                                             _loads=TaskSerializer.loads))
                     )
         case _:

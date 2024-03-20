@@ -7,14 +7,14 @@ from dataclasses import dataclass
 from enum import Enum
 import hashlib
 from typing import (Any, Literal, Union, Annotated, TypeAlias, TypeVar,
-        Iterable, Sequence)
+        Iterable, Sequence, Callable)
 
 import msgpack # type: ignore[import] # Issue #85
 from pydantic_core import CoreSchema, core_schema
 from pydantic import (GetCoreSchemaHandler, BaseModel, Field, PlainSerializer,
         model_validator)
 
-from galp.serializer import Serializer
+from galp.serializer import Serializer, GenSerialized
 import galp.steps
 
 # Core task type definitions
@@ -212,7 +212,6 @@ class TaskNode:
     """
     task_def: TaskDef
     dependencies: 'list[Task]'
-    data: Any = None
 
     @property
     def name(self) -> TaskName:
@@ -258,6 +257,14 @@ class TaskNode:
             string += '\n'
         string += pad + '])'
         return string
+
+@dataclass
+class LiteralTaskNode(TaskNode):
+    """"
+    TaskNode for a literal task, includes the serialized literal object
+    """
+    task_def: LiteralTaskDef
+    serialized: 'Serialized'
 
 Task: TypeAlias = TaskNode | TaskRef
 
@@ -345,10 +352,17 @@ class StepType(ABC):
     def __call__(self, *args, **kwargs) -> TaskNode:
         raise NotImplementedError
 
+class Serialized(GenSerialized[TaskRef]):
+    """
+    A serialized task result
+    """
+
 class TaskSerializer(Serializer[Task, TaskRef]):
     """
     Serializer that detects task and step objects
     """
+    serialized_cls = Serialized
+
     @classmethod
     def as_nat(cls, obj: Any) -> Task | None:
         match obj:
@@ -359,7 +373,16 @@ class TaskSerializer(Serializer[Task, TaskRef]):
             case _:
                 return None
 
-def make_literal_task(obj: Any) -> TaskNode:
+    # Just for correct typing because our serialization hierarchy is
+    # overcomplicated at the moment
+    @classmethod
+    def dumps(cls, obj: Any, save: Callable[[Task], TaskRef]
+              ) -> Serialized:
+        ser = super().dumps(obj, save)
+        assert isinstance(ser, Serialized)
+        return ser
+
+def make_literal_task(obj: Any) -> LiteralTaskNode:
     """
     Build a Literal TaskNode out of an arbitrary python object
     """
@@ -370,16 +393,16 @@ def make_literal_task(obj: Any) -> TaskNode:
     # Nice to have: more robust hashing, but this is enough for most case where
     # literal resources are a good fit (more complex objects would tend to be
     # actual step outputs)
-    obj_bytes, _dependencies_refs = TaskSerializer.dumps(obj, save)
+    serialized = TaskSerializer.dumps(obj, save)
 
     tdef = {'children': [dep.name for dep in dependencies]}
     # Literals are an exception to naming: they are named by value, so the
     # name is *not* derived purely from the definition object
 
-    return TaskNode(
-            task_def=make_task_def(LiteralTaskDef, tdef, obj_bytes),
+    return LiteralTaskNode(
+            task_def=make_task_def(LiteralTaskDef, tdef, serialized.data),
             dependencies=dependencies,
-            data=obj,
+            serialized=serialized,
             )
 
 def make_child_task_def(parent: TaskName, index: int) -> ChildTaskDef:
