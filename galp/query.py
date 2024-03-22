@@ -12,6 +12,7 @@ from . import commands as cm
 from . import task_types as gtt
 from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .cache import StoreReadError
+from .asyn import as_command
 
 def run_task(task: TaskNode, options: cm.ExecOptions) -> cm.Command:
     """
@@ -23,11 +24,11 @@ def run_task(task: TaskNode, options: cm.ExecOptions) -> cm.Command:
             raise NotImplementedError('Cannot dry-run queries yet')
         subject, = task.dependencies
         # Issue #81 unsafe reference
-        return query(subject, task_def.query)
+        return as_command(query(subject, task_def.query))
 
     return cm.run(task, options)
 
-def query(subject: gtt.Task, _query):
+def query(subject: gtt.Task, _query) -> cm.CommandLike:
     """
     Process the query and decide on further commands to issue
     """
@@ -107,7 +108,7 @@ class Operator:
         """
         return cls._ops.get(name)
 
-    def __call__(self) -> cm.Command:
+    def __call__(self) -> cm.CommandLike:
         """
         Old-style operators
         """
@@ -192,7 +193,7 @@ class Base(Operator):
     Base operator, returns shallow object itself with the linked tasks left as
     references
     """
-    def __call__(self) -> cm.Command:
+    def __call__(self) -> cm.CommandLike:
         return cm.sget(self.subject)
 
 class Sub(Operator):

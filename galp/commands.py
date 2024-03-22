@@ -14,7 +14,7 @@ import galp.asyn as ga
 
 from galp.result import Ok, Error
 from galp.serialize import LoadError
-from galp.asyn import Command, Gather, InertCommand
+from galp.asyn import Command, Gather, InertCommand, CommandLike
 
 # Custom Script
 # -------------
@@ -118,7 +118,7 @@ class ExecOptions:
 # Routines
 # --------
 
-def _safe_deserialize(res: gtt.Serialized, children: Sequence[object]):
+def _deprecated_safe_deserialize(res: gtt.Serialized, children: Sequence[object]):
     """
     Wrap serializer in a guard for invalid payloads
     """
@@ -128,7 +128,7 @@ def _safe_deserialize(res: gtt.Serialized, children: Sequence[object]):
         case Ok(result):
             return result
 
-def fetch(task: gtt.Task) -> Ok[gtt.Serialized] | Command[gtt.Serialized, Error]:
+def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized, Error]:
     """
     Get an object but do not deserailize it yet.
 
@@ -140,7 +140,7 @@ def fetch(task: gtt.Task) -> Ok[gtt.Serialized] | Command[gtt.Serialized, Error]
 
     return Send(gm.Get(task.name))
 
-def rget(task: gtt.Task) -> Command[object, Error]:
+def rget(task: gtt.Task) -> CommandLike[object, Error]:
     """
     Get a task result, then rescursively get all the sub-parts of it
 
@@ -150,18 +150,18 @@ def rget(task: gtt.Task) -> Command[object, Error]:
         fetch(task)
         .then(lambda res: (
             Gather([rget(c) for c in res.children], keep_going=False)
-            .then(lambda children: _safe_deserialize(res, children))
+            .then(res.deserialize)
             ))
         )
 
-def sget(task: gtt.Task) -> object | Command[object, Error]:
+def sget(task: gtt.Task) -> CommandLike[object, Error]:
     """
     Shallow or simple get: get a task result, and deserialize it but keeping
     children as references instead of recursing on them like rget
     """
     return (
         fetch(task)
-        .then(lambda res: _safe_deserialize(res, res.children))
+        .then(lambda res: res.deserialize(res.children))
         )
 
 def _no_not_found(stat_result: gr.StatReplyValue, task: gtt.Task

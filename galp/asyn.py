@@ -122,11 +122,43 @@ class Command(Generic[OkT, ErrT]):
         return isinstance(self.val, Pending)
 
     @property
-    def inputs(self):
+    def inputs(self) -> 'list[Command]':
         """
-        Commands we depend on
+        Other commands we depend on
         """
         raise NotImplementedError
+
+class ResultCommand(Command[OkT, ErrT]):
+    """
+    Command wrapping a Result
+
+    Needlessly convoluted because current code assumes all commands are started
+    in Pending state, and are updated at least once before settling.
+    """
+    def __init__(self, result: Result[OkT, ErrT]):
+        self._result = result
+        super().__init__()
+
+    def _eval(self, _script):
+        self.val = self._result
+        return []
+
+    @property
+    def inputs(self):
+        return []
+
+CommandLike: TypeAlias = Result[OkT, ErrT] | Command[OkT, ErrT]
+
+def as_command(obj: CommandLike[OkT, ErrT]) -> Command[OkT, ErrT]:
+    """
+    Wrap a result into a (done) command.
+
+    Used by code that needs to manipulate mixed collections of commands and
+    results
+    """
+    if isinstance(obj, Command):
+        return obj
+    return ResultCommand(obj)
 
 CallbackRet: TypeAlias = (
         OkT | Result[OkT, ErrT] | Command[OkT, ErrT]
@@ -218,11 +250,13 @@ class Gather(Command[list[OkT], ErrT]):
     commands: list[Command[OkT, ErrT]]
     keep_going: bool
 
-    def __init__(self, commands: 'Command[OkT, ErrT]' | Iterable['Command[OkT, ErrT]'],
+    def __init__(self, commands: CommandLike[OkT, ErrT] |
+                 Iterable[CommandLike[OkT, ErrT]],
                  keep_going: bool):
         super().__init__()
         self.keep_going = keep_going
-        self.commands = list(commands) if isinstance(commands, Iterable) else [commands]
+        _list = list(commands) if isinstance(commands, Iterable) else [commands]
+        self.commands = [as_command(cmdlike) for cmdlike in _list]
         for inp in self.commands:
             inp.outputs.add(self)
 
@@ -237,7 +271,7 @@ class Gather(Command[list[OkT], ErrT]):
         return f'Gather({repr(self.commands)} = {repr(self.val)})'
 
     @property
-    def inputs(self):
+    def inputs(self) -> list[Command]:
         """
         Commands we depend on
         """
@@ -267,7 +301,7 @@ class InertCommand(Command[OkT, ErrT]):
         raise NotImplementedError
 
     @property
-    def inputs(self):
+    def inputs(self) -> list[Command]:
         """
         Commands we depend on
         """
