@@ -160,18 +160,11 @@ def as_command(obj: CommandLike[OkT, ErrT]) -> Command[OkT, ErrT]:
         return obj
     return ResultCommand(obj)
 
-CallbackRet: TypeAlias = (
-        OkT | Result[OkT, ErrT] | Command[OkT, ErrT]
-        )
-"""
-Type for callback returns. We accept callbacks not wrapping a successful result
-into an Ok type.
-"""
-Callback: TypeAlias = Callable[[InOkT], CallbackRet[OkT, ErrT]]
+Callback: TypeAlias = Callable[[InOkT], CommandLike[OkT, ErrT]]
 """
 Type of a typical callback
 """
-PlainCallback: TypeAlias = Callable[[Result[InOkT, ErrT]], CallbackRet[OkT, ErrT]]
+PlainCallback: TypeAlias = Callable[[Result[InOkT, ErrT]], CommandLike[OkT, ErrT]]
 """
 Type of lower-level callback, which should also be called on failures
 """
@@ -221,8 +214,7 @@ class DeferredCommand(Command[OkT, ErrT]):
                     # types of Ok/Error
                     return []
                 case _:
-                    self.val = Ok(ret)
-                    return []
+                    raise TypeError
 
             sub_command = self._state.arg
             new_sub_commands = [self._state.arg]
@@ -366,7 +358,7 @@ class Script:
             return []
         return cmd.done(result)
 
-    def collect(self, commands: list[Command[OkT, ErrT]], keep_going: bool
+    def collect(self, commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
                 ) -> Command[list[OkT], ErrT]:
         """
         Creates a command representing a collection of other commands

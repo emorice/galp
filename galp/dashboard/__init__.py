@@ -128,7 +128,7 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     kwargs = {}
     for keyword, tin in tdef.kwargs.items():
         # You need to hold a reference, because script won't !
-        cmd = cm.rget(TaskRef(tin.name))
+        cmd = ga.as_command(cm.rget(TaskRef(tin.name)))
         primitives = script.init_command(cmd)
         unprocessed = ga.filter_commands(primitives, _exec)
         assert not unprocessed

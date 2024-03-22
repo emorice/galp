@@ -5,7 +5,7 @@ Implementation of complex queries within the command asynchronous system
 import logging
 from typing import Type
 
-from galp.result import Error
+from galp.result import Ok, Error
 import galp.net.requests.types as gr
 import galp.net.core.types as gm
 from . import commands as cm
@@ -14,7 +14,8 @@ from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .cache import StoreReadError
 from .asyn import as_command
 
-def run_task(task: TaskNode, options: cm.ExecOptions) -> cm.Command:
+def run_task(task: TaskNode, options: cm.ExecOptions
+             ) -> cm.Command[object, Error]:
     """
     Creates command appropriate to type of task (query or non-query)
     """
@@ -118,7 +119,7 @@ class Operator:
                     ).then(self.safe_result)
                 )
 
-    def recurse(self, required=None):
+    def recurse(self, required=None) -> cm.Command:
         """
         Build subqueries if needed
         """
@@ -136,16 +137,19 @@ class Operator:
             f'(sub-query was "{self.sub_query}")')
         return []
 
-    def result(self, subs):
+    def result(self, subs) -> cm.CommandLike:
         """
         Build result of operator from subcommands
         """
-        return self._result(self._required, subs)
+        return self.inner_result(self._required, subs)
 
-    def _result(self, _required, _sub_cmds):
-        return None
+    def inner_result(self, _required, _sub_cmds) -> cm.CommandLike[object, Error]:
+        """
+        Build result of operator from subcommands
+        """
+        return Error(NotImplemented)
 
-    def safe_result(self, subs):
+    def safe_result(self, subs) -> cm.CommandLike:
         """
         Wrapper around result for common exceptions
         """
@@ -200,7 +204,7 @@ class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
-    def __call__(self) -> cm.Command:
+    def __call__(self) -> cm.CommandLike[object, Error]:
         return cm.rget(self.subject)
 
 class Done(Operator):
@@ -209,7 +213,7 @@ class Done(Operator):
     """
     def __call__(self) -> cm.Command:
         return cm.Send(gm.Stat(self.subject.name)).then(
-                lambda statr: isinstance(statr, gr.StatDone)
+                lambda statr: Ok(isinstance(statr, gr.StatDone))
                 )
 
 class Def(Operator):
@@ -218,7 +222,7 @@ class Def(Operator):
     """
     def __call__(self) -> cm.Command:
         return cm.safe_stat(self.subject).then(
-                lambda statr: statr.task_def
+                lambda statr: Ok(statr.task_def)
                 )
 
 class Args(Operator):
@@ -261,13 +265,13 @@ class Args(Operator):
                 )
         return sub_commands
 
-    def _result(self, _stat_cmd, query_items):
+    def inner_result(self, _stat_cmd, query_items) -> Ok[dict]:
         """
         Merge argument query items
         """
-        return merge_query_items(self.sub_query, query_items)
+        return Ok(merge_query_items(self.sub_query, query_items))
 
-def merge_query_items(sub_query, query_items):
+def merge_query_items(sub_query, query_items) -> dict:
     """
     Builds a dictionary of results from the a flattened list of subquerys
     """
@@ -319,11 +323,11 @@ class Children(Operator):
                 )
         return sub_commands
 
-    def _result(self, _stat_cmd, query_items):
+    def inner_result(self, _stat_cmd, query_items) -> Ok[dict]:
         """
         Merge argument query items
         """
-        return merge_query_items(self.sub_query, query_items)
+        return Ok(merge_query_items(self.sub_query, query_items))
 
 class GetItem(Operator, named=False):
     """
@@ -358,12 +362,12 @@ class GetItem(Operator, named=False):
 
         return query(gtt.TaskRef(task.name), sub_query)
 
-    def _result(self, _srun_cmd, subs):
+    def inner_result(self, _srun_cmd, subs) -> Ok[object]:
         """
         Return result of simple indexed command
         """
         item, = subs
-        return item
+        return Ok(item)
 
 class Compound(Operator, named=False):
     """
@@ -373,13 +377,13 @@ class Compound(Operator, named=False):
         super().__init__(subject, None)
         self.sub_queries = sub_queries
 
-    def __call__(self) -> cm.Command:
+    def __call__(self) -> cm.Command[object, Error]:
         return cm.Gather([
                 query(self.subject, sub_query) for sub_query in self.sub_queries
             ], keep_going=False
-         ).then(lambda results: {
+         ).then(lambda results: Ok({
              query[0]: result for query, result in zip(self.sub_queries, results)
-         })
+         }))
 
 class Iterate(Operator, named=False):
     """
@@ -415,8 +419,8 @@ class Iterate(Operator, named=False):
 
         return sub_query_commands
 
-    def _result(self, _srun_cmd, results):
+    def inner_result(self, _srun_cmd, results) -> Ok[list]:
         """
         Pack items
         """
-        return list(results)
+        return Ok(list(results))

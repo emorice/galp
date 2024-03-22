@@ -4,7 +4,7 @@ Lists of internal commands
 
 import sys
 import time
-from typing import Sequence, Hashable, TypeVar, Never
+from typing import Sequence, Hashable, TypeVar
 from dataclasses import dataclass
 
 import galp.net.requests.types as gr
@@ -12,7 +12,7 @@ import galp.net.core.types as gm
 import galp.task_types as gtt
 import galp.asyn as ga
 
-from galp.result import Ok, Error
+from galp.result import Result, Ok, Error
 from galp.serialize import LoadError
 from galp.asyn import Command, Gather, InertCommand, CommandLike
 
@@ -86,7 +86,7 @@ class Send(InertCommand[T_co, Error]):
     def key(self) -> Hashable:
         return gm.get_request_id(self.request)
 
-class End(InertCommand[Never, Never]):
+class End(InertCommand):
     """Finish the command processing"""
     def __init__(self, value):
         super().__init__()
@@ -165,16 +165,16 @@ def sget(task: gtt.Task) -> CommandLike[object, Error]:
         )
 
 def _no_not_found(stat_result: gr.StatReplyValue, task: gtt.Task
-                 ) -> gr.Found | gr.StatDone | Error:
+                 ) -> Result[gr.Found | gr.StatDone, Error]:
     """
     Transform NotFound in Found if the task is a real object, and fails
     otherwise.
     """
     if not isinstance(stat_result, gr.NotFound):
-        return stat_result
+        return Ok(stat_result)
 
     if isinstance(task, gtt.TaskNode):
-        return gr.Found(task_def=task.task_def)
+        return Ok(gr.Found(task_def=task.task_def))
 
     return Error(f'The task reference {task.name} could not be resolved to a'
         ' definition')
@@ -200,13 +200,13 @@ def ssubmit(task: gtt.Task, options: ExecOptions = ExecOptions()
     return safe_stat(task).then(lambda statr: _ssubmit(task, statr, options))
 
 def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
-             options: ExecOptions) -> gtt.ResultRef | Command[gtt.ResultRef, Error]:
+             options: ExecOptions) -> CommandLike[gtt.ResultRef, Error]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
     # Short circuit for tasks already processed
     if isinstance(stat_result, gr.StatDone):
-        return stat_result.result
+        return Ok(stat_result.result)
 
     # gm.Found()
     task_def = stat_result.task_def
@@ -219,9 +219,9 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
             case gtt.TaskRef():
                 # If we have a reference to a literal, we assume the children
                 # definitions have been saved and we can refer to them
-                return gtt.ResultRef(task.name,
+                return Ok(gtt.ResultRef(task.name,
                         list(map(gtt.TaskRef, task_def.children))
-                        )
+                        ))
             case gtt.LiteralTaskNode():
                 # Else, we have a literal that wasn't found on the remote,
                 # upload it.
@@ -231,7 +231,9 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
                 return (
                         Send(gm.Upload(task_def, task.serialized))
                         .then(
-                            lambda _flat_ref: gtt.ResultRef(task.name, task.dependencies)
+                            lambda _flat_ref: Ok(gtt.ResultRef(
+                                task.name, task.dependencies
+                                ))
                             )
                         )
             case _:
@@ -262,7 +264,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
 
     # Issue final command
     if options.dry or isinstance(task_def, gtt.ChildTaskDef):
-        return gather_deps.then(lambda _: gtt.ResultRef(task.name, []))
+        return gather_deps.then(lambda _: Ok(gtt.ResultRef(task.name, [])))
 
     return (
             gather_deps
@@ -292,9 +294,9 @@ def rsubmit(task: gtt.Task, options: ExecOptions
             .then(lambda res: Gather(
                 [rsubmit(c, options) for c in res.children],
                 options.keep_going)
-                  .then(
-                      lambda child_results: gtt.RecResultRef(res, child_results)
-                      )
+                  .then(lambda child_results: Ok(
+                      gtt.RecResultRef(res, child_results)
+                      ))
                   )
             )
 

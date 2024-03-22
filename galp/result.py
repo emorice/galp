@@ -8,7 +8,7 @@ from typing import TypeAlias, Generic, TypeVar, Callable, NoReturn
 from dataclasses import dataclass
 from typing_extensions import Self
 
-OkT = TypeVar('OkT')
+OkT = TypeVar('OkT', covariant=True) # pylint: disable=typevar-name-incorrect-variance
 R = TypeVar('R')
 
 @dataclass(frozen=True)
