@@ -193,14 +193,14 @@ class Base(Operator):
     references
     """
     def __call__(self) -> cm.Command:
-        return cm.sget(self.subject.name)
+        return cm.sget(self.subject)
 
 class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
     def __call__(self) -> cm.Command:
-        return cm.rget(self.subject.name)
+        return cm.rget(self.subject)
 
 class Done(Operator):
     """

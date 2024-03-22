@@ -128,27 +128,39 @@ def _safe_deserialize(res: gtt.Serialized, children: Sequence[object]):
         case Ok(result):
             return result
 
-def rget(name: gtt.TaskName) -> Command[object, Error]:
+def fetch(task: gtt.Task) -> Ok[gtt.Serialized] | Command[gtt.Serialized, Error]:
+    """
+    Get an object but do not deserailize it yet.
+
+    Includes bypass for Literals.
+    """
+    # Shortcut for literals
+    if isinstance(task, gtt.LiteralTaskNode):
+        return Ok(task.serialized)
+
+    return Send(gm.Get(task.name))
+
+def rget(task: gtt.Task) -> Command[object, Error]:
     """
     Get a task result, then rescursively get all the sub-parts of it
 
     This unconditionally fails if a sub-part fails.
     """
     return (
-        Send(gm.Get(name))
+        fetch(task)
         .then(lambda res: (
-            Gather([rget(c.name) for c in res.children], keep_going=False)
+            Gather([rget(c) for c in res.children], keep_going=False)
             .then(lambda children: _safe_deserialize(res, children))
             ))
         )
 
-def sget(name: gtt.TaskName) -> Command[object, Error]:
+def sget(task: gtt.Task) -> object | Command[object, Error]:
     """
     Shallow or simple get: get a task result, and deserialize it but keeping
     children as references instead of recursing on them like rget
     """
     return (
-        Send(gm.Get(name))
+        fetch(task)
         .then(lambda res: _safe_deserialize(res, res.children))
         )
 
@@ -294,14 +306,15 @@ def run(task: gtt.Task, options: ExecOptions) -> Command[object, Error]:
     """
     if options.dry:
         return rsubmit(task, options)
-    return rsubmit(task, options).then(lambda _: rget(task.name))
+    return rsubmit(task, options).then(lambda _: rget(task))
 
 # Note: the default exec options is just for compat with Query and to be removed
 # once galp.query gets re-written more flexibly
 
-def srun(task: gtt.Task, options: ExecOptions = ExecOptions()):
+def srun(task: gtt.Task, options: ExecOptions = ExecOptions()
+         ) -> Command[object, Error]:
     """
     Shallow run: combined ssubmit + sget, fetches the raw result of a task but
     not its children
     """
-    return ssubmit(task, options).then(lambda _: sget(task.name))
+    return ssubmit(task, options).then(lambda _: sget(task))

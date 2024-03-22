@@ -1,5 +1,5 @@
 """
-Abstract task types defintions
+Abstract task types definitions
 """
 
 from abc import ABC, abstractmethod
@@ -20,7 +20,7 @@ import galp.steps
 # Core task type definitions
 # ==========================
 
-# Task defs: flat objects decribing tasks
+# Task defs: flat objects describing tasks
 # ----------------------------------------
 
 class TaskName(bytes):
@@ -68,7 +68,7 @@ class TaskInput(BaseModel):
     For now, the only allowed formats are:
      * '$sub', task : means that the task should be run recursively and the final
         result passed as input to the downstream task. In some places '$sub' is
-        ommited for bacward compatibility.
+        omitted for backward compatibility.
      * '$base', task : means that the task should be run non-recursively and the
         immediate result passed as input to the downstream task
     """
@@ -90,7 +90,7 @@ class BaseTaskDef(BaseModel):
         Dependencies referenced inside this definition.
 
         If mode is '$base', this returns only tasks that are upstream of this
-        task, that is, task whose succesful completion is required before this
+        task, that is, task whose successful completion is required before this
         task can run.
 
         If mode is '$sub', this returns also the children tasks, that is, the
@@ -181,9 +181,9 @@ class TaskRef:
     """
     A reference to a defined task by name.
 
-    This is intended to be created when a task definition is commited to
+    This is intended to be created when a task definition is committed to
     storage, so that a task reference exists if and only if a task definition
-    has been stored succesfully.
+    has been stored successfully.
 
     This contract is recursive, in the sense that a TaskRef should be
     issued only when all the inputs of a task have themselves been registered.
@@ -285,7 +285,7 @@ def obj_to_name(canon_rep: Any) -> TaskName:
     Generate a task name from a canonical representation of task made from basic
     types.
 
-    (Current implememtation may not be canonical yet, this is an aspirational
+    (Current implementation may not be canonical yet, this is an aspirational
     docstring)
     """
     payload = msgpack.packb(canon_rep)
@@ -430,9 +430,9 @@ def make_child_task(parent: TaskNode, index: int) -> TaskNode:
 @dataclass
 class ResultRef:
     """
-    A reference to the sucessful result of task execution.
+    A reference to the successful result of task execution.
 
-    To be created when a task result is commited to storage, and child tasks are
+    To be created when a task result is committed to storage, and child tasks are
     not run yet but are somewhere defined.
     """
     name: TaskName
@@ -441,9 +441,9 @@ class ResultRef:
 @dataclass
 class FlatResultRef(ResultRef):
     """
-    A reference to the sucessful result of task execution.
+    A reference to the successful result of task execution.
 
-    To be created when a task result is commited to storage, and child tasks are
+    To be created when a task result is committed to storage, and child tasks are
     not run yet but are remotely defined.
     """
     name: TaskName
@@ -471,7 +471,7 @@ class ReadyCoreTaskDef(BaseModel):
     """
     A core task def, along with a ResultRef for each input.
 
-    Typical of a task that is ready to be excuted since all its dependencies are
+    Typical of a task that is ready to be executed since all its dependencies are
     fulfilled
     """
     task_def: CoreTaskDef

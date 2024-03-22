@@ -13,7 +13,8 @@ import galp.commands as cm
 import galp.asyn as ga
 from galp.net.core.types import Get
 from galp._client import store_literals
-from galp.task_types import TaskSerializer, TaskNode, CoreTaskDef, Serialized
+from galp.task_types import (TaskSerializer, TaskNode, CoreTaskDef, Serialized,
+    TaskRef)
 from galp.cache import CacheStack
 from galp.result import Ok
 
@@ -127,7 +128,7 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     kwargs = {}
     for keyword, tin in tdef.kwargs.items():
         # You need to hold a reference, because script won't !
-        cmd = cm.rget(tin.name)
+        cmd = cm.rget(TaskRef(tin.name))
         primitives = script.init_command(cmd)
         unprocessed = ga.filter_commands(primitives, _exec)
         assert not unprocessed
