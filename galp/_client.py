@@ -220,6 +220,7 @@ class Client:
             # Not found, leave as-is
             return [command], []
 
+        assert False, 'Deprecated store use'
         # Found, mark command as done and pass on children
         return [], self._script.done(command.key, Ok(res))
 

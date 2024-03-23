@@ -257,11 +257,12 @@ class Args(Operator):
         for index, sub_query in arg_subqueries.items():
             try:
                 num_index = int(index)
-                target = task_def.args[num_index].name
+                target_name = task_def.args[num_index].name
             except ValueError: # keyword argument
-                target = task_def.kwargs[index].name
+                target_name = task_def.kwargs[index].name
+            target = get_task_dependency(self.subject, target_name)
             sub_commands.append(
-                query(gtt.TaskRef(target), sub_query)
+                query(target, sub_query)
                 )
         return sub_commands
 
@@ -270,6 +271,19 @@ class Args(Operator):
         Merge argument query items
         """
         return Ok(merge_query_items(self.sub_query, query_items))
+
+def get_task_dependency(task: gtt.Task, dep_name: gtt.TaskName) -> gtt.Task:
+    """
+    From the name of a task dependency, obtain a task or a task ref
+    """
+    match task:
+        case gtt.TaskNode():
+            for dep in task.dependencies:
+                if dep.name == dep_name:
+                    return dep
+            raise ValueError(f'{dep_name} is not a dependencies')
+        case gtt.TaskRef():
+            return gtt.TaskRef(dep_name)
 
 def merge_query_items(sub_query, query_items) -> dict:
     """
@@ -360,7 +374,7 @@ class GetItem(Operator, named=False):
                 f'task, cannot apply sub_query "{sub_query}" to it'
                 )
 
-        return query(gtt.TaskRef(task.name), sub_query)
+        return query(task, sub_query)
 
     def inner_result(self, _srun_cmd, subs) -> Ok[object]:
         """
@@ -413,7 +427,7 @@ class Iterate(Operator, named=False):
                     + ' use a "*" query here')
             # Issue # 81
             sub_query_commands.append(
-                    query(task_nodes.get(task.name, gtt.TaskRef(task.name)),
+                    query(task_nodes.get(task.name, task),
                         sub_query)
                     )
 
