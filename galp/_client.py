@@ -19,7 +19,6 @@ import galp.commands as cm
 import galp.task_types as gtt
 
 from galp.result import Result, Ok, Error
-from galp.cache import CacheStack
 from galp.protocol import (ProtocolEndException, make_stack,
     TransportMessage, Writer)
 from galp.zmq_async_transport import ZmqAsyncTransport
@@ -53,10 +52,6 @@ class Client:
         self.submitted_count : defaultdict[gtt.TaskName, int] = defaultdict(int)
 
         # State keeping:
-        # Literals to be exposed on the network
-        self._store = CacheStack(
-            dirpath=None,
-            serializer=gtt.TaskSerializer)
         # Pending requests
         self._command_queue: ControlQueue[cm.InertCommand] = ControlQueue()
         # Async graph
@@ -102,9 +97,6 @@ class Client:
         """
 
         task_nodes = list(map(gtt.ensure_task_node, tasks))
-
-        # Populate the store
-        store_literals(self._store, task_nodes)
 
         cmd_vals = await asyncio.wait_for(
             self._run_collection(task_nodes, cm.ExecOptions(
@@ -196,64 +188,20 @@ class Client:
             case _:
                 raise NotImplementedError(command)
 
-    def _filter_local_get(self, command: cm.InertCommand
+    def _filter_end(self, command: cm.InertCommand
                          ) -> tuple[list[cm.InertCommand], list[cm.InertCommand]]:
-        """
-        Fulfill GETs that are locally available
-        """
-        # Not a Get, leave as-is
+        """Raise on End"""
         match command:
-            case cm.Send():
-                match command.request:
-                    case gm.Get():
-                        name = command.request.name
-                    case _:
-                        return [command], []
             case cm.End():
                 raise ProtocolEndException(command.value)
             case _:
                 return [command], []
-
-        try:
-            res = self._store.get_serial(name)
-        except KeyError:
-            # Not found, leave as-is
-            return [command], []
-
-        assert False, 'Deprecated store use'
-        # Found, mark command as done and pass on children
-        return [], self._script.done(command.key, Ok(res))
 
     def _schedule_new(self, commands: Iterable[cm.InertCommand]
             ) -> list[TransportMessage]:
         """
         Fulfill, queue, select and covert commands to be sent
         """
-        commands = filter_commands(commands, self._filter_local_get)
+        commands = filter_commands(commands, self._filter_end)
         commands = self._command_queue.push_through(commands)
         return [self._write_next(cmd) for cmd in commands]
-
-def store_literals(store: CacheStack, tasks: list[gtt.TaskNode]):
-    """
-    Walk the graph and commit all the literal tasks encountered to the store
-    """
-    oset = {t.name: t for t in tasks}
-    cset: set[gtt.TaskName] = set()
-
-    while oset:
-        # Get a task
-        name, task_node = oset.popitem()
-        cset.add(name)
-
-        # Add the deps to the open set
-        for dep_node in task_node.dependencies:
-            dep_name = dep_node.name
-            if dep_name not in cset:
-                # The graph should be locally generated, and only contain
-                # true tasks not references
-                assert isinstance(dep_node, gtt.TaskNode)
-                oset[dep_name] = dep_node
-
-        # Store the embedded object if literal task
-        if isinstance(task_node, gtt.LiteralTaskNode):
-            store.put_serial(name, task_node.serialized)

@@ -12,11 +12,11 @@ import galp.config
 import galp.commands as cm
 import galp.asyn as ga
 from galp.net.core.types import Get
-from galp._client import store_literals
 from galp.task_types import (TaskSerializer, TaskNode, CoreTaskDef, Serialized,
     TaskRef)
 from galp.cache import CacheStack
 from galp.result import Ok
+from galp.query import get_task_dependency
 
 def render_object(obj):
     """
@@ -104,7 +104,6 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     assert isinstance(tdef, CoreTaskDef)
 
     ## Define how to fetch missing pieces (direct read from store)
-    mem_store = CacheStack(dirpath=None, serializer=TaskSerializer)
     script = cm.Script()
     def _exec(command: cm.InertCommand
               ) -> tuple[list[None], list[cm.InertCommand]]:
@@ -114,21 +113,17 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
         if not isinstance(command.request, Get):
             raise NotImplementedError(command)
         name = command.request.name
-        if name not in mem_store:
-            serialized = store.get_serial(name)
-            mem_store.put_serial(name, serialized)
-        res = mem_store.get_serial(name)
+        res = store.get_serial(name)
         return [], script.done(command.key, Ok(res))
-
-    store_literals(mem_store, [task])
 
     ## Collect args from local and remote store. Since we don't pass any
     ## argument to the step, all arguments are injected, and therefore keyword arguments
     assert not tdef.args
     kwargs = {}
     for keyword, tin in tdef.kwargs.items():
+        tin_task = get_task_dependency(task, tin.name)
         # You need to hold a reference, because script won't !
-        cmd = ga.as_command(cm.rget(TaskRef(tin.name)))
+        cmd = ga.as_command(cm.rget(tin_task))
         primitives = script.init_command(cmd)
         unprocessed = ga.filter_commands(primitives, _exec)
         assert not unprocessed
