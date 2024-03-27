@@ -206,7 +206,7 @@ async def run_forkserver(config):
     try:
         yield socket
     finally:
-        socket.send_multipart(dump_message(gm.Exit()))
+        socket.send(b'')
         thread.join()
 
 def on_signal(sig, pool):

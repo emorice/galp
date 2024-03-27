@@ -19,12 +19,11 @@ import galp.commands as cm
 import galp.task_types as gtt
 
 from galp.result import Result, Ok, Error
-from galp.protocol import (ProtocolEndException, make_stack,
-    TransportMessage, Writer)
+from galp.protocol import (make_stack, TransportMessage, Writer,
+                           TransportReturn)
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.control_queue import ControlQueue
 from galp.query import run_task
-from galp.asyn import filter_commands
 
 class TaskFailedError(RuntimeError):
     """
@@ -61,7 +60,7 @@ class Client:
 
         # Communication
         def on_message(_write: Writer[gm.Message], msg: gm.Message
-                ) -> Iterable[TransportMessage] | Error:
+                       ) -> TransportReturn:
             match msg:
                 case gm.Reply():
                     return self._schedule_new(
@@ -158,18 +157,19 @@ class Client:
         collect = self._script.collect(commands, exec_options.keep_going)
         end: cm.Command = collect.eventually(cm.End)
 
-        try:
-            primitives = self._script.init_command(end)
-            await self._transport.send_messages(
-                    self._schedule_new(primitives)
-                    )
-            err = await self._transport.listen_reply_loop()
-            if err is not None:
-                logging.error('Communication error: %s', err)
-        except ProtocolEndException:
-            pass
-        # Issue 84: this work because End is only raised after collect is done,
-        # but that's bad style.
+        primitives = self._script.init_command(end)
+        proceeds = self._schedule_new(primitives)
+        if isinstance(proceeds, Ok | Error):
+            result = proceeds
+        else:
+            await self._transport.send_messages(proceeds)
+            result = await self._transport.listen_reply_loop()
+        if isinstance(proceeds, Error):
+            logging.error('Communication error: %s', result)
+
+        # Issue 83: it would be simpler if we could just return the result from
+        # collect, but that would not work because on errors, we want to return
+        # a detail list of ok/error for each task.
         return [c.val for c in commands]
 
     def _write_next(self, command: cm.InertCommand) -> TransportMessage:
@@ -188,20 +188,14 @@ class Client:
             case _:
                 raise NotImplementedError(command)
 
-    def _filter_end(self, command: cm.InertCommand
-                         ) -> tuple[list[cm.InertCommand], list[cm.InertCommand]]:
-        """Raise on End"""
-        match command:
-            case cm.End():
-                raise ProtocolEndException(command.value)
-            case _:
-                return [command], []
-
     def _schedule_new(self, commands: Iterable[cm.InertCommand]
-            ) -> list[TransportMessage]:
+                      ) -> TransportReturn:
         """
-        Fulfill, queue, select and covert commands to be sent
+        Fulfill, queue, select and convert commands to be sent
         """
-        commands = filter_commands(commands, self._filter_end)
+        for command in commands:
+            if isinstance(command, cm.End):
+                return Ok(command.value)
+
         commands = self._command_queue.push_through(commands)
         return [self._write_next(cmd) for cmd in commands]

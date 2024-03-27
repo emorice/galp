@@ -31,7 +31,7 @@ from galp.result import Result, Ok, Error
 
 from galp.config import load_config
 from galp.cache import StoreReadError
-from galp.protocol import ProtocolEndException, make_stack, TransportMessage
+from galp.protocol import make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import query
 from galp.graph import NoSuchStep, Step
@@ -144,9 +144,6 @@ class Worker:
         def on_message(write: Writer[gm.Message], msg: gm.Message
                 ) -> Iterable[TransportMessage] | Error:
             match msg:
-                case gm.Exit():
-                    logging.info('Received EXIT, terminating')
-                    raise ProtocolEndException('Incoming EXIT')
                 case gm.Get():
                     return handle_get(write, msg, setup['store'])
                 case gm.Stat():
@@ -276,7 +273,7 @@ class Worker:
         self.pending_jobs[task_def.name] = end
         return self.script.init_command(end)
 
-    async def listen(self) -> Error | None:
+    async def listen(self) -> Result[object, Error]:
         """
         Main message processing loop of the worker.
         """

@@ -4,10 +4,10 @@ Using ØMQ as a transport for Galp protoclols
 from typing import Iterable
 import zmq
 
-from galp.protocol import ProtocolEndException, Stack, TransportReturn
+from galp.protocol import Stack, TransportReturn
 from galp.writer import TransportMessage
 from galp.net.core.types import Message
-from galp.result import Error
+from galp.result import Result, Ok, Error
 
 class ZmqAsyncTransport:
     """
@@ -72,22 +72,17 @@ class ZmqAsyncTransport:
         zmq_msg = await self.socket.recv_multipart()
         return self.handler(lambda msg: msg, zmq_msg)
 
-    async def listen_reply_loop(self) -> Error | None:
-        """Simple processing loop
+    async def listen_reply_loop(self) -> Result[object, Error]:
+        """Message processing loop
 
         Waits for a message, call the protocol handler, then sends the replies.
         Can also block on sending replies if the underlying transport does.
-        Stops when a handler raises ProtocolEndException or when a parsing error
-        is encountered.
-
-        Suitable for peers with one connection that do not need to transfer
-        information beteen connections.
+        Stops when a handler returns a Result.
         """
-        try:
-            while True:
-                replies = await self.recv_message()
-                if isinstance(replies, Error):
-                    return replies
-                await self.send_messages(replies)
-        except ProtocolEndException:
-            return None
+        while True:
+            replies = await self.recv_message()
+            if isinstance(replies, Error):
+                return replies
+            if isinstance(replies, Ok):
+                return replies
+            await self.send_messages(replies)

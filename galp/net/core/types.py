@@ -24,12 +24,6 @@ from galp.net.requests.types import RemoteError
 # ----------
 
 @dataclass(frozen=True)
-class Exit(MessageType, key='exit'):
-    """
-    A message asking a peer to leave the system
-    """
-
-@dataclass(frozen=True)
 class Exited(MessageType, key='exited'):
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
@@ -203,7 +197,7 @@ class NextRequest(MessageType, key='next_request'):
     """Event sent by broker when ready for next request"""
 
 Message: TypeAlias = (
-        Exit | Exited | Fork | Ready | PoolReady |
+        Exited | Fork | Ready | PoolReady |
         Request |
         Exec | Reply | NextRequest
         )

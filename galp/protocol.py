@@ -13,21 +13,12 @@ from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
         ForwardSessions)
 from galp.net.routing.load import Routed, load_routed
 from galp.writer import TransportMessage
-from galp.result import Error
-
-# Errors and exceptions
-# =====================
-
-class ProtocolEndException(Exception):
-    """
-    Exception thrown by a handler to signal that no more messages are expected
-    and the transport should be closed
-    """
+from galp.result import Error, Result
 
 # Routing-layer handlers
 # ======================
 
-TransportReturn: TypeAlias = Iterable[TransportMessage] | Error
+TransportReturn: TypeAlias = Iterable[TransportMessage] | Result[object, Error]
 TransportHandler: TypeAlias = Callable[
         [Writer[list[bytes]], list[bytes]], TransportReturn]
 """
@@ -112,7 +103,7 @@ def make_forward_stack(app_handler: Callable[
     return Stack(on_message, make_local_writer(router))
 
 DispatchFunction: TypeAlias = Callable[[Writer[gm.Message], gm.Message],
-        Iterable[TransportMessage] | Error]
+        TransportReturn]
 """
 Type of function that can handle any of several messages, but differs from the
 core-layer expected handler by being blind to forwarding
