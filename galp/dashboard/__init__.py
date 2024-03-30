@@ -16,7 +16,7 @@ from galp.task_types import (TaskSerializer, TaskNode, CoreTaskDef, Serialized,
     TaskRef)
 from galp.cache import CacheStack
 from galp.result import Ok
-from galp.query import get_task_dependency
+from galp.query import collect_task_inputs
 
 def render_object(obj):
     """
@@ -118,17 +118,14 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
 
     ## Collect args from local and remote store. Since we don't pass any
     ## argument to the step, all arguments are injected, and therefore keyword arguments
-    assert not tdef.args
-    kwargs = {}
-    for keyword, tin in tdef.kwargs.items():
-        tin_task = get_task_dependency(task, tin.name)
-        # You need to hold a reference, because script won't !
-        cmd = ga.as_command(cm.rget(tin_task))
-        primitives = script.init_command(cmd)
-        unprocessed = ga.filter_commands(primitives, _exec)
-        assert not unprocessed
-        if not isinstance(cmd.val, Ok):
-            raise NotImplementedError(cmd.val)
-        kwargs[keyword] = cmd.val.value
+
+    cmd = collect_task_inputs(task, tdef)
+    primitives = script.init_command(cmd)
+    unprocessed = ga.filter_commands(primitives, _exec)
+    assert not unprocessed
+    if not isinstance(cmd.val, Ok):
+        raise NotImplementedError(cmd.val)
+    args, kwargs = cmd.val.value
+    assert not args
 
     return kwargs

@@ -33,7 +33,7 @@ from galp.config import load_config
 from galp.cache import StoreReadError
 from galp.protocol import make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.query import query
+from galp.query import collect_task_inputs
 from galp.graph import NoSuchStep, Step
 from galp.task_types import TaskRef, CoreTaskDef
 from galp.profiler import Profiler
@@ -133,7 +133,7 @@ class Job:
     """
     write_reply: SubReplyWriter
     submit: gm.Submit
-    inputs: Result[list[object], Error]
+    inputs: Result[tuple[list, dict], Error]
 
 class Worker:
     """
@@ -258,16 +258,11 @@ class Worker:
         """
         task_def = msg.task_def
 
-        # References are safe by contract: a submit should only ever be sent
-        # after its inputs are done
-        collect = self.script.collect([
-                query(TaskRef(tin.name), tin.op)
-                for tin in [
-                    *task_def.args,
-                    *task_def.kwargs.values()
-                    ]
-                ], keep_going=False)
-        end: cm.Command = collect.eventually(lambda inputs: cm.End(
+        # Ok to create a TaskDef as Submit implies deps have been run
+        collection = collect_task_inputs(
+            TaskRef(task_def.name), task_def
+            )
+        end: cm.Command = collection.eventually(lambda inputs: cm.End(
             Job(write_reply, msg, inputs)
             ))
         self.pending_jobs[task_def.name] = end
@@ -288,28 +283,17 @@ class Worker:
     # Task execution logic
     # ====================
 
-    def prepare_submit_arguments(self, step: Step, task_def: CoreTaskDef, inputs: list
-                                     ) -> tuple[list, dict]:
+    def inject_path_maker(self, step: Step, task_def: CoreTaskDef, kwargs: dict
+                          ) -> dict:
         """
-        Unflatten collected arguments and inject path maker if requested
+        Inject path maker if requested
         """
-        r_inputs = list(reversed(inputs))
-        args = []
-        for _tin in task_def.args:
-            args.append(r_inputs.pop())
-        kwargs = {}
-        for keyword in task_def.kwargs:
-            kwargs[keyword] = r_inputs.pop()
-
-        # Inject path maker if requested
         if '_galp' in step.kw_names:
-            path_maker = PathMaker(
+            return dict(kwargs, _galp=PathMaker(
                 self.store.dirpath,
                 task_def.name.hex()
-                )
-            kwargs['_galp'] = path_maker
-
-        return args, kwargs
+                ))
+        return kwargs
 
     def run_submission(self, job: Job) -> TransportMessage:
         """
@@ -327,6 +311,7 @@ class Worker:
                               ' for step %s (%s): %s', name, step_name,
                               inputs.error)
                 raise NonFatalTaskError(inputs.error)
+            args, kwargs = inputs.value
 
             logging.info('Executing step %s (%s)', name, step_name)
 
@@ -336,7 +321,7 @@ class Worker:
                 logging.exception('No such step known to worker: %s', step_name)
                 raise NonFatalTaskError from exc
 
-            args, kwargs = self.prepare_submit_arguments(step, task_def, inputs.value)
+            kwargs = self.inject_path_maker(step, task_def, kwargs)
 
             # This may block for a long time, by design
             try:

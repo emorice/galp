@@ -5,7 +5,7 @@ Functional, framework-agnostic, asynchronous programming system
 import logging
 from weakref import WeakSet, WeakValueDictionary
 from typing import (TypeVar, Generic, Callable, Any, Iterable, TypeAlias,
-    Hashable)
+    Hashable, Mapping)
 from dataclasses import dataclass
 from itertools import chain
 from functools import wraps
@@ -269,6 +269,25 @@ class Gather(Command[list[OkT], ErrT]):
         """
         return self.commands
 
+def collect(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
+            ) -> Command[list[OkT], ErrT]:
+    """
+    Functional alias for Gather
+    """
+    return Gather(commands, keep_going)
+
+K = TypeVar('K')
+
+def collect_dict(commands: Mapping[K, CommandLike[OkT, ErrT]], keep_going: bool
+                 ) -> Command[dict[K, OkT], ErrT]:
+    """
+    Wrapper around Gather that simplies gathering dicts of commands
+    """
+    keys, values = list(commands.keys()), list(commands.values())
+    return Gather(values, keep_going).then(
+            lambda ok_values: Ok(dict(zip(keys, ok_values)))
+            )
+
 class InertCommand(Command[OkT, ErrT]):
     """
     Command tied to an external event
@@ -358,12 +377,8 @@ class Script:
             return []
         return cmd.done(result)
 
-    def collect(self, commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
-                ) -> Command[list[OkT], ErrT]:
-        """
-        Creates a command representing a collection of other commands
-        """
-        return Gather(commands, keep_going)
+    collect = staticmethod(collect)
+    """Legacy"""
 
     def init_command(self, command: Command) -> list[InertCommand]:
         """Return the first initial primitives this command depends on"""

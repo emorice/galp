@@ -12,7 +12,7 @@ from . import commands as cm
 from . import task_types as gtt
 from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .cache import StoreReadError
-from .asyn import as_command
+from .asyn import as_command, collect, collect_dict
 
 def run_task(task: TaskNode, options: cm.ExecOptions
              ) -> cm.Command[object, Error]:
@@ -158,6 +158,29 @@ class Operator:
         except StoreReadError  as exc:
             logging.exception('In %s:', self)
             return Error(exc)
+
+def _task_input_to_query(task: gtt.Task, tin: gtt.TaskInput
+                         ) -> cm.CommandLike[object, Error]:
+    return query(get_task_dependency(task, tin.name), tin.op)
+
+def collect_task_inputs(task: gtt.Task, task_def: gtt.CoreTaskDef
+                    ) -> cm.Command[tuple[list, dict], Error]:
+    """
+    Gather all arguments of a core task
+    """
+    return collect([
+        collect([
+            _task_input_to_query(task, tin)
+            for tin in task_def.args
+            ], keep_going=False),
+        collect_dict({
+            k: _task_input_to_query(task, tin)
+            for k, tin in task_def.kwargs.items()
+            }, keep_going=False)
+        ], keep_going=False).then(
+                # cannot express that collect preserve the inner types
+                lambda both: Ok(tuple(both)) # type: ignore[arg-type]
+                )
 
 def query_to_op(subject: gtt.Task, query_doc) -> Operator:
     """
