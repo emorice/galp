@@ -211,18 +211,6 @@ async def test_refcount(client):
 
     assert ok == 1
 
-async def test_timeout(client):
-    """
-    Client raises timeout when asked
-    """
-    task = gts.busy_loop()
-
-    async def _collect():
-        with pytest.raises(asyncio.TimeoutError):
-            await client.collect(task, timeout=1)
-
-    await asyncio.wait_for(_collect(), 4)
-
 async def test_vmlimit(make_galp_set, make_client):
     """
     Worker  fails tasks if going above virtual memory limit

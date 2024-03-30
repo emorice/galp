@@ -5,7 +5,6 @@ In contrast with a worker which is written as a standalone process, a client is 
 object that can be created and used as part of a larger program.
 """
 
-import asyncio
 import logging
 
 from collections import defaultdict
@@ -78,8 +77,7 @@ class Client:
             stack=self._stack, endpoint=endpoint, socket_type=zmq.DEALER
             )
 
-    async def gather(self, *tasks, return_exceptions: bool = False, timeout=None,
-            dry_run: bool = False):
+    async def gather(self, *tasks, return_exceptions: bool = False, dry_run: bool = False):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
         and returns the actual results.
@@ -97,12 +95,10 @@ class Client:
 
         task_nodes = list(map(gtt.ensure_task_node, tasks))
 
-        cmd_vals = await asyncio.wait_for(
-            self._run_collection(task_nodes, cm.ExecOptions(
+        cmd_vals = await self._run_collection(task_nodes, cm.ExecOptions(
                     keep_going=return_exceptions, dry=dry_run,
                     resources=gtt.ResourceClaim(cpus=self._cpus_per_task)
-                    )),
-            timeout=timeout)
+                    ))
 
         results: list[Any] = []
         for val in cmd_vals:
@@ -136,13 +132,12 @@ class Client:
     # Old name of gather
     collect = gather
 
-    async def run(self, *tasks, return_exceptions=False, timeout=None,
-            dry_run=False):
+    async def run(self, *tasks, return_exceptions=False, dry_run=False):
         """
         Shorthand for gather with a more variadic style
         """
         results = await self.gather(*tasks, return_exceptions=return_exceptions,
-                timeout=timeout, dry_run=dry_run)
+                dry_run=dry_run)
 
         if results and len(results) == 1:
             return results[0]

@@ -59,7 +59,7 @@ async def test_explicit():
 @pytest.fixture
 def run(tmpdir):
     """
-    Run a task
+    Run a task (with a timeout)
     """
     return lambda task, **kwargs: galp.run(task,
         store=tmpdir, steps=['galp.tests.steps'], timeout=3,
@@ -70,6 +70,13 @@ def test_oneshot(run):
     Run a task through an all-in-one wrapper.
     """
     assert run(gts.identity(1234)) == 1234
+
+def test_oneshot_timeout(run):
+    """
+    Raise if the task never completes
+    """
+    with pytest.raises(TimeoutError):
+        run(gts.busy_loop())
 
 def test_oneshot_dryrun(run):
     """
