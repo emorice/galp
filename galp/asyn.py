@@ -3,12 +3,13 @@ Functional, framework-agnostic, asynchronous programming system
 """
 
 import logging
-from weakref import WeakSet, WeakValueDictionary
+from weakref import WeakSet
 from typing import (TypeVar, Generic, Callable, Any, Iterable, TypeAlias,
     Hashable, Mapping)
 from dataclasses import dataclass
 from itertools import chain
 from functools import wraps
+from collections import defaultdict
 from galp.result import Ok, Error, Result
 
 # Extension of Result with a "pending" state
@@ -294,11 +295,6 @@ class InertCommand(Command[OkT, ErrT]):
 
     Fully defined and identified by a task name
     """
-    # Strong ref to master. This allows to make the master dict weak, which in
-    # turns drops the master when the last copy gets collected
-    # This is purely for memory management and should not be used for any other
-    # purpose
-    master: '_PrimitiveProxy'
 
     def _eval(self, *_):
         # Never changes by itself
@@ -320,46 +316,14 @@ class InertCommand(Command[OkT, ErrT]):
 
 Ok_contra = TypeVar('Ok_contra', contravariant=True)
 
-class _PrimitiveProxy(Generic[Ok_contra, ErrT]):
-    """
-    Helper class to propagate results to several logical instances of the same
-    primitive
-    """
-    instances: WeakSet[InertCommand]
-    val: State[Ok_contra, ErrT] = Pending()
-    script: 'Script'
-
-    def __init__(self, script: 'Script', *instances: InertCommand):
-        self.instances = WeakSet(instances)
-        self.script = script
-
-    def done(self, result: Result[Ok_contra, ErrT]) -> list[InertCommand]:
-        """
-        Mark all instances as done
-        """
-        self.val = result
-        for cmd in self.instances:
-            cmd.val = self.val
-        return _advance_all(self.script,
-                list(chain.from_iterable(cmd.outputs for cmd in self.instances))
-                )
-
-    def __repr__(self):
-        return f'PrimitiveProxy({repr(set(self.instances))} = {self.val})'
-
-    def is_pending(self) -> bool:
-        """
-        Check if pending
-        """
-        return isinstance(self.val, Pending)
-
 class Script:
     """
     Interface to a DAG of promises.
     """
     def __init__(self) -> None:
         # Weak references to all primitives
-        self.commands : WeakValueDictionary[Hashable, _PrimitiveProxy] = WeakValueDictionary()
+        self.leaves: defaultdict[Hashable, WeakSet[InertCommand]] = defaultdict(WeakSet)
+        self.values: dict[Hashable, State] = {}
 
     def done(self, key: Hashable, result: Result) -> list[InertCommand]:
         """
@@ -368,14 +332,15 @@ class Script:
         If the command cannot be found or is already done, log a warning and
         ignore the result.
         """
-        cmd = self.commands.get(key)
-        if cmd is None:
-            logging.error('Dropping answer to missing promise %s', key)
-            return []
-        if not cmd.is_pending():
-            logging.error('Dropping answer to finished promise %s', key)
-            return []
-        return cmd.done(result)
+        # Register value for future instances
+        self.values[key] = result
+        # Propagate to all current instances
+        prims = self.leaves[key]
+        for prim in prims:
+            prim.val = result
+        return _advance_all(self,
+                list(chain.from_iterable(prim.outputs for prim in prims))
+                )
 
     collect = staticmethod(collect)
     """Legacy"""
@@ -410,24 +375,22 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                 if command.key is None:
                     primitives.append(command)
                     continue
-                # Check if we already have instances of that command
-                master = script.commands.get(command.key)
-                if master is None:
-                    # If not create it, and add it to the new primitives to return
-                    master = _PrimitiveProxy(script, command)
-                    command.master = master # strong
-                    script.commands[command.key] = master # weak
-                    primitives.append(command)
-                else:
-                    # If yes, depends if it's resolved
-                    if master.is_pending():
-                        # If not, we simply add our copy to the list
-                        master.instances.add(command) # weak
-                        command.master = master # strong
-                    else:
-                        # If yes, transfer the state and schedule the rest
-                        command.val = master.val
+                # Check if we already have instances of that command, and if
+                # it's resolved
+                val = script.values.get(command.key)
+                match val:
+                    case None:
+                        # First encounter, create the entry and return it to be
+                        # sent out
+                        script.values[command.key] = Pending()
+                        primitives.append(command)
+                    case Ok() | Error():
+                        # If found and resolved, transfer value and propagate
+                        command.val = val
                         commands.extend(command.outputs)
+                    # If found but pending, nothing special to do
+                # Register instance of command
+                script.leaves[command.key].add(command)
             case _:
                 # For now, subcommands need to be recursively initialized
                 sub_commands = command.advance(script)
