@@ -321,9 +321,8 @@ class Script:
     Interface to a DAG of promises.
     """
     def __init__(self) -> None:
-        # Weak references to all primitives
-        self.leaves: defaultdict[Hashable, WeakSet[InertCommand]] = defaultdict(WeakSet)
-        self.values: dict[Hashable, State] = {}
+        # References to all identical primitives
+        self.leaves: dict[Hashable, list[InertCommand]] = {}
 
     def done(self, key: Hashable, result: Result) -> list[InertCommand]:
         """
@@ -332,10 +331,11 @@ class Script:
         If the command cannot be found or is already done, log a warning and
         ignore the result.
         """
-        # Register value for future instances
-        self.values[key] = result
-        # Propagate to all current instances
-        prims = self.leaves[key]
+        if key not in self.leaves:
+            logging.error('Received unexpected result to command %s', key)
+            return []
+        # Propagate to all current instances and clear them
+        prims = self.leaves.pop(key)
         for prim in prims:
             prim.val = result
         return _advance_all(self,
@@ -372,30 +372,23 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                 if command.key is None:
                     primitives.append(command)
                     continue
-                # Check if we already have instances of that command, and if
-                # it's resolved
-                val = script.values.get(command.key)
-                match val:
-                    case None:
-                        # First encounter, create the entry and return it to be
-                        # sent out
-                        script.values[command.key] = Pending()
-                        primitives.append(command)
-                    case Ok() | Error():
-                        # If found and resolved, transfer value and propagate
-                        command.val = val
-                        commands.extend(command.outputs)
-                    # If found but pending, nothing special to do
-                # Register instance of command
-                script.leaves[command.key].add(command)
+                # Check if we already have instances of that command
+                if command.key in script.leaves:
+                    # If yes, just add it to the list
+                    script.leaves[command.key].append(command)
+                else:
+                    # First encounter, initialize the list and send it out
+                    script.leaves[command.key] = [command]
+                    primitives.append(command)
             case _:
-                # For now, subcommands need to be recursively initialized
+                # Else, call its callback to figure out what to do next
                 sub_commands = command.advance(script)
+                # For now, subcommands need to be recursively initialized
                 if sub_commands:
                     sub_commands = _get_leaves(sub_commands)
                     commands.extend(sub_commands)
                 # Maybe this caused the command to advance to a terminal state (DONE or
-                # FAILED). In that case downstream commands must be checked too.
+                # FAILED). In that case downstream commands must be checked in turn.
                 elif not command.is_pending():
                     commands.extend(command.outputs)
 
