@@ -342,9 +342,6 @@ class Script:
                 list(chain.from_iterable(prim.outputs for prim in prims))
                 )
 
-    collect = staticmethod(collect)
-    """Legacy"""
-
     def init_command(self, command: Command) -> list[InertCommand]:
         """Return the first initial primitives this command depends on"""
         return _advance_all(self, _get_leaves([command]))

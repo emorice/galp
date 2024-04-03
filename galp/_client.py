@@ -15,6 +15,7 @@ import zmq.asyncio
 
 import galp.net.core.types as gm
 import galp.commands as cm
+import galp.asyn as ga
 import galp.task_types as gtt
 
 from galp.result import Result, Ok, Error
@@ -149,7 +150,7 @@ class Client:
         Processes messages until the collection target is achieved
         """
         commands = [run_task(t, exec_options) for t in tasks]
-        collect = self._script.collect(commands, exec_options.keep_going)
+        collect = ga.collect(commands, exec_options.keep_going)
         end: cm.Command = collect.eventually(cm.End)
 
         primitives = self._script.init_command(end)
