@@ -9,7 +9,6 @@ from typing import (TypeVar, Generic, Callable, Any, Iterable, TypeAlias,
 from dataclasses import dataclass
 from itertools import chain
 from functools import wraps
-from collections import defaultdict
 from galp.result import Ok, Error, Result
 
 # Extension of Result with a "pending" state
@@ -96,21 +95,7 @@ class Command(Generic[OkT, ErrT]):
         """
         return DeferredCommand(Deferred(callback, self))
 
-    def advance(self, script: 'Script'):
-        """
-        Try to advance the commands state. If the move causes new commands to be
-        created or moves to a terminal state and trigger downstream commands,
-        returns them for them to be advanced by the caller too.
-        """
-        old_value = self.val
-
-        new_sub_commands = self._eval(script)
-
-        script.notify_change(self, old_value, self.val)
-
-        return new_sub_commands
-
-    def _eval(self, script: 'Script') -> 'list[Command]':
+    def eval(self, script: 'Script') -> 'list[Command]':
         """
         Logic of calculating the value
         """
@@ -140,7 +125,7 @@ class ResultCommand(Command[OkT, ErrT]):
         self._result = result
         super().__init__()
 
-    def _eval(self, _script):
+    def eval(self, _script):
         self.val = self._result
         return []
 
@@ -194,7 +179,7 @@ class DeferredCommand(Command[OkT, ErrT]):
     def __repr__(self):
         return f'Command(val={repr(self.val)}, state={repr(self._state)})'
 
-    def _eval(self, script: 'Script') -> list[Command]:
+    def eval(self, script: 'Script') -> list[Command]:
         """
         State-based handling
         """
@@ -205,17 +190,11 @@ class DeferredCommand(Command[OkT, ErrT]):
 
             # At this point, aggregate value is Done or Failed
             ret = self._state.callback(value)
-            match ret:
-                case Command():
-                    self._state = Deferred(lambda r: r, ret)
-                case Error() | Ok():
-                    self.val = ret # type: ignore
-                    # Narrowing doesn't quite work here, maybe because the last
-                    # case can be about anything and we cannot check the inner
-                    # types of Ok/Error
-                    return []
-                case _:
-                    raise TypeError
+            if isinstance(ret, Command):
+                self._state = Deferred(lambda r: r, ret)
+            else:
+                self.val = ret
+                return []
 
             sub_command = self._state.arg
             new_sub_commands = [self._state.arg]
@@ -253,7 +232,7 @@ class Gather(Command[list[OkT], ErrT]):
         for inp in self.commands:
             inp.outputs.add(self)
 
-    def _eval(self, script: 'Script'):
+    def eval(self, script: 'Script'):
         """
         State-based handling
         """
@@ -296,7 +275,7 @@ class InertCommand(Command[OkT, ErrT]):
     Fully defined and identified by a task name
     """
 
-    def _eval(self, *_):
+    def eval(self, *_):
         # Never changes by itself
         return []
 
@@ -382,7 +361,9 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     primitives.append(command)
             case _:
                 # Else, call its callback to figure out what to do next
-                sub_commands = command.advance(script)
+                old_value = command.val
+                sub_commands = command.eval(script)
+                script.notify_change(command, old_value, command.val)
                 # For now, subcommands need to be recursively initialized
                 if sub_commands:
                     sub_commands = _get_leaves(sub_commands)
