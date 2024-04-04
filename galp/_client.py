@@ -101,25 +101,20 @@ class Client:
                     resources=gtt.ResourceClaim(cpus=self._cpus_per_task)
                     ))
 
+        if isinstance(cmd_vals, Error):
+            raise TaskFailedError(
+                    f'Failed to collect task: {cmd_vals.error}'
+                    )
+
         results: list[Any] = []
-        for val in cmd_vals:
+        for val in cmd_vals.value:
             match val:
                 case Ok():
                     results.append(val.value)
                 case Error():
-                    exc = TaskFailedError(
+                    results.append(TaskFailedError(
                         f'Failed to collect task: {val.error}'
-                        )
-                    if return_exceptions:
-                        results.append(exc)
-                    else:
-                        raise exc
-                case _: # Pending()
-                    # This should only be found if keep_going is False and an
-                    # other command fails, so we should find a Failed and raise
-                    # without actually returning this one.
-                    # Fill it in anyway, to avoid confusions
-                    results.append(val)
+                        ))
 
         # Conventional result for dry runs, as results would then only contain
         # internal objects that shouldn't be exposed
@@ -145,13 +140,14 @@ class Client:
         return results
 
     async def _run_collection(self, tasks: list[gtt.TaskNode],
-                              exec_options: cm.ExecOptions) -> list[Result]:
+                              exec_options: cm.ExecOptions
+                              ) -> Result[list[Result], Error]:
         """
         Processes messages until the collection target is achieved
         """
         commands = [run_task(t, exec_options) for t in tasks]
-        collect = ga.collect(commands, exec_options.keep_going)
-        end: cm.Command = collect.eventually(cm.End)
+        collect_all = ga.collect_all(commands, exec_options.keep_going)
+        end = collect_all.eventually(cm.End)
 
         primitives = self._script.init_command(end)
         proceeds = self._schedule_new(primitives)
@@ -160,13 +156,17 @@ class Client:
         else:
             await self._transport.send_messages(proceeds)
             result = await self._transport.listen_reply_loop()
-        if isinstance(proceeds, Error):
+        if isinstance(result, Error):
             logging.error('Communication error: %s', result)
+            raise RuntimeError()
 
         # Issue 83: it would be simpler if we could just return the result from
         # collect, but that would not work because on errors, we want to return
         # a detail list of ok/error for each task.
-        return [c.val for c in commands]
+
+        # listen_reply_loop cannot type this but we only arrive here with the
+        # result of End
+        return result.value # type: ignore[return-value]
 
     def _write_next(self, command: cm.InertCommand) -> TransportMessage:
         """

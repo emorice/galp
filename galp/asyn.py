@@ -5,11 +5,11 @@ Functional, framework-agnostic, asynchronous programming system
 import logging
 from weakref import WeakSet
 from typing import (TypeVar, Generic, Callable, Any, Iterable, TypeAlias,
-    Hashable, Mapping)
+    Hashable, Mapping, Sequence)
 from dataclasses import dataclass
 from itertools import chain
 from functools import wraps
-from galp.result import Ok, Error, Result
+from galp.result import Ok, Error, Result, all_ok as result_all_ok
 
 # Extension of Result with a "pending" state
 # ==========================================
@@ -26,40 +26,7 @@ class Pending():
 
 State = Pending | Result[OkT, ErrT]
 
-def state_conj(states: list[State[OkT, ErrT]], keep_going: bool
-                ) -> State[list[OkT], ErrT]:
-    """
-    State conjunction respecting keep_going
-
-    If all commands are Ok, returns Ok with the list of results.
-    If any fails, returns Error with one of the errors.
-
-    If keep_going is True, this may return Error when a failure is found
-    even if some commands are still Pending (but see Bugs below).
-
-    Bugs: this doesn't look exactly correct, when keep_going is False, it
-    looks like this returns Pending in input is (Pending, Error) but Error
-    if it's (Failed, Error).
-    """
-    results = []
-    failed = None
-
-    for val in states:
-        match val:
-            case Pending():
-                return Pending()
-            case Ok():
-                results.append(val.value)
-            case Error():
-                if not keep_going:
-                    return val
-                if failed is None:
-                    failed = val
-    if failed is None:
-        return Ok(results)
-    return failed
-
-def none_pending(states: list[State[OkT, ErrT]]
+def none_pending(states: Iterable[State[OkT, ErrT]]
                 ) -> Ok[list[Result[OkT, ErrT]]] | Pending:
     """
     Return Pending if any state is pending, else Ok with the list of results
@@ -71,11 +38,11 @@ def none_pending(states: list[State[OkT, ErrT]]
         results.append(state)
     return Ok(results)
 
-def all_ok(states: list[State[OkT, ErrT]]
-           ) -> State[list[OkT], ErrT]:
+def all_ok(states: Iterable[State[OkT, ErrT]]
+           ) -> State[list[Ok[OkT]], ErrT]:
     """
     Return Error if any state is Error, else Pending if any state is Pending,
-    else Ok with the list of values
+    else Ok with the list of values.
     """
     results = []
     any_pending = False
@@ -86,7 +53,7 @@ def all_ok(states: list[State[OkT, ErrT]]
                 any_pending = True
                 # We still need to continue to check Errors
             case Ok():
-                results.append(state.value)
+                results.append(state)
             case Error():
                 return state
     if any_pending:
@@ -251,9 +218,16 @@ class DeferredCommand(Command[OkT, ErrT]):
         """
         return [self._state.arg]
 
-class _Gather(Command[list[OkT], ErrT]):
+class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
     """
-    Then-able list
+    Then-able list with state conjunction respecting keep_going
+
+    If keep_going is False, this fails as soon as any input fails. Otherwise, it
+    returns Pending until all the inputs are Ok, at which point it returns a
+    list of Ok.
+
+    If keep_going is False, this stays Pending until all states are Ok or
+    Failed, at which point it returns a list of them.
     """
     commands: list[Command[OkT, ErrT]]
     keep_going: bool
@@ -272,7 +246,11 @@ class _Gather(Command[list[OkT], ErrT]):
         """
         State-based handling
         """
-        self.val = state_conj([cmd.val for cmd in self.commands], self.keep_going)
+        input_states = [cmd.val for cmd in self.commands]
+        if self.keep_going:
+            self.val = none_pending(input_states)
+        else:
+            self.val = all_ok(input_states)
         return []
 
     def __repr__(self):
@@ -285,22 +263,47 @@ class _Gather(Command[list[OkT], ErrT]):
         """
         return self.commands
 
+def collect_all(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
+            ) -> Command[Sequence[Result[OkT, ErrT]], ErrT]:
+    """
+    Gather all commands, continuing on Error according to keep_going.
+
+    When finished, returns a list of all results. If keep_going is false, this
+    list will contain only Ok as the whole command will error early. If
+    keep_going is true, the final list will contain possibly both Ok and Error,
+    and the whole command will never itself Error.
+
+    Because these error handling subtleties are quickly tricky, only use this
+    when you really need the flexibility. See collect for a more straightforward
+    interface.
+    """
+    return _Gather(commands, keep_going)
+
 def collect(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
             ) -> Command[list[OkT], ErrT]:
     """
-    Functional alias for Gather
+    Gather all commands, continuing on Error according to keep_going.
+
+    When finished, returns Error if at least one was encountered, else the list
+    of successful values.
+
+    Note that with keep_going set to True, even if the result can be known to be an
+    error as soon as the first error is encoutered, this will still run all
+    other commands (and discard results !) before erroring. A side effect of this
+    behavior is that the Error returned is deterministic, since the order
+    in which errors are known can not influence the result.
     """
-    return _Gather(commands, keep_going)
+    return _Gather(commands, keep_going).then(result_all_ok)
 
 K = TypeVar('K')
 
 def collect_dict(commands: Mapping[K, CommandLike[OkT, ErrT]], keep_going: bool
                  ) -> Command[dict[K, OkT], ErrT]:
     """
-    Wrapper around Gather that simplies gathering dicts of commands
+    Wrapper around collect that simplies gathering dicts of commands
     """
     keys, values = list(commands.keys()), list(commands.values())
-    return _Gather(values, keep_going).then(
+    return collect(values, keep_going).then(
             lambda ok_values: Ok(dict(zip(keys, ok_values)))
             )
 

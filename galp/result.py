@@ -4,7 +4,7 @@ Simple tagged unions of types with error types to use as return value
 
 import traceback
 import logging
-from typing import TypeAlias, Generic, TypeVar, Callable, NoReturn
+from typing import TypeAlias, Generic, TypeVar, Callable, NoReturn, Iterable
 from dataclasses import dataclass
 from typing_extensions import Self
 
@@ -67,3 +67,18 @@ class Error(Exception, Generic[ErrMessageT]):
 ErrT = TypeVar('ErrT', bound=Error)
 
 Result: TypeAlias = Ok[OkT] | ErrT
+
+def all_ok(inputs: Iterable[Result[OkT, ErrT]]
+           ) -> Result[list[OkT], ErrT]:
+    """
+    Return Error if any result is Error, else Ok with the list of values
+    """
+    results = []
+
+    for result in inputs:
+        match result:
+            case Ok():
+                results.append(result.value)
+            case Error():
+                return result
+    return Ok(results)
