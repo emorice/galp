@@ -123,9 +123,8 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     primitives = script.init_command(cmd)
     unprocessed = ga.filter_commands(primitives, _exec)
     assert not unprocessed
-    if not isinstance(cmd.val, Ok):
-        raise NotImplementedError(cmd.val)
-    args, kwargs = cmd.val.value
+    assert not isinstance(cmd.val, ga.Pending)
+    args, kwargs = cmd.val.unwrap()
     assert not args
 
     return kwargs
