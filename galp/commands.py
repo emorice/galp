@@ -14,7 +14,7 @@ import galp.asyn as ga
 
 from galp.result import Result, Ok, Error
 from galp.serialize import LoadError
-from galp.asyn import Command, Gather, InertCommand, CommandLike
+from galp.asyn import Command, collect, InertCommand, CommandLike
 
 # Custom Script
 # -------------
@@ -149,7 +149,7 @@ def rget(task: gtt.Task) -> CommandLike[object, Error]:
     return (
         fetch(task)
         .then(lambda res: (
-            Gather([rget(c) for c in res.children], keep_going=False)
+            collect([rget(c) for c in res.children], keep_going=False)
             .then(res.deserialize)
             ))
         )
@@ -259,7 +259,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
     # Issue 79: optimize type of command based on type of link
     # Always doing a RSUB will work, but it will run things more eagerly that
     # needed or propagate failures too aggressively.
-    gather_deps = Gather([rsubmit(dep, options) for dep in deps],
+    gather_deps = collect([rsubmit(dep, options) for dep in deps],
                          options.keep_going)
 
     # Issue final command
@@ -291,7 +291,7 @@ def rsubmit(task: gtt.Task, options: ExecOptions
     """
     return (
             ssubmit(task, options)
-            .then(lambda res: Gather(
+            .then(lambda res: collect(
                 [rsubmit(c, options) for c in res.children],
                 options.keep_going)
                   .then(lambda child_results: Ok(

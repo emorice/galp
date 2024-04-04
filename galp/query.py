@@ -93,7 +93,7 @@ class Operator:
         Pre-req
         """
         _ = task
-        return cm.Gather([], keep_going=False)
+        return cm.collect([], keep_going=False)
 
     _ops: 'dict[str, Type[Operator]]' = {}
     def __init_subclass__(cls, /, named=True, **kwargs):
@@ -114,19 +114,19 @@ class Operator:
         Old-style operators
         """
         return self.requires(self.subject).then(
-                lambda *required: cm.Gather(
+                lambda *required: cm.collect(
                     self.recurse(*required), keep_going=False
                     ).then(self.safe_result)
                 )
 
-    def recurse(self, required=None) -> cm.Command:
+    def recurse(self, required=None) -> list[cm.Command]:
         """
         Build subqueries if needed
         """
         self._required = required
         return self._recurse(required)
 
-    def _recurse(self, _required):
+    def _recurse(self, _required) -> list[cm.Command]:
         """
         Default implementation does not recurse, but checks that no sub-query
         was provided
@@ -415,7 +415,7 @@ class Compound(Operator, named=False):
         self.sub_queries = sub_queries
 
     def __call__(self) -> cm.Command[object, Error]:
-        return cm.Gather([
+        return cm.collect([
                 query(self.subject, sub_query) for sub_query in self.sub_queries
             ], keep_going=False
          ).then(lambda results: Ok({

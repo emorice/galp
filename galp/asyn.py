@@ -43,6 +43,7 @@ def state_conj(states: list[State[OkT, ErrT]], keep_going: bool
     """
     results = []
     failed = None
+
     for val in states:
         match val:
             case Pending():
@@ -57,6 +58,41 @@ def state_conj(states: list[State[OkT, ErrT]], keep_going: bool
     if failed is None:
         return Ok(results)
     return failed
+
+def none_pending(states: list[State[OkT, ErrT]]
+                ) -> Ok[list[Result[OkT, ErrT]]] | Pending:
+    """
+    Return Pending if any state is pending, else Ok with the list of results
+    """
+    results = []
+    for state in states:
+        if isinstance(state, Pending):
+            return Pending()
+        results.append(state)
+    return Ok(results)
+
+def all_ok(states: list[State[OkT, ErrT]]
+           ) -> State[list[OkT], ErrT]:
+    """
+    Return Error if any state is Error, else Pending if any state is Pending,
+    else Ok with the list of values
+    """
+    results = []
+    any_pending = False
+
+    for state in states:
+        match state:
+            case Pending():
+                any_pending = True
+                # We still need to continue to check Errors
+            case Ok():
+                results.append(state.value)
+            case Error():
+                return state
+    if any_pending:
+        return Pending()
+
+    return Ok(results)
 
 # Commands
 # ========
@@ -215,7 +251,7 @@ class DeferredCommand(Command[OkT, ErrT]):
         """
         return [self._state.arg]
 
-class Gather(Command[list[OkT], ErrT]):
+class _Gather(Command[list[OkT], ErrT]):
     """
     Then-able list
     """
@@ -254,7 +290,7 @@ def collect(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
     """
     Functional alias for Gather
     """
-    return Gather(commands, keep_going)
+    return _Gather(commands, keep_going)
 
 K = TypeVar('K')
 
@@ -264,7 +300,7 @@ def collect_dict(commands: Mapping[K, CommandLike[OkT, ErrT]], keep_going: bool
     Wrapper around Gather that simplies gathering dicts of commands
     """
     keys, values = list(commands.keys()), list(commands.values())
-    return Gather(values, keep_going).then(
+    return _Gather(values, keep_going).then(
             lambda ok_values: Ok(dict(zip(keys, ok_values)))
             )
 
