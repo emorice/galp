@@ -3,12 +3,12 @@ Functional, framework-agnostic, asynchronous programming system
 """
 
 import logging
-from weakref import WeakSet
+from weakref import WeakKeyDictionary
 from typing import (TypeVar, Generic, Callable, Any, Iterable, TypeAlias,
     Hashable, Mapping, Sequence)
 from dataclasses import dataclass
-from itertools import chain
 from functools import wraps
+from collections import defaultdict
 from galp.result import Ok, Error, Result, all_ok as result_all_ok
 
 # Extension of Result with a "pending" state
@@ -84,7 +84,6 @@ class Command(Generic[OkT, ErrT]):
     """
     def __init__(self) -> None:
         self.val: State[OkT, ErrT] = Pending()
-        self.outputs : WeakSet[Command] = WeakSet()
 
     def then(self, callback: 'Callback[OkT, OutOkT, ErrT]') -> 'Command[OutOkT, ErrT]':
         """
@@ -177,7 +176,6 @@ class DeferredCommand(Command[OkT, ErrT]):
     def __init__(self, deferred: Deferred[Any, OkT, ErrT]) -> None:
         super().__init__()
         self._state = deferred
-        deferred.arg.outputs.add(self)
 
     def __repr__(self):
         return f'Command(val={repr(self.val)}, state={repr(self._state)})'
@@ -204,10 +202,6 @@ class DeferredCommand(Command[OkT, ErrT]):
 
             # Re-inspect values of new set of sub-commands and loop
             value = sub_command.val
-
-        # Ensure all remaining sub-commands have downstream links pointing to
-        # this command before relinquishing control
-        sub_command.outputs.add(self)
 
         return new_sub_commands
 
@@ -239,8 +233,6 @@ class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
         self.keep_going = keep_going
         _list = list(commands) if isinstance(commands, Iterable) else [commands]
         self.commands = [as_command(cmdlike) for cmdlike in _list]
-        for inp in self.commands:
-            inp.outputs.add(self)
 
     def eval(self, script: 'Script'):
         """
@@ -342,6 +334,10 @@ class Script:
         # References to all identical primitives
         self.leaves: dict[Hashable, list[InertCommand]] = {}
 
+        # Inverse map of inputs
+        self.outputs: WeakKeyDictionary[Command, list[Command]]
+        self.outputs = WeakKeyDictionary()
+
     def done(self, key: Hashable, result: Result) -> list[InertCommand]:
         """
         Mark a command as done, and return new primitives.
@@ -354,15 +350,19 @@ class Script:
             return []
         # Propagate to all current instances and clear them
         prims = self.leaves.pop(key)
+        prim_outputs = []
         for prim in prims:
             prim.val = result
-        return _advance_all(self,
-                list(chain.from_iterable(prim.outputs for prim in prims))
-                )
+            prim_outputs.extend(
+                    self.outputs.get(prim) or []
+                    )
+        return _advance_all(self, prim_outputs)
 
     def init_command(self, command: Command) -> list[InertCommand]:
         """Return the first initial primitives this command depends on"""
-        return _advance_all(self, _get_leaves([command]))
+        first_leaves, outs = _get_leaves([command])
+        self.outputs |= outs
+        return _advance_all(self, first_leaves)
 
     def notify_change(self, command: Command, old_value: State,
                       new_value: State) -> None:
@@ -401,34 +401,43 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
             case _:
                 # Else, call its callback to figure out what to do next
                 old_value = command.val
-                sub_commands = command.eval(script)
+                new_sub_commands = command.eval(script)
                 script.notify_change(command, old_value, command.val)
-                # For now, subcommands need to be recursively initialized
-                if sub_commands:
-                    sub_commands = _get_leaves(sub_commands)
-                    commands.extend(sub_commands)
-                # Maybe this caused the command to advance to a terminal state (DONE or
-                # FAILED). In that case downstream commands must be checked in turn.
+                # eval can have created a new subgraph, so we need to attach it
+                # to the script by filling the output map and collect new leaves
+                if new_sub_commands:
+                    new_leaves, new_outs = _get_leaves(new_sub_commands)
+                    # Also add links to current command
+                    for cin in command.inputs:
+                        new_outs[cin].append(command)
+                    script.outputs |= new_outs
+                    commands.extend(new_leaves)
+                # Maybe this caused the command to advance to a terminal state
+                # (Result). In that case downstream commands must be checked in turn.
                 elif not command.is_pending():
-                    commands.extend(command.outputs)
+                    commands.extend(script.outputs.get(command) or [])
 
     return primitives
 
-def _get_leaves(commands):
+def _get_leaves(commands: Iterable[Command]
+                ) -> tuple[list[Command], Mapping[Command, list[Command]]]:
     """
-    Collect all the leaves of a command tree
+    Collect all the leaves and outputs of a command tree
 
-    Leaves can be InertCommands, but also empty Gather([]) commands.
+    Leaves can be InertCommands, empty Gather([]) commands, or constants.
     """
-    all_commands = []
+    leaves = []
+    outputs = defaultdict(list)
     commands = list(commands)
     while commands:
         cmd = commands.pop()
+        for cin in cmd.inputs:
+            outputs[cin].append(cmd)
         if not cmd.inputs:
-            all_commands.append(cmd)
+            leaves.append(cmd)
         else:
             commands.extend(cmd.inputs)
-    return all_commands
+    return leaves, outputs
 
 R = TypeVar('R')
 
