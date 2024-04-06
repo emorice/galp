@@ -82,9 +82,6 @@ class Command(Generic[OkT, ErrT]):
     """
     Base class for commands
     """
-    def __init__(self) -> None:
-        self.val: State[OkT, ErrT] = Pending()
-
     def then(self, callback: 'Callback[OkT, OutOkT, ErrT]') -> 'Command[OutOkT, ErrT]':
         """
         Chain callback to this command on sucess
@@ -97,17 +94,11 @@ class Command(Generic[OkT, ErrT]):
         """
         return DeferredCommand(Deferred(callback, self))
 
-    def eval(self, script: 'Script') -> 'list[Command]':
+    def eval(self, input_values: list[State]) -> 'tuple[State, list[Command]]':
         """
         Logic of calculating the value
         """
         raise NotImplementedError
-
-    def is_pending(self):
-        """
-        Boolean, if command still pending
-        """
-        return isinstance(self.val, Pending)
 
     @property
     def inputs(self) -> 'list[Command]':
@@ -127,9 +118,9 @@ class ResultCommand(Command[OkT, ErrT]):
         self._result = result
         super().__init__()
 
-    def eval(self, _script):
-        self.val = self._result
-        return []
+    def eval(self, _input_values):
+        assert not _input_values
+        return self._result, []
 
     @property
     def inputs(self):
@@ -178,32 +169,27 @@ class DeferredCommand(Command[OkT, ErrT]):
         self._state = deferred
 
     def __repr__(self):
-        return f'Command(val={repr(self.val)}, state={repr(self._state)})'
+        return f'DeferredCommand(state={repr(self._state)})'
 
-    def eval(self, script: 'Script') -> list[Command]:
+    def eval(self, input_values: list[State]) -> tuple[State, list[Command]]:
         """
         State-based handling
         """
-        sub_command = self._state.arg
-        new_sub_commands = []
-        value = sub_command.val
-        while not isinstance(value, Pending): # = advance until stuck again
+        value, = input_values
+        # Input wasn't settled, skip
+        if isinstance(value, Pending):
+            return Pending(), []
 
-            # At this point, aggregate value is Done or Failed
-            ret = self._state.callback(value)
-            if isinstance(ret, Command):
-                self._state = Deferred(lambda r: r, ret)
-            else:
-                self.val = ret
-                return []
+        # Input has a Result, we can run callback
+        ret = self._state.callback(value)
 
-            sub_command = self._state.arg
-            new_sub_commands = [self._state.arg]
+        # Callback returned a new Command
+        if isinstance(ret, Command):
+            self._state = Deferred(lambda r: r, ret)
+            return Pending(), [self._state.arg]
 
-            # Re-inspect values of new set of sub-commands and loop
-            value = sub_command.val
-
-        return new_sub_commands
+        # Callback returned a concrete value
+        return ret, []
 
     @property
     def inputs(self) -> list[Command]:
@@ -234,19 +220,16 @@ class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
         _list = list(commands) if isinstance(commands, Iterable) else [commands]
         self.commands = [as_command(cmdlike) for cmdlike in _list]
 
-    def eval(self, script: 'Script'):
+    def eval(self, input_values: list[State]):
         """
         State-based handling
         """
-        input_states = [cmd.val for cmd in self.commands]
         if self.keep_going:
-            self.val = none_pending(input_states)
-        else:
-            self.val = all_ok(input_states)
-        return []
+            return none_pending(input_values), []
+        return all_ok(input_values), []
 
     def __repr__(self):
-        return f'Gather({repr(self.commands)} = {repr(self.val)})'
+        return f'Gather({repr(self.commands)})'
 
     @property
     def inputs(self) -> list[Command]:
@@ -308,7 +291,7 @@ class InertCommand(Command[OkT, ErrT]):
 
     def eval(self, *_):
         # Never changes by itself
-        return []
+        return Pending(), []
 
     @property
     def key(self) -> Hashable:
@@ -338,6 +321,9 @@ class Script:
         self.outputs: WeakKeyDictionary[Command, list[Command]]
         self.outputs = WeakKeyDictionary()
 
+        self.values: WeakKeyDictionary[Command, State]
+        self.values = WeakKeyDictionary()
+
     def done(self, key: Hashable, result: Result) -> list[InertCommand]:
         """
         Mark a command as done, and return new primitives.
@@ -352,7 +338,7 @@ class Script:
         prims = self.leaves.pop(key)
         prim_outputs = []
         for prim in prims:
-            prim.val = result
+            self.values[prim] = result
             prim_outputs.extend(
                     self.outputs.get(prim) or []
                     )
@@ -379,7 +365,8 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
 
     while commands:
         command = commands.pop()
-        if not command.is_pending():
+        cur_value = script.values.get(command, Pending())
+        if not isinstance(cur_value, Pending):
             # This should not happen, but can normally be safely ignored
             # when it actually does
             logging.warning('Settled command %s given for updating, skipping', command)
@@ -400,9 +387,11 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     primitives.append(command)
             case _:
                 # Else, call its callback to figure out what to do next
-                old_value = command.val
-                new_sub_commands = command.eval(script)
-                script.notify_change(command, old_value, command.val)
+                input_values = [script.values.get(cin, Pending())
+                                for cin in command.inputs]
+                new_value, new_sub_commands = command.eval(input_values)
+                script.values[command] = new_value
+                script.notify_change(command, cur_value, new_value)
                 # eval can have created a new subgraph, so we need to attach it
                 # to the script by filling the output map and collect new leaves
                 if new_sub_commands:
@@ -414,7 +403,7 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     commands.extend(new_leaves)
                 # Maybe this caused the command to advance to a terminal state
                 # (Result). In that case downstream commands must be checked in turn.
-                elif not command.is_pending():
+                elif not isinstance(new_value, Pending):
                     commands.extend(script.outputs.get(command) or [])
 
     return primitives
@@ -476,5 +465,6 @@ def run_command(command: Command[OkT, ErrT],
         return [], script.done(prim.key, Ok(callback(prim)))
     unprocessed = filter_commands(primitives, _filter)
     assert not unprocessed
-    assert not isinstance(command.val, Pending)
-    return command.val
+    result = script.values[command]
+    assert not isinstance(result, Pending)
+    return result

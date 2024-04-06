@@ -173,8 +173,6 @@ class Client:
         Returns the next nessage to be sent for a task given the information we
         have about it.
         """
-        assert command.is_pending()
-
         match command:
             case cm.Send():
                 match command.request:
