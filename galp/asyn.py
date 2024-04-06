@@ -454,3 +454,18 @@ def filter_commands(commands: Iterable[InertCommand],
         filtered.extend(cur_filtered)
         commands.extend(cur_tofilter)
     return filtered
+
+def run_command(command: Command[OkT, ErrT],
+                callback: Callable[[InertCommand], Result]
+                ) -> Result[OkT, ErrT]:
+    """
+    Run command by fulfilling primitives with given synchronous callback
+    """
+    script = Script()
+    primitives = script.init_command(command)
+    def _filter(prim: InertCommand) -> tuple[list[None], list[InertCommand]]:
+        return [], script.done(prim.key, Ok(callback(prim)))
+    unprocessed = filter_commands(primitives, _filter)
+    assert not unprocessed
+    assert not isinstance(command.val, Pending)
+    return command.val

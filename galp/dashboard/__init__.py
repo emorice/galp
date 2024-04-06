@@ -15,7 +15,7 @@ from galp.net.core.types import Get
 from galp.task_types import (TaskSerializer, TaskNode, CoreTaskDef, Serialized,
     TaskRef)
 from galp.cache import CacheStack
-from galp.result import Ok
+from galp.result import Result, Ok
 from galp.query import collect_task_inputs
 
 def render_object(obj):
@@ -104,27 +104,20 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     assert isinstance(tdef, CoreTaskDef)
 
     ## Define how to fetch missing pieces (direct read from store)
-    script = cm.Script()
-    def _exec(command: cm.InertCommand
-              ) -> tuple[list[None], list[cm.InertCommand]]:
+    def _exec(command: cm.InertCommand) -> Result:
         """Fulfill commands by reading from stores"""
         if not isinstance(command, cm.Send):
             raise NotImplementedError(command)
         if not isinstance(command.request, Get):
             raise NotImplementedError(command)
         name = command.request.name
-        res = store.get_serial(name)
-        return [], script.done(command.key, Ok(res))
+        return store.get_serial(name)
 
     ## Collect args from local and remote store. Since we don't pass any
     ## argument to the step, all arguments are injected, and therefore keyword arguments
-
-    cmd = collect_task_inputs(task, tdef)
-    primitives = script.init_command(cmd)
-    unprocessed = ga.filter_commands(primitives, _exec)
-    assert not unprocessed
-    assert not isinstance(cmd.val, ga.Pending)
-    args, kwargs = cmd.val.unwrap()
+    args, kwargs = ga.run_command(
+            collect_task_inputs(task, tdef),
+            _exec).unwrap()
     assert not args
 
     return kwargs
