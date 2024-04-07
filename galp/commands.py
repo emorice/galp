@@ -30,14 +30,12 @@ class Script(ga.Script):
         self.verbose = verbose
         super().__init__()
 
-    def notify_change(self, command: Command, old_value: ga.State,
-                      new_value: ga.State) -> None:
+    def notify_change(self, command: Command, new_value: ga.State) -> None:
         """
         Hook called when the graph status changes
         """
         if not self.verbose:
             return
-        del old_value
 
         def print_status(stat, name, step_name):
             print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {stat:4} [{name}]'

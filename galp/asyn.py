@@ -94,7 +94,7 @@ class Command(Generic[OkT, ErrT]):
         """
         return DeferredCommand(Deferred(callback, self))
 
-    def eval(self, input_values: list[State]) -> 'tuple[State, list[Command]]':
+    def eval(self, input_values: list[State]) -> 'tuple[CommandLike[OkT, ErrT], list[Command]]':
         """
         Logic of calculating the value
         """
@@ -171,14 +171,14 @@ class DeferredCommand(Command[OkT, ErrT]):
     def __repr__(self):
         return f'DeferredCommand(state={repr(self._state)})'
 
-    def eval(self, input_values: list[State]) -> tuple[State, list[Command]]:
+    def eval(self, input_values: list[State]) -> tuple[CommandLike[OkT, ErrT], list[Command]]:
         """
         State-based handling
         """
         value, = input_values
         # Input wasn't settled, skip
         if isinstance(value, Pending):
-            return Pending(), []
+            return self, []
 
         # Input has a Result, we can run callback
         ret = self._state.callback(value)
@@ -186,7 +186,7 @@ class DeferredCommand(Command[OkT, ErrT]):
         # Callback returned a new Command
         if isinstance(ret, Command):
             self._state = Deferred(lambda r: r, ret)
-            return Pending(), [self._state.arg]
+            return ret, [self._state.arg]
 
         # Callback returned a concrete value
         return ret, []
@@ -220,13 +220,19 @@ class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
         _list = list(commands) if isinstance(commands, Iterable) else [commands]
         self.commands = [as_command(cmdlike) for cmdlike in _list]
 
-    def eval(self, input_values: list[State]):
+    def eval(self, input_values: list[State]) -> tuple[
+            CommandLike[Sequence[Result[OkT, ErrT]], ErrT],
+            list[Command]]:
         """
         State-based handling
         """
+        def _as_state(state: State):
+            if isinstance(state, Pending):
+                return self
+            return state
         if self.keep_going:
-            return none_pending(input_values), []
-        return all_ok(input_values), []
+            return _as_state(none_pending(input_values)), []
+        return _as_state(all_ok(input_values)), []
 
     def __repr__(self):
         return f'Gather({repr(self.commands)})'
@@ -263,7 +269,7 @@ def collect(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
     of successful values.
 
     Note that with keep_going set to True, even if the result can be known to be an
-    error as soon as the first error is encoutered, this will still run all
+    error as soon as the first error is encountered, this will still run all
     other commands (and discard results !) before erroring. A side effect of this
     behavior is that the Error returned is deterministic, since the order
     in which errors are known can not influence the result.
@@ -275,7 +281,7 @@ K = TypeVar('K')
 def collect_dict(commands: Mapping[K, CommandLike[OkT, ErrT]], keep_going: bool
                  ) -> Command[dict[K, OkT], ErrT]:
     """
-    Wrapper around collect that simplies gathering dicts of commands
+    Wrapper around collect that simplifies gathering dicts of commands
     """
     keys, values = list(commands.keys()), list(commands.values())
     return collect(values, keep_going).then(
@@ -307,7 +313,12 @@ class InertCommand(Command[OkT, ErrT]):
         """
         return []
 
-Ok_contra = TypeVar('Ok_contra', contravariant=True)
+@dataclass(eq=False)
+class StateHolder(Generic[OkT, ErrT]):
+    """
+    Mutable container that holds the current computation state of a future
+    """
+    state: CommandLike[OkT, ErrT]
 
 class Script:
     """
@@ -321,8 +332,37 @@ class Script:
         self.outputs: WeakKeyDictionary[Command, list[Command]]
         self.outputs = WeakKeyDictionary()
 
-        self.values: WeakKeyDictionary[Command, State]
-        self.values = WeakKeyDictionary()
+        self.states: WeakKeyDictionary[Command, StateHolder]
+        self.states = WeakKeyDictionary()
+
+
+    def set_state(self, command: Command, state: CommandLike):
+        """
+        Set command state
+        """
+        if command in self.states:
+            self.states[command].state = state
+        else:
+            self.states[command] = StateHolder(state)
+
+    def get_value(self, command: Command) -> State:
+        """
+        Get command value
+        """
+        if command in self.states:
+            state = self.states[command].state
+            if isinstance(state, Command):
+                return Pending()
+            return state
+        return Pending()
+
+    def get_state(self, command: Command) -> CommandLike:
+        """
+        Get command state
+        """
+        if command in self.states:
+            return self.states[command].state
+        return command
 
     def done(self, key: Hashable, result: Result) -> list[InertCommand]:
         """
@@ -338,7 +378,7 @@ class Script:
         prims = self.leaves.pop(key)
         prim_outputs = []
         for prim in prims:
-            self.values[prim] = result
+            self.set_state(prim, result)
             prim_outputs.extend(
                     self.outputs.get(prim) or []
                     )
@@ -350,8 +390,7 @@ class Script:
         self.outputs |= outs
         return _advance_all(self, first_leaves)
 
-    def notify_change(self, command: Command, old_value: State,
-                      new_value: State) -> None:
+    def notify_change(self, command: Command, new_value: State) -> None:
         """
         Hook called when the graph status changes
         """
@@ -365,8 +404,8 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
 
     while commands:
         command = commands.pop()
-        cur_value = script.values.get(command, Pending())
-        if not isinstance(cur_value, Pending):
+        cur_state = script.get_state(command)
+        if not isinstance(cur_state, Command):
             # This should not happen, but can normally be safely ignored
             # when it actually does
             logging.warning('Settled command %s given for updating, skipping', command)
@@ -387,11 +426,12 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     primitives.append(command)
             case _:
                 # Else, call its callback to figure out what to do next
-                input_values = [script.values.get(cin, Pending())
-                                for cin in command.inputs]
-                new_value, new_sub_commands = command.eval(input_values)
-                script.values[command] = new_value
-                script.notify_change(command, cur_value, new_value)
+                input_values = [script.get_value(cin) for cin in command.inputs]
+                new_state, new_sub_commands = command.eval(input_values)
+                script.set_state(command, new_state)
+                script.notify_change(command,
+                    Pending() if isinstance(new_state, Command) else new_state
+                    )
                 # eval can have created a new subgraph, so we need to attach it
                 # to the script by filling the output map and collect new leaves
                 if new_sub_commands:
@@ -403,7 +443,7 @@ def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
                     commands.extend(new_leaves)
                 # Maybe this caused the command to advance to a terminal state
                 # (Result). In that case downstream commands must be checked in turn.
-                elif not isinstance(new_value, Pending):
+                elif not isinstance(new_state, Command):
                     commands.extend(script.outputs.get(command) or [])
 
     return primitives
@@ -465,6 +505,6 @@ def run_command(command: Command[OkT, ErrT],
         return [], script.done(prim.key, Ok(callback(prim)))
     unprocessed = filter_commands(primitives, _filter)
     assert not unprocessed
-    result = script.values[command]
+    result = script.get_value(command)
     assert not isinstance(result, Pending)
     return result
