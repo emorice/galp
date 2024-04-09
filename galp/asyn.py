@@ -3,12 +3,11 @@ Functional, framework-agnostic, asynchronous programming system
 """
 
 import logging
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, WeakSet
 from typing import (TypeVar, Generic, Callable, Any, Iterable, TypeAlias,
     Hashable, Mapping, Sequence)
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import wraps
-from collections import defaultdict
 from galp.result import Ok, Error, Result, all_ok as result_all_ok
 
 # Extension of Result with a "pending" state
@@ -314,11 +313,13 @@ class InertCommand(Command[OkT, ErrT]):
         return []
 
 @dataclass(eq=False)
-class StateHolder(Generic[OkT, ErrT]):
+class Slot(Generic[OkT, ErrT]):
     """
     Mutable container that holds the current computation state of a future
     """
     state: CommandLike[OkT, ErrT]
+    orig_command: Command
+    outputs: 'WeakSet[Slot]' = field(default_factory=WeakSet)
 
 class Script:
     """
@@ -326,43 +327,22 @@ class Script:
     """
     def __init__(self) -> None:
         # References to all identical primitives
-        self.leaves: dict[Hashable, list[InertCommand]] = {}
+        self.leaves: dict[Hashable, list[Slot]] = {}
 
-        # Inverse map of inputs
-        self.outputs: WeakKeyDictionary[Command, list[Command]]
-        self.outputs = WeakKeyDictionary()
-
-        self.states: WeakKeyDictionary[Command, StateHolder]
-        self.states = WeakKeyDictionary()
-
-
-    def set_state(self, command: Command, state: CommandLike):
-        """
-        Set command state
-        """
-        if command in self.states:
-            self.states[command].state = state
-        else:
-            self.states[command] = StateHolder(state)
+        # References to the slots of living commands.
+        self.slots: WeakKeyDictionary[Command, Slot]
+        self.slots = WeakKeyDictionary()
 
     def get_value(self, command: Command) -> State:
         """
         Get command value
         """
-        if command in self.states:
-            state = self.states[command].state
+        if command in self.slots:
+            state = self.slots[command].state
             if isinstance(state, Command):
                 return Pending()
             return state
         return Pending()
-
-    def get_state(self, command: Command) -> CommandLike:
-        """
-        Get command state
-        """
-        if command in self.states:
-            return self.states[command].state
-        return command
 
     def done(self, key: Hashable, result: Result) -> list[InertCommand]:
         """
@@ -376,97 +356,109 @@ class Script:
             return []
         # Propagate to all current instances and clear them
         prims = self.leaves.pop(key)
-        prim_outputs = []
+        prim_outputs: list[Slot] = []
         for prim in prims:
-            self.set_state(prim, result)
-            prim_outputs.extend(
-                    self.outputs.get(prim) or []
-                    )
-        return _advance_all(self, prim_outputs)
+            prim.state = result
+            prim_outputs.extend(prim.outputs)
+        return self._advance_all(prim_outputs)
 
     def init_command(self, command: Command) -> list[InertCommand]:
         """Return the first initial primitives this command depends on"""
-        first_leaves, outs = _get_leaves([command])
-        self.outputs |= outs
-        return _advance_all(self, first_leaves)
+        slots, leaves = _make_slots([command])
+        self.slots |= slots
+        return self._advance_all(leaves)
 
     def notify_change(self, command: Command, new_value: State) -> None:
         """
         Hook called when the graph status changes
         """
 
-def _advance_all(script: Script, commands: list[Command]) -> list[InertCommand]:
-    """
-    Try to advance all given commands, and all downstream depending on them the
-    case being
-    """
-    primitives : list[InertCommand] = []
+    def _advance_all(self, slots: list[Slot]) -> list[InertCommand]:
+        """
+        Try to advance all given commands, and all downstream depending on them the
+        case being
+        """
+        primitives : list[InertCommand] = []
+        slots = list(slots)
 
-    while commands:
-        command = commands.pop()
-        cur_state = script.get_state(command)
-        if not isinstance(cur_state, Command):
-            # This should not happen, but can normally be safely ignored
-            # when it actually does
-            logging.warning('Settled command %s given for updating, skipping', command)
-            continue
-        match command:
-            case InertCommand():
-                # If it's an output-style primitive, just add it
-                if command.key is None:
-                    primitives.append(command)
-                    continue
-                # Check if we already have instances of that command
-                if command.key in script.leaves:
-                    # If yes, just add it to the list
-                    script.leaves[command.key].append(command)
-                else:
-                    # First encounter, initialize the list and send it out
-                    script.leaves[command.key] = [command]
-                    primitives.append(command)
-            case _:
-                # Else, call its callback to figure out what to do next
-                input_values = [script.get_value(cin) for cin in command.inputs]
-                new_state, new_sub_commands = command.eval(input_values)
-                script.set_state(command, new_state)
-                script.notify_change(command,
-                    Pending() if isinstance(new_state, Command) else new_state
-                    )
-                # eval can have created a new subgraph, so we need to attach it
-                # to the script by filling the output map and collect new leaves
-                if new_sub_commands:
-                    new_leaves, new_outs = _get_leaves(new_sub_commands)
-                    # Also add links to current command
-                    for cin in command.inputs:
-                        new_outs[cin].append(command)
-                    script.outputs |= new_outs
-                    commands.extend(new_leaves)
-                # Maybe this caused the command to advance to a terminal state
-                # (Result). In that case downstream commands must be checked in turn.
-                elif not isinstance(new_state, Command):
-                    commands.extend(script.outputs.get(command) or [])
+        while slots:
+            slot = slots.pop()
+            command = slot.orig_command
+            cur_state = slot.state
+            if not isinstance(cur_state, Command):
+                # This should not happen, but can normally be safely ignored
+                logging.warning('Settled command %s given for updating, skipping', command)
+                continue
+            match command:
+                case InertCommand():
+                    # If it's an output-style primitive, just add it
+                    if command.key is None:
+                        primitives.append(command)
+                        continue
+                    # Check if we already have instances of that command
+                    if command.key in self.leaves:
+                        # If yes, just add it to the list
+                        self.leaves[command.key].append(slot)
+                    else:
+                        # First encounter, initialize the list and send it out
+                        self.leaves[command.key] = [slot]
+                        primitives.append(command)
+                case _:
+                    # Else, call its callback to figure out what to do next
+                    input_values = [self.get_value(cin) for cin in command.inputs]
+                    new_state, new_sub_commands = command.eval(input_values)
+                    slot.state = new_state
+                    self.notify_change(command,
+                        Pending() if isinstance(new_state, Command) else new_state
+                        )
+                    # eval can have created a new subgraph, so we need to attach it
+                    # to the self by filling the output map and collect new leaves
+                    if new_sub_commands:
+                        new_slots, new_leave_slots = _make_slots(new_sub_commands)
+                        # Also add links to current command
+                        for cin in command.inputs:
+                            new_slots[cin].outputs.add(slot)
+                        self.slots |= new_slots
+                        slots.extend(new_leave_slots)
+                    # Maybe this caused the command to advance to a terminal state
+                    # (Result). In that case downstream commands must be checked in turn.
+                    elif not isinstance(new_state, Command):
+                        slots.extend(slot.outputs)
+        return primitives
 
-    return primitives
-
-def _get_leaves(commands: Iterable[Command]
-                ) -> tuple[list[Command], Mapping[Command, list[Command]]]:
+def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[Slot]]:
     """
-    Collect all the leaves and outputs of a command tree
-
-    Leaves can be InertCommands, empty Gather([]) commands, or constants.
+    Browse the dag upstream of the commands given as inputs, initializing
+    slots
     """
+    # Mapping command -> slot, to ensure we create exactly one slot per
+    # command that compares equal. Also acts as a closed set
+    all_slots = {}
+    # Slots with no children
     leaves = []
-    outputs = defaultdict(list)
+
+    # Open set of commands for which a slot has to be created
     commands = list(commands)
     while commands:
-        cmd = commands.pop()
-        for cin in cmd.inputs:
-            outputs[cin].append(cmd)
-        if not cmd.inputs:
-            leaves.append(cmd)
+        command = commands.pop()
+        # Command was already reached through an other path, skip
+        if command in all_slots:
+            continue
+        # First time seeing this command, create a slot
+        slot = Slot(command, command)
+        all_slots[command] = slot
+        # Add its inputs
+        if command.inputs:
+            commands.extend(command.inputs)
         else:
-            commands.extend(cmd.inputs)
-    return leaves, outputs
+            leaves.append(slot)
+
+    # Now we have slots, but no links between them
+    for command, slot in all_slots.items():
+        for cin in command.inputs:
+            all_slots[cin].outputs.add(slot)
+
+    return all_slots, leaves
 
 R = TypeVar('R')
 
