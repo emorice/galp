@@ -52,7 +52,7 @@ class Client:
 
         # State keeping:
         # Pending requests
-        self._command_queue: ControlQueue[cm.InertCommand] = ControlQueue()
+        self._command_queue: ControlQueue[cm.Primitive] = ControlQueue()
         # Async graph
         self._script = cm.Script()
         # Misc param
@@ -168,7 +168,7 @@ class Client:
         # result of End
         return result.value # type: ignore[return-value]
 
-    def _write_next(self, command: cm.InertCommand) -> TransportMessage:
+    def _write_next(self, command: cm.Primitive) -> TransportMessage:
         """
         Returns the next nessage to be sent for a task given the information we
         have about it.
@@ -182,7 +182,7 @@ class Client:
             case _:
                 raise NotImplementedError(command)
 
-    def _schedule_new(self, commands: Iterable[cm.InertCommand]
+    def _schedule_new(self, commands: Iterable[cm.Primitive]
                       ) -> TransportReturn:
         """
         Fulfill, queue, select and convert commands to be sent

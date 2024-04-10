@@ -104,7 +104,7 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
     assert isinstance(tdef, CoreTaskDef)
 
     ## Define how to fetch missing pieces (direct read from store)
-    def _exec(command: cm.InertCommand) -> Result:
+    def _exec(command: cm.Primitive) -> Result:
         """Fulfill commands by reading from stores"""
         if not isinstance(command, cm.Send):
             raise NotImplementedError(command)

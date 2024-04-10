@@ -250,7 +250,7 @@ def collect_dict(commands: Mapping[K, CommandLike[OkT, ErrT]], keep_going: bool
             lambda ok_values: Ok(dict(zip(keys, ok_values)))
             )
 
-class InertCommand(Command[OkT, ErrT]):
+class Primitive(Command[OkT, ErrT]):
     """
     Command tied to an external event
 
@@ -283,7 +283,7 @@ class Slot(Generic[OkT, ErrT]):
     """
     Mutable container that holds the current computation state of a future
     """
-    state: Result[OkT, ErrT] | InertCommand[OkT, ErrT] | Pending[OkT, ErrT]
+    state: Result[OkT, ErrT] | Primitive[OkT, ErrT] | Pending[OkT, ErrT]
     orig_command: Command
     outputs: 'WeakSet[Slot]' = field(default_factory=WeakSet)
 
@@ -315,7 +315,7 @@ class Script:
             return self.slots[command].get_value()
         return None
 
-    def done(self, key: Hashable, result: Result) -> list[InertCommand]:
+    def done(self, key: Hashable, result: Result) -> list[Primitive]:
         """
         Mark a command as done, and return new primitives.
 
@@ -333,7 +333,7 @@ class Script:
             prim_outputs.extend(prim.outputs)
         return self._advance_all(prim_outputs)
 
-    def init_command(self, command: Command) -> list[InertCommand]:
+    def init_command(self, command: Command) -> list[Primitive]:
         """Return the first initial primitives this command depends on"""
         slots, leaves = _make_slots([command])
         self.slots |= slots
@@ -344,41 +344,36 @@ class Script:
         Hook called when the graph status changes
         """
 
-    def _advance_all(self, slots: list[Slot]) -> list[InertCommand]:
+    def _advance_all(self, slots: list[Slot]) -> list[Primitive]:
         """
         Try to advance all given commands, and all downstream depending on them the
         case being
         """
-        primitives : list[InertCommand] = []
+        primitives : list[Primitive] = []
         slots = list(slots)
 
         while slots:
             slot = slots.pop()
-            command = slot.orig_command
             cur_state = slot.state
-            if not isinstance(cur_state, Pending):
-                # This should not happen, but can normally be safely ignored
-                logging.warning('Settled command %s given for updating, skipping', command)
-                continue
-            match command:
-                case InertCommand():
+            match cur_state:
+                case Primitive():
                     # If it's an output-style primitive, just add it
-                    if command.key is None:
-                        primitives.append(command)
+                    if cur_state.key is None:
+                        primitives.append(cur_state)
                         continue
                     # Check if we already have instances of that command
-                    if command.key in self.leaves:
+                    if cur_state.key in self.leaves:
                         # If yes, just add it to the list
-                        self.leaves[command.key].append(slot)
+                        self.leaves[cur_state.key].append(slot)
                     else:
                         # First encounter, initialize the list and send it out
-                        self.leaves[command.key] = [slot]
-                        primitives.append(command)
-                case _:
+                        self.leaves[cur_state.key] = [slot]
+                        primitives.append(cur_state)
+                case Pending():
                     # Else, call its callback to figure out what to do next
                     input_values = [sin.get_value() for sin in cur_state.inputs]
                     new_state = cur_state.update(input_values)
-                    self.notify_change(command,
+                    self.notify_change(slot.orig_command,
                         None if isinstance(new_state, Command) else new_state
                         )
                     match new_state:
@@ -402,6 +397,9 @@ class Script:
                             # commands must be checked in turn.
                             slot.state = new_state
                             slots.extend(slot.outputs)
+                case _: # Result
+                    # This should not happen, but can normally be safely ignored
+                    logging.warning('Settled command %s given for updating, skipping', slot)
         return primitives
 
 def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[Slot]]:
@@ -423,8 +421,11 @@ def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[
         if command in all_slots:
             continue
         # First time seeing this command, create a slot
-        state = Pending([], command.eval)
-        slot = Slot(state, command)
+        if isinstance(command, Primitive):
+            slot = Slot(command, command)
+        else:
+            state = Pending([], command.eval)
+            slot = Slot(state, command)
         all_slots[command] = slot
         # Add its inputs
         if command.inputs:
@@ -444,8 +445,8 @@ def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[
 
 R = TypeVar('R')
 
-def filter_commands(commands: Iterable[InertCommand],
-                    filt: Callable[[InertCommand], tuple[Iterable[R], Iterable[InertCommand]]]
+def filter_commands(commands: Iterable[Primitive],
+                    filt: Callable[[Primitive], tuple[Iterable[R], Iterable[Primitive]]]
                     ) -> list[R]:
     """
     Functional helper to recursively apply to a list of commands a function that
@@ -468,14 +469,14 @@ def filter_commands(commands: Iterable[InertCommand],
     return filtered
 
 def run_command(command: Command[OkT, ErrT],
-                callback: Callable[[InertCommand], Result]
+                callback: Callable[[Primitive], Result]
                 ) -> Result[OkT, ErrT]:
     """
     Run command by fulfilling primitives with given synchronous callback
     """
     script = Script()
     primitives = script.init_command(command)
-    def _filter(prim: InertCommand) -> tuple[list[None], list[InertCommand]]:
+    def _filter(prim: Primitive) -> tuple[list[None], list[Primitive]]:
         return [], script.done(prim.key, Ok(callback(prim)))
     unprocessed = filter_commands(primitives, _filter)
     assert not unprocessed

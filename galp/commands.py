@@ -14,7 +14,7 @@ import galp.asyn as ga
 
 from galp.result import Result, Ok, Error
 from galp.serialize import LoadError
-from galp.asyn import Command, collect, InertCommand, CommandLike
+from galp.asyn import Command, collect, Primitive, CommandLike
 
 # Custom Script
 # -------------
@@ -72,7 +72,7 @@ class Script(ga.Script):
 
 T_co = TypeVar('T_co', covariant=True)
 
-class Send(InertCommand[T_co, Error]):
+class Send(Primitive[T_co, Error]):
     """Send an arbitrary request"""
     request: gm.Request
     def __init__(self, request: gm.BaseRequest[T_co]):
@@ -84,7 +84,7 @@ class Send(InertCommand[T_co, Error]):
     def key(self) -> Hashable:
         return gm.get_request_id(self.request)
 
-class End(InertCommand):
+class End(Primitive):
     """Finish the command processing"""
     def __init__(self, value):
         super().__init__()

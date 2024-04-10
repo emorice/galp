@@ -226,8 +226,8 @@ class Worker:
             return Error('Not found in store')
 
 
-    def _filter_local(self, command: cm.InertCommand
-                    ) -> tuple[list[TransportMessage], list[cm.InertCommand]]:
+    def _filter_local(self, command: cm.Primitive
+                    ) -> tuple[list[TransportMessage], list[cm.Primitive]]:
         """Filter out locally available resources, send queries for the rest"""
         match command:
             case cm.Send():
@@ -244,7 +244,7 @@ class Worker:
             case _:
                 raise NotImplementedError(command)
 
-    def _new_commands_to_replies(self, commands: list[cm.InertCommand]
+    def _new_commands_to_replies(self, commands: list[cm.Primitive]
             ) -> list[TransportMessage]:
         """
         Generate galp messages from a command reply list
@@ -252,7 +252,7 @@ class Worker:
         return filter_commands(commands, self._filter_local)
 
     def schedule_task(self, write_reply: SubReplyWriter, msg: gm.Submit
-                      ) -> list[cm.InertCommand]:
+                      ) -> list[cm.Primitive]:
         """
         Callback to schedule a task for execution.
         """
