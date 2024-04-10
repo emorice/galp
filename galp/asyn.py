@@ -17,23 +17,18 @@ from galp.result import Ok, Error, Result, all_ok as result_all_ok
 OkT = TypeVar('OkT', covariant=True)
 ErrT = TypeVar('ErrT', bound=Error)
 
-@dataclass(frozen=True)
-class Pending():
-    """
-    Special type for a result not known yet
-    """
 
-State = Pending | Result[OkT, ErrT]
+State = Result[OkT, ErrT] | None
 
 def none_pending(states: Iterable[State[OkT, ErrT]]
-                ) -> Ok[list[Result[OkT, ErrT]]] | Pending:
+                ) -> Ok[list[Result[OkT, ErrT]]] | None:
     """
     Return Pending if any state is pending, else Ok with the list of results
     """
     results = []
     for state in states:
-        if isinstance(state, Pending):
-            return Pending()
+        if state is None:
+            return None
         results.append(state)
     return Ok(results)
 
@@ -48,7 +43,7 @@ def all_ok(states: Iterable[State[OkT, ErrT]]
 
     for state in states:
         match state:
-            case Pending():
+            case None:
                 any_pending = True
                 # We still need to continue to check Errors
             case Ok():
@@ -56,7 +51,7 @@ def all_ok(states: Iterable[State[OkT, ErrT]]
             case Error():
                 return state
     if any_pending:
-        return Pending()
+        return None
 
     return Ok(results)
 
@@ -93,7 +88,8 @@ class Command(Generic[OkT, ErrT]):
         """
         return DeferredCommand(Deferred(callback, self))
 
-    def eval(self, input_values: list[State]) -> 'tuple[CommandLike[OkT, ErrT], list[Command]]':
+    def eval(self, input_values: list[State]
+             ) -> 'tuple[CommandLike[OkT, ErrT] | None, list[Command]]':
         """
         Logic of calculating the value
         """
@@ -170,14 +166,15 @@ class DeferredCommand(Command[OkT, ErrT]):
     def __repr__(self):
         return f'DeferredCommand(state={repr(self._state)})'
 
-    def eval(self, input_values: list[State]) -> tuple[CommandLike[OkT, ErrT], list[Command]]:
+    def eval(self, input_values: list[State]
+             ) -> tuple[CommandLike[OkT, ErrT] | None, list[Command]]:
         """
         State-based handling
         """
         value, = input_values
         # Input wasn't settled, skip
-        if isinstance(value, Pending):
-            return self, []
+        if value is None:
+            return None, []
 
         # Input has a Result, we can run callback
         ret = self._state.callback(value)
@@ -220,18 +217,14 @@ class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
         self.commands = [as_command(cmdlike) for cmdlike in _list]
 
     def eval(self, input_values: list[State]) -> tuple[
-            CommandLike[Sequence[Result[OkT, ErrT]], ErrT],
+            CommandLike[Sequence[Result[OkT, ErrT]], ErrT] | None,
             list[Command]]:
         """
         State-based handling
         """
-        def _as_state(state: State):
-            if isinstance(state, Pending):
-                return self
-            return state
         if self.keep_going:
-            return _as_state(none_pending(input_values)), []
-        return _as_state(all_ok(input_values)), []
+            return none_pending(input_values), []
+        return all_ok(input_values), []
 
     def __repr__(self):
         return f'Gather({repr(self.commands)})'
@@ -296,7 +289,7 @@ class InertCommand(Command[OkT, ErrT]):
 
     def eval(self, *_):
         # Never changes by itself
-        return Pending(), []
+        return None, []
 
     @property
     def key(self) -> Hashable:
@@ -312,14 +305,33 @@ class InertCommand(Command[OkT, ErrT]):
         """
         return []
 
+@dataclass
+class Pending(Generic[OkT, ErrT]):
+    """
+    Pending slot state pointing to other slots
+    """
+    inputs: 'list[Slot]'
+    update: Callable[
+            [list[State]],
+            tuple[CommandLike[OkT, ErrT], list[Command]]
+            ]
+
 @dataclass(eq=False)
 class Slot(Generic[OkT, ErrT]):
     """
     Mutable container that holds the current computation state of a future
     """
-    state: CommandLike[OkT, ErrT]
+    state: Result[OkT, ErrT] | InertCommand[OkT, ErrT] | Pending[OkT, ErrT]
     orig_command: Command
     outputs: 'WeakSet[Slot]' = field(default_factory=WeakSet)
+
+    def get_value(self) -> State[OkT, ErrT]:
+        """
+        Value
+        """
+        if isinstance(self.state, Command | Pending):
+            return None
+        return self.state
 
 class Script:
     """
@@ -338,11 +350,8 @@ class Script:
         Get command value
         """
         if command in self.slots:
-            state = self.slots[command].state
-            if isinstance(state, Command):
-                return Pending()
-            return state
-        return Pending()
+            return self.slots[command].get_value()
+        return None
 
     def done(self, key: Hashable, result: Result) -> list[InertCommand]:
         """
@@ -385,7 +394,7 @@ class Script:
             slot = slots.pop()
             command = slot.orig_command
             cur_state = slot.state
-            if not isinstance(cur_state, Command):
+            if not isinstance(cur_state, Pending):
                 # This should not happen, but can normally be safely ignored
                 logging.warning('Settled command %s given for updating, skipping', command)
                 continue
@@ -405,25 +414,33 @@ class Script:
                         primitives.append(command)
                 case _:
                     # Else, call its callback to figure out what to do next
-                    input_values = [self.get_value(cin) for cin in command.inputs]
-                    new_state, new_sub_commands = command.eval(input_values)
-                    slot.state = new_state
+                    input_values = [sin.get_value() for sin in cur_state.inputs]
+                    new_state, new_sub_commands = cur_state.update(input_values)
                     self.notify_change(command,
-                        Pending() if isinstance(new_state, Command) else new_state
+                        None if isinstance(new_state, Command) else new_state
                         )
-                    # eval can have created a new subgraph, so we need to attach it
-                    # to the self by filling the output map and collect new leaves
-                    if new_sub_commands:
-                        new_slots, new_leave_slots = _make_slots(new_sub_commands)
-                        # Also add links to current command
-                        for cin in command.inputs:
-                            new_slots[cin].outputs.add(slot)
-                        self.slots |= new_slots
-                        slots.extend(new_leave_slots)
-                    # Maybe this caused the command to advance to a terminal state
-                    # (Result). In that case downstream commands must be checked in turn.
-                    elif not isinstance(new_state, Command):
-                        slots.extend(slot.outputs)
+                    match new_state:
+                        case None:
+                            # Command skipped, skip too
+                            assert not new_sub_commands
+                        case Command():
+                            # Command resolved to a non-trivial new command
+                            assert new_sub_commands
+                            new_slots, new_leave_slots = _make_slots(new_sub_commands)
+                            # Also add links to current command
+                            new_inputs = []
+                            for cin in command.inputs:
+                                slot_in = new_slots[cin]
+                                slot_in.outputs.add(slot)
+                                new_inputs.append(slot_in)
+                            self.slots |= new_slots
+                            slots.extend(new_leave_slots)
+                            slot.state = Pending(new_inputs, command.eval)
+                        case _:
+                            # Command settled (Result). In that case downstream
+                            # commands must be checked in turn.
+                            slot.state = new_state
+                            slots.extend(slot.outputs)
         return primitives
 
 def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[Slot]]:
@@ -445,7 +462,8 @@ def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[
         if command in all_slots:
             continue
         # First time seeing this command, create a slot
-        slot = Slot(command, command)
+        state = Pending([], command.eval)
+        slot = Slot(state, command)
         all_slots[command] = slot
         # Add its inputs
         if command.inputs:
@@ -455,8 +473,11 @@ def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[
 
     # Now we have slots, but no links between them
     for command, slot in all_slots.items():
+        if not isinstance(slot.state, Pending):
+            continue
         for cin in command.inputs:
             all_slots[cin].outputs.add(slot)
+            slot.state.inputs.append(all_slots[cin])
 
     return all_slots, leaves
 
@@ -498,5 +519,5 @@ def run_command(command: Command[OkT, ErrT],
     unprocessed = filter_commands(primitives, _filter)
     assert not unprocessed
     result = script.get_value(command)
-    assert not isinstance(result, Pending)
+    assert result is not None
     return result
