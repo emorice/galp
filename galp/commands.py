@@ -2,8 +2,6 @@
 Lists of internal commands
 """
 
-import sys
-import time
 from typing import Sequence, Hashable, TypeVar
 from dataclasses import dataclass
 
@@ -29,43 +27,6 @@ class Script(ga.Script):
     def __init__(self, verbose: bool = True) -> None:
         self.verbose = verbose
         super().__init__()
-
-    def notify_change(self, command: Command, new_value: ga.State) -> None:
-        """
-        Hook called when the graph status changes
-        """
-        if not self.verbose:
-            return
-
-        def print_status(stat, name, step_name):
-            print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} {stat:4} [{name}]'
-                    f' {step_name}',
-                    file=sys.stderr, flush=True)
-
-        if not isinstance(command, Send):
-            return
-        req = command.request
-
-        if isinstance(req, gm.Stat):
-            if isinstance(new_value, Ok):
-                task_done, task_def, _children = new_value.value
-                if not task_done and isinstance(self, gtt.CoreTaskDef):
-                    print_status('PLAN', req.name, task_def.step)
-
-        if isinstance(req, gm.Submit):
-            step_name_s = req.task_def.step
-            name = req.task_def.name
-
-            # We log 'SUB' every time a submit req's status "changes" to
-            # PENDING. Currently this only happens when the req is
-            # created.
-            match new_value:
-                case ga.Pending():
-                    print_status('SUB', name, step_name_s)
-                case Ok():
-                    print_status('DONE', name, step_name_s)
-                case Error():
-                    print_status('FAIL', name, step_name_s)
 
 # Primitives
 # ----------

@@ -284,7 +284,6 @@ class Slot(Generic[OkT, ErrT]):
     Mutable container that holds the current computation state of a future
     """
     state: Result[OkT, ErrT] | Primitive[OkT, ErrT] | Pending[OkT, ErrT]
-    orig_command: Command
     outputs: 'WeakSet[Slot]' = field(default_factory=WeakSet)
 
     def get_value(self) -> State[OkT, ErrT]:
@@ -339,11 +338,6 @@ class Script:
         self.slots |= slots
         return self._advance_all(leaves)
 
-    def notify_change(self, command: Command, new_value: State) -> None:
-        """
-        Hook called when the graph status changes
-        """
-
     def _advance_all(self, slots: list[Slot]) -> list[Primitive]:
         """
         Try to advance all given commands, and all downstream depending on them the
@@ -373,9 +367,6 @@ class Script:
                     # Else, call its callback to figure out what to do next
                     input_values = [sin.get_value() for sin in cur_state.inputs]
                     new_state = cur_state.update(input_values)
-                    self.notify_change(slot.orig_command,
-                        None if isinstance(new_state, Command) else new_state
-                        )
                     match new_state:
                         case None:
                             # Command skipped, skip too
@@ -422,10 +413,9 @@ def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[
             continue
         # First time seeing this command, create a slot
         if isinstance(command, Primitive):
-            slot = Slot(command, command)
+            slot = Slot(command)
         else:
-            state = Pending([], command.eval)
-            slot = Slot(state, command)
+            slot = Slot(Pending([], command.eval))
         all_slots[command] = slot
         # Add its inputs
         if command.inputs:
