@@ -4,7 +4,7 @@ Functional, framework-agnostic, asynchronous programming system
 
 import logging
 from weakref import WeakKeyDictionary, WeakSet
-from typing import (TypeVar, Generic, Callable, Any, Iterable, TypeAlias,
+from typing import (TypeVar, Generic, Callable, Iterable, TypeAlias,
     Hashable, Mapping, Sequence)
 from dataclasses import dataclass, field
 from functools import wraps
@@ -17,13 +17,12 @@ from galp.result import Ok, Error, Result, all_ok as result_all_ok
 OkT = TypeVar('OkT', covariant=True)
 ErrT = TypeVar('ErrT', bound=Error)
 
-
 State = Result[OkT, ErrT] | None
 
 def none_pending(states: Iterable[State[OkT, ErrT]]
                 ) -> Ok[list[Result[OkT, ErrT]]] | None:
     """
-    Return Pending if any state is pending, else Ok with the list of results
+    Return None if any state is None, else Ok with the list of results
     """
     results = []
     for state in states:
@@ -35,7 +34,7 @@ def none_pending(states: Iterable[State[OkT, ErrT]]
 def all_ok(states: Iterable[State[OkT, ErrT]]
            ) -> State[list[Ok[OkT]], ErrT]:
     """
-    Return Error if any state is Error, else Pending if any state is Pending,
+    Return Error if any state is Error, else None if any state is None,
     else Ok with the list of values.
     """
     results = []
@@ -62,20 +61,13 @@ def all_ok(states: Iterable[State[OkT, ErrT]]
 InOkT = TypeVar('InOkT')
 OutOkT = TypeVar('OutOkT')
 
-@dataclass
-class Deferred(Generic[InOkT, OkT, ErrT]):
-    """Wraps commands with matching callback"""
-    # Gotcha: the order of typevars differs from Callback !
-    callback: 'PlainCallback[InOkT, ErrT, OkT]'
-    arg: 'Command[InOkT, ErrT]'
-
-    def __repr__(self):
-        return f'Deferred({self.callback.__qualname__})'
-
 class Command(Generic[OkT, ErrT]):
     """
     Base class for commands
     """
+    def __init__(self, inputs: 'list[Command]'):
+        self.inputs = inputs
+
     def then(self, callback: 'Callback[OkT, OutOkT, ErrT]') -> 'Command[OutOkT, ErrT]':
         """
         Chain callback to this command on sucess
@@ -86,19 +78,11 @@ class Command(Generic[OkT, ErrT]):
         """
         Chain callback to this command
         """
-        return DeferredCommand(Deferred(callback, self))
+        return DeferredCommand(self, callback)
 
-    def eval(self, input_values: list[State]
-             ) -> 'tuple[CommandLike[OkT, ErrT] | None, list[Command]]':
+    def eval(self, input_values: list[State]) -> 'CommandLike[OkT, ErrT] | None':
         """
         Logic of calculating the value
-        """
-        raise NotImplementedError
-
-    @property
-    def inputs(self) -> 'list[Command]':
-        """
-        Other commands we depend on
         """
         raise NotImplementedError
 
@@ -110,16 +94,12 @@ class ResultCommand(Command[OkT, ErrT]):
     in Pending state, and are updated at least once before settling.
     """
     def __init__(self, result: Result[OkT, ErrT]):
+        super().__init__([])
         self._result = result
-        super().__init__()
 
-    def eval(self, _input_values):
+    def eval(self, _input_values: list[State]) -> 'CommandLike[OkT, ErrT] | None':
         assert not _input_values
-        return self._result, []
-
-    @property
-    def inputs(self):
-        return []
+        return self._result
 
 CommandLike: TypeAlias = Result[OkT, ErrT] | Command[OkT, ErrT]
 
@@ -159,50 +139,49 @@ class DeferredCommand(Command[OkT, ErrT]):
     A promise of the return value Ok of a callback applied to an input promise
     InOk
     """
-    def __init__(self, deferred: Deferred[Any, OkT, ErrT]) -> None:
-        super().__init__()
-        self._state = deferred
+    def __init__(self, command: Command[InOkT, ErrT],
+                 callback: PlainCallback[InOkT, ErrT, OkT]) -> None:
+        super().__init__([command])
+        self.callback = callback
 
-    def __repr__(self):
-        return f'DeferredCommand(state={repr(self._state)})'
-
-    def eval(self, input_values: list[State]
-             ) -> tuple[CommandLike[OkT, ErrT] | None, list[Command]]:
+    def eval(self, input_values: list[State]) -> 'CommandLike[OkT, ErrT] | None':
         """
         State-based handling
         """
         value, = input_values
         # Input wasn't settled, skip
         if value is None:
-            return None, []
+            return None
 
         # Input has a Result, we can run callback
-        ret = self._state.callback(value)
+        ret = self.callback(value)
 
         # Callback returned a new Command
         if isinstance(ret, Command):
-            self._state = Deferred(lambda r: r, ret)
-            return ret, [self._state.arg]
+            return ResolvedCommand(ret)
 
         # Callback returned a concrete value
-        return ret, []
+        return ret
 
-    @property
-    def inputs(self) -> list[Command]:
-        """
-        Commands we depend on
-        """
-        return [self._state.arg]
+class ResolvedCommand(Command[OkT, ErrT]):
+    """Command shadowing an other"""
+    def __init__(self, command: Command[OkT, ErrT]):
+        super().__init__([command])
+        self.command = command
+
+    def eval(self, input_values: list[State]) -> 'CommandLike[OkT, ErrT] | None':
+        value, = input_values
+        return value
 
 class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
     """
     Then-able list with state conjunction respecting keep_going
 
     If keep_going is False, this fails as soon as any input fails. Otherwise, it
-    returns Pending until all the inputs are Ok, at which point it returns a
+    returns None until all the inputs are Ok, at which point it returns a
     list of Ok.
 
-    If keep_going is False, this stays Pending until all states are Ok or
+    If keep_going is False, this stays None until all states are Ok or
     Failed, at which point it returns a list of them.
     """
     commands: list[Command[OkT, ErrT]]
@@ -211,30 +190,21 @@ class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
     def __init__(self, commands: CommandLike[OkT, ErrT] |
                  Iterable[CommandLike[OkT, ErrT]],
                  keep_going: bool):
-        super().__init__()
-        self.keep_going = keep_going
         _list = list(commands) if isinstance(commands, Iterable) else [commands]
-        self.commands = [as_command(cmdlike) for cmdlike in _list]
+        super().__init__([as_command(cmdlike) for cmdlike in _list])
+        self.keep_going = keep_going
 
-    def eval(self, input_values: list[State]) -> tuple[
-            CommandLike[Sequence[Result[OkT, ErrT]], ErrT] | None,
-            list[Command]]:
+    def eval(self, input_values: list[State]
+             ) -> CommandLike[Sequence[Result[OkT, ErrT]], ErrT] | None:
         """
         State-based handling
         """
         if self.keep_going:
-            return none_pending(input_values), []
-        return all_ok(input_values), []
+            return none_pending(input_values)
+        return all_ok(input_values)
 
     def __repr__(self):
-        return f'Gather({repr(self.commands)})'
-
-    @property
-    def inputs(self) -> list[Command]:
-        """
-        Commands we depend on
-        """
-        return self.commands
+        return f'Gather({repr(self.inputs)})'
 
 def collect_all(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
             ) -> Command[Sequence[Result[OkT, ErrT]], ErrT]:
@@ -286,10 +256,11 @@ class InertCommand(Command[OkT, ErrT]):
 
     Fully defined and identified by a task name
     """
+    def __init__(self):
+        super().__init__([])
 
-    def eval(self, *_):
-        # Never changes by itself
-        return None, []
+    def eval(self, *_) -> None:
+        return None
 
     @property
     def key(self) -> Hashable:
@@ -298,12 +269,6 @@ class InertCommand(Command[OkT, ErrT]):
         """
         raise NotImplementedError
 
-    @property
-    def inputs(self) -> list[Command]:
-        """
-        Commands we depend on
-        """
-        return []
 
 @dataclass
 class Pending(Generic[OkT, ErrT]):
@@ -311,10 +276,7 @@ class Pending(Generic[OkT, ErrT]):
     Pending slot state pointing to other slots
     """
     inputs: 'list[Slot]'
-    update: Callable[
-            [list[State]],
-            tuple[CommandLike[OkT, ErrT], list[Command]]
-            ]
+    update: Callable[[list[State]], CommandLike[OkT, ErrT] | None]
 
 @dataclass(eq=False)
 class Slot(Generic[OkT, ErrT]):
@@ -415,27 +377,26 @@ class Script:
                 case _:
                     # Else, call its callback to figure out what to do next
                     input_values = [sin.get_value() for sin in cur_state.inputs]
-                    new_state, new_sub_commands = cur_state.update(input_values)
+                    new_state = cur_state.update(input_values)
                     self.notify_change(command,
                         None if isinstance(new_state, Command) else new_state
                         )
                     match new_state:
                         case None:
                             # Command skipped, skip too
-                            assert not new_sub_commands
+                            pass
                         case Command():
                             # Command resolved to a non-trivial new command
-                            assert new_sub_commands
-                            new_slots, new_leave_slots = _make_slots(new_sub_commands)
+                            new_slots, new_leaf_slots = _make_slots(new_state.inputs)
                             # Also add links to current command
                             new_inputs = []
-                            for cin in command.inputs:
+                            for cin in new_state.inputs:
                                 slot_in = new_slots[cin]
                                 slot_in.outputs.add(slot)
                                 new_inputs.append(slot_in)
                             self.slots |= new_slots
-                            slots.extend(new_leave_slots)
-                            slot.state = Pending(new_inputs, command.eval)
+                            slots.extend(new_leaf_slots)
+                            slot.state = Pending(new_inputs, new_state.eval)
                         case _:
                             # Command settled (Result). In that case downstream
                             # commands must be checked in turn.
