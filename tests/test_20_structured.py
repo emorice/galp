@@ -7,7 +7,7 @@ import pytest
 from async_timeout import timeout
 
 import galp
-import galp.tests.steps as gts
+import tests.steps as gts
 
 # pylint: disable=redefined-outer-name
 
@@ -16,7 +16,7 @@ def run(tmpdir):
     """
     Bind test parameters for galp.run
     """
-    return partial(galp.run, store=tmpdir, steps=['galp.tests.steps'],
+    return partial(galp.run, store=tmpdir, steps=['tests.steps'],
             log_level='info')
 
 @pytest.fixture

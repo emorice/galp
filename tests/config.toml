@@ -1,4 +1,4 @@
-steps = [ "galp.tests.steps" ]
+steps = [ "tests.steps" ]
 
 [profile]
 dir = "/tmp/galp_prof"

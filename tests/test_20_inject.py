@@ -5,7 +5,7 @@ Tests related to the dependency injection API
 import pytest
 from async_timeout import timeout
 
-import galp.tests.steps.inject as gts
+import tests.steps.inject as gts
 
 async def test_inject(client):
     """

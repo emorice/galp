@@ -10,7 +10,7 @@ import pytest
 from async_timeout import timeout
 
 import galp
-import galp.tests.steps as gts
+import tests.steps as gts
 import galp.task_types as gtt
 
 from galp.result import Ok

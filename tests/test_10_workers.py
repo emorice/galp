@@ -10,7 +10,6 @@ import zmq
 import pytest
 from async_timeout import timeout
 
-import galp.tests
 import galp.worker
 import galp.net.core.types as gm
 from galp.net.core.load import parse_core_message

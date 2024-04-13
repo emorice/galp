@@ -10,7 +10,7 @@ import psutil
 import pytest
 
 import galp
-import galp.tests.steps as gts
+import tests.steps as gts
 
 # Other fixtures
 # ========

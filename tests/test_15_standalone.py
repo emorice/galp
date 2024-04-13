@@ -9,7 +9,7 @@ from async_timeout import timeout
 import pytest
 
 import galp
-import galp.tests.steps as gts
+import tests.steps as gts
 
 # pylint: disable=no-member,redefined-outer-name
 
@@ -20,7 +20,7 @@ async def test_standalone():
     task = gts.hello()
 
     async with timeout(3):
-        async with galp.temp_system(steps=['galp.tests.steps']) as client:
+        async with galp.temp_system(steps=['tests.steps']) as client:
             res = await client.run(task)
         assert res == gts.hello.function()
 
@@ -31,7 +31,7 @@ async def test_standalone_jobs():
     task = gts.hello()
 
     async with timeout(3):
-        async with galp.temp_system(steps=['galp.tests.steps'], pool_size=2) as client:
+        async with galp.temp_system(steps=['tests.steps'], pool_size=2) as client:
             res = await client.run(task)
         assert res == gts.hello.function()
 
@@ -41,7 +41,7 @@ async def test_explicit():
     """
     task = gts.identity(1234)
 
-    gls = galp.TempSystem(steps=['galp.tests.steps'])
+    gls = galp.TempSystem(steps=['tests.steps'])
 
     async with timeout(3):
         client = await gls.start()
@@ -62,7 +62,7 @@ def run(tmpdir):
     Run a task (with a timeout)
     """
     return lambda task, **kwargs: galp.run(task,
-        store=tmpdir, steps=['galp.tests.steps'], timeout=3,
+        store=tmpdir, steps=['tests.steps'], timeout=3,
         **kwargs)
 
 def test_oneshot(run):

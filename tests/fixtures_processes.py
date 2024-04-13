@@ -61,7 +61,7 @@ def make_worker(make_process, port, tmp_path):
 
         phandle = make_process(
             '-m', 'galp.worker',
-            '-c', 'galp/tests/config.toml',
+            '-c', 'tests/config.toml',
             '--log-level', log_level(),
             endpoint,
             '--store', str(tmp_path)
@@ -84,7 +84,7 @@ def make_pool(make_process, port, tmp_path):
 
         phandle = make_process(
             '-m', 'galp.pool',
-            '-c', 'galp/tests/config.toml',
+            '-c', 'tests/config.toml',
             '--log-level', log_level(),
             endpoint,
             '--store', str(tmp_path),

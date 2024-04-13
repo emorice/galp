@@ -12,7 +12,7 @@ from async_timeout import timeout
 
 import galp.steps
 import galp.client
-import galp.tests.steps as gts
+import tests.steps as gts
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member

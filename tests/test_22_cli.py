@@ -5,14 +5,13 @@ These bridge the gap with tools like make.
 """
 
 import subprocess
-from subprocess import check_output
 
 from async_timeout import timeout
 
 import pytest
 
 import galp
-import galp.tests.steps as gts
+import tests.steps as gts
 
 def run(command):
     """
@@ -28,7 +27,7 @@ def test_cli_run(galp_set_one):
     """
     endpoint, _ = galp_set_one
 
-    out = run(f'python3 -m galp.client -e {endpoint} galp.tests.steps hello')
+    out = run(f'python3 -m galp.client -e {endpoint} tests.steps hello')
 
     assert out == gts.hello.function()
 
@@ -38,7 +37,7 @@ def test_cli_run_noprint(galp_set_one):
     """
     endpoint, _ = galp_set_one
 
-    out = run(f'python3 -m galp.client -q -e {endpoint} galp.tests.steps hello')
+    out = run(f'python3 -m galp.client -q -e {endpoint} tests.steps hello')
 
     assert out == ''
 
@@ -48,7 +47,7 @@ def test_cli_run_empty(galp_set_one):
     """
     endpoint, _ = galp_set_one
 
-    out = run(f'python3 -m galp.client -e {endpoint} galp.tests.steps empty --log-level=info')
+    out = run(f'python3 -m galp.client -e {endpoint} tests.steps empty --log-level=info')
 
     assert out == '()'
 
@@ -66,11 +65,11 @@ def test_cli_keep_going(tmpdir):
     Start a failing job
     """
     with pytest.raises(subprocess.CalledProcessError):
-        _ = run(f'python3 -m galp.client -s {tmpdir} --steps galp.tests.steps '
-                'galp.tests.steps suicide')
+        _ = run(f'python3 -m galp.client -s {tmpdir} --steps tests.steps '
+                'tests.steps suicide')
 
-    out = run(f'python3 -m galp.client -s {tmpdir} --steps galp.tests.steps -k '
-            'galp.tests.steps suicide')
+    out = run(f'python3 -m galp.client -s {tmpdir} --steps tests.steps -k '
+            'tests.steps suicide')
     assert 'failed' in out.lower()
 
 async def test_path(client):

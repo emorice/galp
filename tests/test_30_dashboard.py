@@ -7,7 +7,7 @@ import werkzeug
 from bs4 import BeautifulSoup
 
 import galp
-import galp.tests.steps as gts
+import tests.steps as gts
 from galp.dashboard import create_app
 
 # pylint: disable=redefined-outer-name
@@ -19,12 +19,12 @@ def render_parse(tmpdir, data):
     """
     _ = data
     def _render_parse(name):
-        url = f'/step/galp.tests.steps.dashboard::{name}'
+        url = f'/step/tests.steps.dashboard::{name}'
         environ = werkzeug.test.create_environ(url)
         app = create_app({
             'log_level': 'info',
             'store': tmpdir,
-            'steps': ['galp.tests.steps']
+            'steps': ['tests.steps']
             })
         ctx = app.request_context(environ)
         ctx.push()
@@ -42,7 +42,7 @@ def data(tmpdir):
     """
     galp.run(gts.dashboard.fortytwo,
             store=tmpdir,
-            steps=['galp.tests.steps']
+            steps=['tests.steps']
             )
 
 def test_plotly(render_parse):
