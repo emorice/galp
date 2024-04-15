@@ -15,12 +15,11 @@ from galp.result import Ok, Error, Result, all_ok as result_all_ok
 
 # pylint: disable=typevar-name-incorrect-variance
 OkT = TypeVar('OkT', covariant=True)
-ErrT = TypeVar('ErrT', bound=Error)
 
-State: TypeAlias = Ok[OkT] | ErrT | None
+State: TypeAlias = Result[OkT] | None
 
-def none_pending(states: Iterable[State[OkT, ErrT]]
-                ) -> Ok[list[Ok[OkT] | ErrT]] | None:
+def none_pending(states: Iterable[State[OkT]]
+                ) -> Ok[list[Result[OkT]]] | None:
     """
     Return None if any state is None, else Ok with the list of results
     """
@@ -31,8 +30,8 @@ def none_pending(states: Iterable[State[OkT, ErrT]]
         results.append(state)
     return Ok(results)
 
-def all_ok(states: Iterable[State[OkT, ErrT]]
-           ) -> State[list[Ok[OkT]], ErrT]:
+def all_ok(states: Iterable[State[OkT]]
+           ) -> State[list[Ok[OkT]]]:
     """
     Return Error if any state is Error, else None if any state is None,
     else Ok with the list of values.
@@ -61,49 +60,49 @@ def all_ok(states: Iterable[State[OkT, ErrT]]
 InOkT = TypeVar('InOkT')
 OutOkT = TypeVar('OutOkT')
 
-class Command(Generic[OkT, ErrT]):
+class Command(Generic[OkT]):
     """
     Base class for commands
     """
     def __init__(self, inputs: 'list[Command]'):
         self.inputs = inputs
 
-    def then(self, callback: 'Callback[OkT, OutOkT, ErrT]') -> 'Command[OutOkT, ErrT]':
+    def then(self, callback: 'Callback[OkT, OutOkT]') -> 'Command[OutOkT]':
         """
         Chain callback to this command on sucess
         """
         return self.eventually(ok_callback(callback))
 
-    def eventually(self, callback: 'PlainCallback[OkT, ErrT, OutOkT]') -> 'Command[OutOkT, ErrT]':
+    def eventually(self, callback: 'PlainCallback[OkT, OutOkT]') -> 'Command[OutOkT]':
         """
         Chain callback to this command
         """
         return DeferredCommand(self, callback)
 
-    def eval(self, input_values: list[State]) -> 'CommandLike[OkT, ErrT] | None':
+    def eval(self, input_values: list[State]) -> 'CommandLike[OkT] | None':
         """
         Logic of calculating the value
         """
         raise NotImplementedError
 
-class ResultCommand(Command[OkT, ErrT]):
+class ResultCommand(Command[OkT]):
     """
     Command wrapping a Result
 
     Needlessly convoluted because current code assumes all commands are started
     in Pending state, and are updated at least once before settling.
     """
-    def __init__(self, result: Ok[OkT] | ErrT):
+    def __init__(self, result: Result[OkT]):
         super().__init__([])
         self._result = result
 
-    def eval(self, _input_values: list[State]) -> 'CommandLike[OkT, ErrT] | None':
+    def eval(self, _input_values: list[State]) -> 'CommandLike[OkT] | None':
         assert not _input_values
         return self._result
 
-CommandLike: TypeAlias = Ok[OkT] | ErrT | Command[OkT, ErrT]
+CommandLike: TypeAlias = Result[OkT] | Command[OkT]
 
-def as_command(obj: CommandLike[OkT, ErrT]) -> Command[OkT, ErrT]:
+def as_command(obj: CommandLike[OkT]) -> Command[OkT]:
     """
     Wrap a result into a (done) command.
 
@@ -114,37 +113,37 @@ def as_command(obj: CommandLike[OkT, ErrT]) -> Command[OkT, ErrT]:
         return obj
     return ResultCommand(obj)
 
-Callback: TypeAlias = Callable[[InOkT], CommandLike[OkT, ErrT]]
+Callback: TypeAlias = Callable[[InOkT], CommandLike[OkT]]
 """
 Type of a typical callback
 """
-PlainCallback: TypeAlias = Callable[[Ok[InOkT] | ErrT], CommandLike[OkT, ErrT]]
+PlainCallback: TypeAlias = Callable[[Result[InOkT]], CommandLike[OkT]]
 """
 Type of lower-level callback, which should also be called on failures
 """
 
-def ok_callback(callback: Callback[InOkT, OkT, ErrT]
-        ) -> PlainCallback[InOkT, ErrT, OkT]:
+def ok_callback(callback: Callback[InOkT, OkT]
+        ) -> PlainCallback[InOkT, OkT]:
     """
     Wrap a callback from Ok values to accept and propagate Done/Failed
     accordingly
     """
     @wraps(callback)
-    def _ok_callback(val: Ok[InOkT] | ErrT):
+    def _ok_callback(val: Result[InOkT]):
         return val.then(callback)
     return _ok_callback
 
-class DeferredCommand(Command[OkT, ErrT]):
+class DeferredCommand(Command[OkT]):
     """
     A promise of the return value Ok of a callback applied to an input promise
     InOk
     """
-    def __init__(self, command: Command[InOkT, ErrT],
-                 callback: PlainCallback[InOkT, ErrT, OkT]) -> None:
+    def __init__(self, command: Command[InOkT],
+                 callback: PlainCallback[InOkT, OkT]) -> None:
         super().__init__([command])
         self.callback = callback
 
-    def eval(self, input_values: list[State]) -> 'CommandLike[OkT, ErrT] | None':
+    def eval(self, input_values: list[State]) -> 'CommandLike[OkT] | None':
         """
         State-based handling
         """
@@ -163,17 +162,17 @@ class DeferredCommand(Command[OkT, ErrT]):
         # Callback returned a concrete value
         return ret
 
-class ResolvedCommand(Command[OkT, ErrT]):
+class ResolvedCommand(Command[OkT]):
     """Command shadowing an other"""
-    def __init__(self, command: Command[OkT, ErrT]):
+    def __init__(self, command: Command[OkT]):
         super().__init__([command])
         self.command = command
 
-    def eval(self, input_values: list[State]) -> 'CommandLike[OkT, ErrT] | None':
+    def eval(self, input_values: list[State]) -> 'CommandLike[OkT] | None':
         value, = input_values
         return value
 
-class _Gather(Command[Sequence[Ok[OkT] | ErrT], ErrT]):
+class _Gather(Command[Sequence[Result[OkT]]]):
     """
     Then-able list with state conjunction respecting keep_going
 
@@ -184,18 +183,18 @@ class _Gather(Command[Sequence[Ok[OkT] | ErrT], ErrT]):
     If keep_going is False, this stays None until all states are Ok or
     Failed, at which point it returns a list of them.
     """
-    commands: list[Command[OkT, ErrT]]
+    commands: list[Command[OkT]]
     keep_going: bool
 
-    def __init__(self, commands: CommandLike[OkT, ErrT] |
-                 Iterable[CommandLike[OkT, ErrT]],
+    def __init__(self, commands: CommandLike[OkT] |
+                 Iterable[CommandLike[OkT]],
                  keep_going: bool):
         _list = list(commands) if isinstance(commands, Iterable) else [commands]
         super().__init__([as_command(cmdlike) for cmdlike in _list])
         self.keep_going = keep_going
 
     def eval(self, input_values: list[State]
-             ) -> CommandLike[Sequence[Ok[OkT] | ErrT], ErrT] | None:
+             ) -> CommandLike[Sequence[Result[OkT]]] | None:
         """
         State-based handling
         """
@@ -206,8 +205,8 @@ class _Gather(Command[Sequence[Ok[OkT] | ErrT], ErrT]):
     def __repr__(self):
         return f'Gather({repr(self.inputs)})'
 
-def collect_all(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
-            ) -> Command[Sequence[Ok[OkT] | ErrT], ErrT]:
+def collect_all(commands: Iterable[CommandLike[OkT]], keep_going: bool
+            ) -> Command[Sequence[Result[OkT]]]:
     """
     Gather all commands, continuing on Error according to keep_going.
 
@@ -222,8 +221,8 @@ def collect_all(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
     """
     return _Gather(commands, keep_going)
 
-def collect(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
-            ) -> Command[list[OkT], ErrT]:
+def collect(commands: Iterable[CommandLike[OkT]], keep_going: bool
+            ) -> Command[list[OkT]]:
     """
     Gather all commands, continuing on Error according to keep_going.
 
@@ -240,8 +239,8 @@ def collect(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
 
 K = TypeVar('K')
 
-def collect_dict(commands: Mapping[K, CommandLike[OkT, ErrT]], keep_going: bool
-                 ) -> Command[dict[K, OkT], ErrT]:
+def collect_dict(commands: Mapping[K, CommandLike[OkT]], keep_going: bool
+                 ) -> Command[dict[K, OkT]]:
     """
     Wrapper around collect that simplifies gathering dicts of commands
     """
@@ -250,7 +249,7 @@ def collect_dict(commands: Mapping[K, CommandLike[OkT, ErrT]], keep_going: bool
             lambda ok_values: Ok(dict(zip(keys, ok_values)))
             )
 
-class Primitive(Command[OkT, ErrT]):
+class Primitive(Command[OkT]):
     """
     Command tied to an external event
 
@@ -271,22 +270,22 @@ class Primitive(Command[OkT, ErrT]):
 
 
 @dataclass
-class Pending(Generic[OkT, ErrT]):
+class Pending(Generic[OkT]):
     """
     Pending slot state pointing to other slots
     """
     inputs: 'list[Slot]'
-    update: Callable[[list[State]], CommandLike[OkT, ErrT] | None]
+    update: Callable[[list[State]], CommandLike[OkT] | None]
 
 @dataclass(eq=False)
-class Slot(Generic[OkT, ErrT]):
+class Slot(Generic[OkT]):
     """
     Mutable container that holds the current computation state of a future
     """
-    state: Ok[OkT] | ErrT | Primitive[OkT, ErrT] | Pending[OkT, ErrT]
+    state: Result[OkT] | Primitive[OkT] | Pending[OkT]
     outputs: 'WeakSet[Slot]' = field(default_factory=WeakSet)
 
-    def get_value(self) -> State[OkT, ErrT]:
+    def get_value(self) -> State[OkT]:
         """
         Value
         """
@@ -458,9 +457,9 @@ def filter_commands(commands: Iterable[Primitive],
         commands.extend(cur_tofilter)
     return filtered
 
-def run_command(command: Command[OkT, ErrT],
+def run_command(command: Command[OkT],
                 callback: Callable[[Primitive], Result]
-                ) -> Ok[OkT] | ErrT:
+                ) -> Result[OkT]:
     """
     Run command by fulfilling primitives with given synchronous callback
     """

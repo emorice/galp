@@ -15,7 +15,7 @@ from .cache import StoreReadError
 from .asyn import as_command, collect, collect_dict
 
 def run_task(task: TaskNode, options: cm.ExecOptions
-             ) -> cm.Command[object, Error]:
+             ) -> cm.Command[object]:
     """
     Creates command appropriate to type of task (query or non-query)
     """
@@ -143,7 +143,7 @@ class Operator:
         """
         return self.inner_result(self._required, subs)
 
-    def inner_result(self, _required, _sub_cmds) -> cm.CommandLike[object, Error]:
+    def inner_result(self, _required, _sub_cmds) -> cm.CommandLike[object]:
         """
         Build result of operator from subcommands
         """
@@ -160,11 +160,11 @@ class Operator:
             return Error(exc)
 
 def _task_input_to_query(task: gtt.Task, tin: gtt.TaskInput
-                         ) -> cm.CommandLike[object, Error]:
+                         ) -> cm.CommandLike[object]:
     return query(get_task_dependency(task, tin.name), tin.op)
 
 def collect_task_inputs(task: gtt.Task, task_def: gtt.CoreTaskDef
-                    ) -> cm.Command[tuple[list, dict], Error]:
+                    ) -> cm.Command[tuple[list, dict]]:
     """
     Gather all arguments of a core task
     """
@@ -227,7 +227,7 @@ class Sub(Operator):
     """
     Sub operator, returns subtree object itself with the linked tasks resolved
     """
-    def __call__(self) -> cm.CommandLike[object, Error]:
+    def __call__(self) -> cm.CommandLike[object]:
         return cm.rget(self.subject)
 
 class Done(Operator):
@@ -414,7 +414,7 @@ class Compound(Operator, named=False):
         super().__init__(subject, None)
         self.sub_queries = sub_queries
 
-    def __call__(self) -> cm.Command[object, Error]:
+    def __call__(self) -> cm.Command[object]:
         return cm.collect([
                 query(self.subject, sub_query) for sub_query in self.sub_queries
             ], keep_going=False

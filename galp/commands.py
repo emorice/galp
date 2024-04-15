@@ -33,7 +33,7 @@ class Script(ga.Script):
 
 T_co = TypeVar('T_co', covariant=True)
 
-class Send(Primitive[T_co, Error]):
+class Send(Primitive[T_co]):
     """Send an arbitrary request"""
     request: gm.Request
     def __init__(self, request: gm.BaseRequest[T_co]):
@@ -87,7 +87,7 @@ def _deprecated_safe_deserialize(res: gtt.Serialized, children: Sequence[object]
         case Ok(result):
             return result
 
-def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized, Error]:
+def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized]:
     """
     Get an object but do not deserailize it yet.
 
@@ -99,7 +99,7 @@ def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized, Error]:
 
     return Send(gm.Get(task.name))
 
-def rget(task: gtt.Task) -> CommandLike[object, Error]:
+def rget(task: gtt.Task) -> CommandLike[object]:
     """
     Get a task result, then rescursively get all the sub-parts of it
 
@@ -113,7 +113,7 @@ def rget(task: gtt.Task) -> CommandLike[object, Error]:
             ))
         )
 
-def sget(task: gtt.Task) -> CommandLike[object, Error]:
+def sget(task: gtt.Task) -> CommandLike[object]:
     """
     Shallow or simple get: get a task result, and deserialize it but keeping
     children as references instead of recursing on them like rget
@@ -138,7 +138,7 @@ def _no_not_found(stat_result: gr.StatReplyValue, task: gtt.Task
     return Error(f'The task reference {task.name} could not be resolved to a'
         ' definition')
 
-def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found, Error]:
+def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found]:
     """
     Chains no_not_found to a stat
     """
@@ -151,7 +151,7 @@ def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found, Error]:
 # once galp.query gets re-written more flexibly
 
 def ssubmit(task: gtt.Task, options: ExecOptions = ExecOptions()
-            ) -> Command[gtt.ResultRef, Error]:
+            ) -> Command[gtt.ResultRef]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
@@ -159,7 +159,7 @@ def ssubmit(task: gtt.Task, options: ExecOptions = ExecOptions()
     return safe_stat(task).then(lambda statr: _ssubmit(task, statr, options))
 
 def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
-             options: ExecOptions) -> CommandLike[gtt.ResultRef, Error]:
+             options: ExecOptions) -> CommandLike[gtt.ResultRef]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
@@ -231,7 +231,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
             )
 
 def rsubmit(task: gtt.Task, options: ExecOptions
-            ) -> Command[gtt.RecResultRef, Error]:
+            ) -> Command[gtt.RecResultRef]:
     """
     Recursive submit, with children, i.e a ssubmit plus a rsubmit per child
 
@@ -259,7 +259,7 @@ def rsubmit(task: gtt.Task, options: ExecOptions
                   )
             )
 
-def run(task: gtt.Task, options: ExecOptions) -> Command[object, Error]:
+def run(task: gtt.Task, options: ExecOptions) -> Command[object]:
     """
     Combined rsubmit + rget
 
@@ -273,7 +273,7 @@ def run(task: gtt.Task, options: ExecOptions) -> Command[object, Error]:
 # once galp.query gets re-written more flexibly
 
 def srun(task: gtt.Task, options: ExecOptions = ExecOptions()
-         ) -> Command[object, Error]:
+         ) -> Command[object]:
     """
     Shallow run: combined ssubmit + sget, fetches the raw result of a task but
     not its children
