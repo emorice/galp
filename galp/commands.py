@@ -124,7 +124,7 @@ def sget(task: gtt.Task) -> CommandLike[object, Error]:
         )
 
 def _no_not_found(stat_result: gr.StatReplyValue, task: gtt.Task
-                 ) -> Result[gr.Found | gr.StatDone, Error]:
+                 ) -> Result[gr.Found | gr.StatDone]:
     """
     Transform NotFound in Found if the task is a real object, and fails
     otherwise.

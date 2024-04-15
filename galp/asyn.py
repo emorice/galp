@@ -17,10 +17,10 @@ from galp.result import Ok, Error, Result, all_ok as result_all_ok
 OkT = TypeVar('OkT', covariant=True)
 ErrT = TypeVar('ErrT', bound=Error)
 
-State = Result[OkT, ErrT] | None
+State: TypeAlias = Ok[OkT] | ErrT | None
 
 def none_pending(states: Iterable[State[OkT, ErrT]]
-                ) -> Ok[list[Result[OkT, ErrT]]] | None:
+                ) -> Ok[list[Ok[OkT] | ErrT]] | None:
     """
     Return None if any state is None, else Ok with the list of results
     """
@@ -93,7 +93,7 @@ class ResultCommand(Command[OkT, ErrT]):
     Needlessly convoluted because current code assumes all commands are started
     in Pending state, and are updated at least once before settling.
     """
-    def __init__(self, result: Result[OkT, ErrT]):
+    def __init__(self, result: Ok[OkT] | ErrT):
         super().__init__([])
         self._result = result
 
@@ -101,7 +101,7 @@ class ResultCommand(Command[OkT, ErrT]):
         assert not _input_values
         return self._result
 
-CommandLike: TypeAlias = Result[OkT, ErrT] | Command[OkT, ErrT]
+CommandLike: TypeAlias = Ok[OkT] | ErrT | Command[OkT, ErrT]
 
 def as_command(obj: CommandLike[OkT, ErrT]) -> Command[OkT, ErrT]:
     """
@@ -118,7 +118,7 @@ Callback: TypeAlias = Callable[[InOkT], CommandLike[OkT, ErrT]]
 """
 Type of a typical callback
 """
-PlainCallback: TypeAlias = Callable[[Result[InOkT, ErrT]], CommandLike[OkT, ErrT]]
+PlainCallback: TypeAlias = Callable[[Ok[InOkT] | ErrT], CommandLike[OkT, ErrT]]
 """
 Type of lower-level callback, which should also be called on failures
 """
@@ -130,7 +130,7 @@ def ok_callback(callback: Callback[InOkT, OkT, ErrT]
     accordingly
     """
     @wraps(callback)
-    def _ok_callback(val: Result[InOkT, ErrT]):
+    def _ok_callback(val: Ok[InOkT] | ErrT):
         return val.then(callback)
     return _ok_callback
 
@@ -173,7 +173,7 @@ class ResolvedCommand(Command[OkT, ErrT]):
         value, = input_values
         return value
 
-class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
+class _Gather(Command[Sequence[Ok[OkT] | ErrT], ErrT]):
     """
     Then-able list with state conjunction respecting keep_going
 
@@ -195,7 +195,7 @@ class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
         self.keep_going = keep_going
 
     def eval(self, input_values: list[State]
-             ) -> CommandLike[Sequence[Result[OkT, ErrT]], ErrT] | None:
+             ) -> CommandLike[Sequence[Ok[OkT] | ErrT], ErrT] | None:
         """
         State-based handling
         """
@@ -207,7 +207,7 @@ class _Gather(Command[Sequence[Result[OkT, ErrT]], ErrT]):
         return f'Gather({repr(self.inputs)})'
 
 def collect_all(commands: Iterable[CommandLike[OkT, ErrT]], keep_going: bool
-            ) -> Command[Sequence[Result[OkT, ErrT]], ErrT]:
+            ) -> Command[Sequence[Ok[OkT] | ErrT], ErrT]:
     """
     Gather all commands, continuing on Error according to keep_going.
 
@@ -283,7 +283,7 @@ class Slot(Generic[OkT, ErrT]):
     """
     Mutable container that holds the current computation state of a future
     """
-    state: Result[OkT, ErrT] | Primitive[OkT, ErrT] | Pending[OkT, ErrT]
+    state: Ok[OkT] | ErrT | Primitive[OkT, ErrT] | Pending[OkT, ErrT]
     outputs: 'WeakSet[Slot]' = field(default_factory=WeakSet)
 
     def get_value(self) -> State[OkT, ErrT]:
@@ -460,14 +460,14 @@ def filter_commands(commands: Iterable[Primitive],
 
 def run_command(command: Command[OkT, ErrT],
                 callback: Callable[[Primitive], Result]
-                ) -> Result[OkT, ErrT]:
+                ) -> Ok[OkT] | ErrT:
     """
     Run command by fulfilling primitives with given synchronous callback
     """
     script = Script()
     primitives = script.init_command(command)
     def _filter(prim: Primitive) -> tuple[list[None], list[Primitive]]:
-        return [], script.done(prim.key, Ok(callback(prim)))
+        return [], script.done(prim.key, callback(prim))
     unprocessed = filter_commands(primitives, _filter)
     assert not unprocessed
     result = script.get_value(command)

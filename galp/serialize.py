@@ -7,7 +7,7 @@ serializer but do not depend on what is the actual serialization strategy used.
 
 from typing import Any, TypeVar, Generic, Callable, Sequence
 from dataclasses import dataclass
-from galp.result import Result, Error
+from galp.result import Ok, Error
 
 
 class LoadError(Error[str]):
@@ -30,9 +30,9 @@ class GenSerialized(Generic[Ref_co]):
     """
     data: bytes
     children: Sequence[Ref_co]
-    _loads: Callable[[bytes, Sequence[object]], Result[object, LoadError]]
+    _loads: Callable[[bytes, Sequence[object]], Ok[object] | LoadError]
 
-    def deserialize(self, children: Sequence[object]) -> Result[object, LoadError]:
+    def deserialize(self, children: Sequence[object]) -> Ok[object] | LoadError:
         """
         Given the native objects that children are references to, deserialize
         this resource by injecting the corresponding objects into it.
@@ -54,7 +54,7 @@ class Serializer(Generic[Nat, Ref]):
 
     @classmethod
     def loads(cls, data: bytes, native_children: list[Any]
-            ) -> Result[Any, LoadError]:
+            ) -> Ok[object] | LoadError:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.

@@ -3,12 +3,12 @@ Parsing for routing layer
 """
 
 from galp.net.base.load import LoadError
-from galp.result import Result, Ok
+from galp.result import Ok
 
 from galp.net.core.load import parse_core_message
 from .types import Routed
 
-def load_routed(msg: list[bytes]) -> Result[Routed, LoadError]:
+def load_routed(msg: list[bytes]) -> Ok[Routed] | LoadError:
     """
     Parses and returns the routing part of `msg`, and body.
     """

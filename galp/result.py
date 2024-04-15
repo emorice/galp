@@ -64,12 +64,13 @@ class Error(Exception, Generic[ErrMessageT]):
             f'{self.__class__.__module__}.{self.__class__.__qualname__}: {self.error}'
             ])
 
+
+Result: TypeAlias = Ok[OkT] | Error
+
 ErrT = TypeVar('ErrT', bound=Error)
 
-Result: TypeAlias = Ok[OkT] | ErrT
-
-def all_ok(inputs: Iterable[Result[OkT, ErrT]]
-           ) -> Result[list[OkT], ErrT]:
+def all_ok(inputs: Iterable[Ok[OkT] | ErrT]
+           ) -> Ok[list[OkT]] | ErrT:
     """
     Return Error if any result is Error, else Ok with the list of values
     """

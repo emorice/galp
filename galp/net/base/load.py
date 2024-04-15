@@ -5,13 +5,13 @@ Common logic for parsing messages
 from types import UnionType, GenericAlias
 from typing import TypeVar, Protocol, Callable, Any, TypeAlias, Generic
 
-from galp.result import Result
+from galp.result import Ok
 from galp.serializer import load_model, LoadError
 from .types import MessageType
 
 T = TypeVar('T')
 
-Loader: TypeAlias = Callable[[list[bytes]], Result[T, LoadError]]
+Loader: TypeAlias = Callable[[list[bytes]], Ok[T] | LoadError]
 
 class DefaultLoader(Protocol): # pylint: disable=too-few-public-methods
     """Generic callable signature for a universal object loader"""
@@ -41,7 +41,7 @@ def default_loader(cls: type[T]) -> Loader[T]:
     Fallback to loading a message consisting of a single frame by using the
     general pydantic validating constructor for e.g. dataclasses
     """
-    def _load(frames: list[bytes]) -> Result[T, LoadError]:
+    def _load(frames: list[bytes]) -> Ok[T] | LoadError:
         match frames:
             case [frame]:
                 return load_model(cls, frame)
@@ -78,7 +78,7 @@ class UnionLoader(Generic[MT]):
     _member_registry: dict[bytes, type[MT]]
 
     @classmethod
-    def load(cls, frames: list[bytes]) -> Result[MT, LoadError]:
+    def load(cls, frames: list[bytes]) -> Ok[MT] | LoadError:
         """Attempt to load an object of the specified type"""
         match frames:
             case [type_frame, *data_frames]:

@@ -5,7 +5,7 @@ Core message serialization
 from typing import TypeVar
 from functools import singledispatch
 
-from galp.result import Result
+from galp.result import Ok
 from galp.serializer import dump_model
 from galp.net.requests.dump import dump_reply_value, dump_serialized
 from galp.net.base.dump import Writer
@@ -35,6 +35,6 @@ def dump_message(message: Message) -> list[bytes]:
 V = TypeVar('V')
 
 def add_request_id(write: Writer[Message], request: BaseRequest[V]
-                   ) -> Writer[Result[V, RemoteError]]:
+                   ) -> Writer[Ok[V] | RemoteError]:
     """Stack a Reply with given request id"""
     return lambda value: write(Reply(get_request_id(request), value))

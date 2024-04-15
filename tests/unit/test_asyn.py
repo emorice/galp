@@ -23,5 +23,4 @@ def test_run_command():
     """
     command = TestPrimitive(1).then(lambda x: 2 * x)
 
-    # FIXME: that shouldn't be the type of that callback !
-    assert ga.run_command(command, lambda prim: prim.value) == 2
+    assert ga.run_command(command, lambda prim: Ok(prim.value)) == 2

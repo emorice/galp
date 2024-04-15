@@ -4,7 +4,7 @@ ReplyValue serializers
 
 from functools import singledispatch
 
-from galp.result import Ok, Result
+from galp.result import Ok
 from galp.serializer import dump_model
 from galp.task_types import FlatResultRef, Serialized
 
@@ -28,7 +28,7 @@ def _(value: Serialized) -> list[bytes]:
 def _(value: FlatResultRef) -> list[bytes]:
     return [dump_model(value)]
 
-def dump_reply_value(value: Result[ReplyValue, RemoteError]) -> list[bytes]:
+def dump_reply_value(value: Ok[ReplyValue] | RemoteError) -> list[bytes]:
     """
     Serializes a reply value.
 

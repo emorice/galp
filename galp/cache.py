@@ -8,7 +8,7 @@ import diskcache # type: ignore[import] # Issue 85
 import msgpack # type: ignore[import] # Issue 85
 
 import galp.task_types as gtt
-from galp.result import Result, Ok
+from galp.result import Ok
 from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
         TaskNode, TaskSerializer, Serialized, LiteralTaskNode)
 from galp.serializer import serialize_child, dump_model, load_model, LoadError
@@ -230,7 +230,7 @@ class CacheStack():
         Loads a task definition, non-recursively
         """
         # Load with a union, I don't know any way to type this
-        task_def: Result[TaskDef, LoadError] = \
+        task_def: Ok[TaskDef] | LoadError = \
                 load_model(TaskDef, self.serialcache[name + b'.task']) # type: ignore[arg-type]
         match task_def:
             case LoadError() as err:

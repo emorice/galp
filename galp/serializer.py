@@ -17,7 +17,7 @@ from pydantic import ValidationError, TypeAdapter, RootModel
 
 from galp.serialize import (LoadError, Serializer as BaseSerializer,
                             GenSerialized)
-from galp.result import Result, Ok
+from galp.result import Ok
 
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
@@ -39,7 +39,7 @@ class Serializer(BaseSerializer[Nat, Ref]):
 
     @classmethod
     def loads(cls, data: bytes, native_children: Sequence[Any]
-            ) -> Result[Any, LoadError]:
+            ) -> Ok[object] | LoadError:
         """
         Unserialize the data in the payload, possibly using metadata from the
         handle.
@@ -161,7 +161,7 @@ def dump_model(model: Any) -> bytes:
 
 T = TypeVar('T')
 
-def load_model(model_type: type[T], payload: bytes) -> Result[T, LoadError]:
+def load_model(model_type: type[T], payload: bytes) -> Ok[T] | LoadError:
     """
     Load a msgpack-serialized pydantic model
 

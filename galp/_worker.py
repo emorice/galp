@@ -124,7 +124,7 @@ def make_worker_init(config):
         return Worker(setup)
     return _make_worker
 
-SubReplyWriter: TypeAlias = Writer[Result[gtt.FlatResultRef, gr.RemoteError]]
+SubReplyWriter: TypeAlias = Writer[Ok[gtt.FlatResultRef] | gr.RemoteError]
 
 @dataclass
 class Job:
@@ -133,7 +133,7 @@ class Job:
     """
     write_reply: SubReplyWriter
     submit: gm.Submit
-    inputs: Result[tuple[list, dict], Error]
+    inputs: Result[tuple[list, dict]]
 
 class Worker:
     """
@@ -213,7 +213,7 @@ class Worker:
             self.schedule_task(write_reply, sub)
             )
 
-    def _get_serial(self, name: gtt.TaskName) -> Result[gtt.Serialized, Error]:
+    def _get_serial(self, name: gtt.TaskName) -> Result[gtt.Serialized]:
         """
         Helper to safely attempt to read from store
         """
@@ -268,7 +268,7 @@ class Worker:
         self.pending_jobs[task_def.name] = end
         return self.script.init_command(end)
 
-    async def listen(self) -> Result[object, Error]:
+    async def listen(self) -> Result[object]:
         """
         Main message processing loop of the worker.
         """

@@ -11,7 +11,7 @@ from functools import singledispatchmethod
 
 import zmq
 
-from galp.result import Result, Error
+from galp.result import Result
 import galp.net.core.types as gm
 from galp.net.core.dump import add_request_id, Writer
 from galp.net.routing.dump import SessionUid
@@ -34,7 +34,7 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
         self.transport = ZmqAsyncTransport(
             stack, endpoint, zmq.ROUTER, bind=True)
 
-    async def run(self) -> Result[object, Error]:
+    async def run(self) -> Result[object]:
         """
         Runs message loop.
 

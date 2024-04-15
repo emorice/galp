@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import galp.task_types as gtt
 import galp.net.requests.types as gr
 
-from galp.result import Result
+from galp.result import Ok
 from galp.net.base.types import MessageType
 from galp.net.requests.types import RemoteError
 
@@ -190,7 +190,7 @@ class Reply(MessageType, Generic[V], key='reply'):
     Wraps the result to a request, identifing said request
     """
     request: RequestId
-    value: Result[V, RemoteError]
+    value: Ok[V] | RemoteError
 
 @dataclass(frozen=True)
 class NextRequest(MessageType, key='next_request'):

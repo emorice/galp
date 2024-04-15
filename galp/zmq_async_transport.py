@@ -72,7 +72,7 @@ class ZmqAsyncTransport:
         zmq_msg = await self.socket.recv_multipart()
         return self.handler(lambda msg: msg, zmq_msg)
 
-    async def listen_reply_loop(self) -> Result[object, Error]:
+    async def listen_reply_loop(self) -> Result[object]:
         """Message processing loop
 
         Waits for a message, call the protocol handler, then sends the replies.

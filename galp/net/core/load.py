@@ -20,7 +20,7 @@ def _get_reply_value_type(request_id: RequestId) -> type:
     req_type = MessageLoader.get_type(request_id.verb)
     return req_type.reply_type # type: ignore
 
-def _remote_error_loader(request_id: RequestId, frames: list[bytes]) -> Result[Reply, LoadError]:
+def _remote_error_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | LoadError:
     match frames:
         case [frame]:
             return load_model(str, frame).then(
@@ -29,7 +29,7 @@ def _remote_error_loader(request_id: RequestId, frames: list[bytes]) -> Result[R
         case _:
             return LoadError('Wrong number of frames')
 
-def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Result[Reply, LoadError]:
+def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | LoadError:
     rep_type = _get_reply_value_type(request_id)
     loaded: Result
     if rep_type is Serialized:
@@ -44,7 +44,7 @@ def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Result[Reply
         loaded = UnionLoader[rep_type].load(frames) # type: ignore
     return loaded.then(lambda value: Ok(Reply(request_id, Ok(value))))
 
-def _reply_value_loader(request_id: RequestId, frames: list[bytes]) -> Result[Reply, LoadError]:
+def _reply_value_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | LoadError:
     match frames:
         case [ok_frame, *value_frames]:
             return load_model(bool, ok_frame).then(
@@ -56,7 +56,7 @@ def _reply_value_loader(request_id: RequestId, frames: list[bytes]) -> Result[Re
         case _:
             return LoadError('Wrong number of frames')
 
-def _reply_loader(frames: list[bytes]) -> Result[Reply, LoadError]:
+def _reply_loader(frames: list[bytes]) -> Ok[Reply] | LoadError:
     """Constructs a Reply"""
     match frames:
         case [core_frame, *value_frames]:
@@ -66,7 +66,7 @@ def _reply_loader(frames: list[bytes]) -> Result[Reply, LoadError]:
         case _:
             return LoadError('Wrong number of frames')
 
-def _load_upload(frames: list[bytes]) -> Result[Upload, LoadError]:
+def _load_upload(frames: list[bytes]) -> Ok[Upload] | LoadError:
     match frames:
         case [task_def_frame, *ser_frames]:
             return load_model(TaskDef, task_def_frame).then( # type: ignore[arg-type]

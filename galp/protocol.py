@@ -18,7 +18,7 @@ from galp.result import Error, Result
 # Routing-layer handlers
 # ======================
 
-TransportReturn: TypeAlias = Iterable[TransportMessage] | Result[object, Error]
+TransportReturn: TypeAlias = Iterable[TransportMessage] | Result[object]
 TransportHandler: TypeAlias = Callable[
         [Writer[list[bytes]], list[bytes]], TransportReturn]
 """

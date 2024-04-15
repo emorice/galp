@@ -141,7 +141,7 @@ class Client:
 
     async def _run_collection(self, tasks: list[gtt.TaskNode],
                               exec_options: cm.ExecOptions
-                              ) -> Result[list[Result], Error]:
+                              ) -> Result[list[Result]]:
         """
         Processes messages until the collection target is achieved
         """

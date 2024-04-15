@@ -111,7 +111,7 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
         if not isinstance(command.request, Get):
             raise NotImplementedError(command)
         name = command.request.name
-        return store.get_serial(name)
+        return Ok(store.get_serial(name))
 
     ## Collect args from local and remote store. Since we don't pass any
     ## argument to the step, all arguments are injected, and therefore keyword arguments
