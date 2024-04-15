@@ -64,9 +64,6 @@ class Command(Generic[OkT]):
     """
     Base class for commands
     """
-    def __init__(self, inputs: 'list[Command]'):
-        self.inputs = inputs
-
     def then(self, callback: 'Callback[OkT, OutOkT]') -> 'Command[OutOkT]':
         """
         Chain callback to this command on sucess
@@ -79,13 +76,32 @@ class Command(Generic[OkT]):
         """
         return DeferredCommand(self, callback)
 
-    def eval(self, input_values: list[State]) -> 'CommandLike[OkT] | None':
+    @property
+    def inputs(self) -> 'list[Command]':
+        """
+        Other commands we depend on
+        """
+        return []
+
+    def eval(self, input_values: list[State]) -> 'Compound[OkT] | Result[OkT] | None':
         """
         Logic of calculating the value
         """
+        raise RuntimeError
+
+class Compound(Command[OkT]):
+    """Anything else than a primitive"""
+    def __init__(self, inputs: list[Command]):
+        self._inputs = inputs
+
+    @property
+    def inputs(self) -> 'list[Command]':
+        return self._inputs
+
+    def eval(self, input_values):
         raise NotImplementedError
 
-class ResultCommand(Command[OkT]):
+class ResultCommand(Compound[OkT]):
     """
     Command wrapping a Result
 
@@ -96,7 +112,7 @@ class ResultCommand(Command[OkT]):
         super().__init__([])
         self._result = result
 
-    def eval(self, _input_values: list[State]) -> 'CommandLike[OkT] | None':
+    def eval(self, _input_values: list[State]) -> Result[OkT]:
         assert not _input_values
         return self._result
 
@@ -133,7 +149,7 @@ def ok_callback(callback: Callback[InOkT, OkT]
         return val.then(callback)
     return _ok_callback
 
-class DeferredCommand(Command[OkT]):
+class DeferredCommand(Compound[OkT]):
     """
     A promise of the return value Ok of a callback applied to an input promise
     InOk
@@ -143,7 +159,7 @@ class DeferredCommand(Command[OkT]):
         super().__init__([command])
         self.callback = callback
 
-    def eval(self, input_values: list[State]) -> 'CommandLike[OkT] | None':
+    def eval(self, input_values: list[State]) -> Compound[OkT] | Result[OkT] | None:
         """
         State-based handling
         """
@@ -162,17 +178,17 @@ class DeferredCommand(Command[OkT]):
         # Callback returned a concrete value
         return ret
 
-class ResolvedCommand(Command[OkT]):
+class ResolvedCommand(Compound[OkT]):
     """Command shadowing an other"""
     def __init__(self, command: Command[OkT]):
         super().__init__([command])
         self.command = command
 
-    def eval(self, input_values: list[State]) -> 'CommandLike[OkT] | None':
+    def eval(self, input_values: list[State]) -> State[OkT]:
         value, = input_values
         return value
 
-class _Gather(Command[Sequence[Result[OkT]]]):
+class _Gather(Compound[Sequence[Result[OkT]]]):
     """
     Then-able list with state conjunction respecting keep_going
 
@@ -194,7 +210,7 @@ class _Gather(Command[Sequence[Result[OkT]]]):
         self.keep_going = keep_going
 
     def eval(self, input_values: list[State]
-             ) -> CommandLike[Sequence[Result[OkT]]] | None:
+             ) -> Result[Sequence[Result[OkT]]] | None:
         """
         State-based handling
         """
@@ -255,12 +271,6 @@ class Primitive(Command[OkT]):
 
     Fully defined and identified by a task name
     """
-    def __init__(self):
-        super().__init__([])
-
-    def eval(self, *_) -> None:
-        return None
-
     @property
     def key(self) -> Hashable:
         """
@@ -275,7 +285,7 @@ class Pending(Generic[OkT]):
     Pending slot state pointing to other slots
     """
     inputs: 'list[Slot]'
-    update: Callable[[list[State]], CommandLike[OkT] | None]
+    update: Callable[[list[State]], Compound[OkT] | Result[OkT] | None]
 
 @dataclass(eq=False)
 class Slot(Generic[OkT]):
@@ -370,7 +380,7 @@ class Script:
                         case None:
                             # Command skipped, skip too
                             pass
-                        case Command():
+                        case Compound():
                             # Command resolved to a non-trivial new command
                             new_slots, new_leaf_slots = _make_slots(new_state.inputs)
                             # Also add links to current command
