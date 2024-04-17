@@ -343,8 +343,7 @@ class Script:
 
     def init_command(self, command: Command) -> list[Primitive]:
         """Return the first initial primitives this command depends on"""
-        slots, leaves = _make_slots([command])
-        self.slots |= slots
+        leaves = self._make_slots([command])
         return self._advance_all(leaves)
 
     def _advance_all(self, slots: list[Slot]) -> list[Primitive]:
@@ -382,14 +381,13 @@ class Script:
                             pass
                         case Compound():
                             # Command resolved to a non-trivial new command
-                            new_slots, new_leaf_slots = _make_slots(new_state.inputs)
+                            new_leaf_slots = self._make_slots(new_state.inputs)
                             # Also add links to current command
                             new_inputs = []
                             for cin in new_state.inputs:
-                                slot_in = new_slots[cin]
+                                slot_in = self.slots[cin]
                                 slot_in.outputs.add(slot)
                                 new_inputs.append(slot_in)
-                            self.slots |= new_slots
                             slots.extend(new_leaf_slots)
                             slot.state = Pending(new_inputs, new_state.eval)
                         case _:
@@ -402,45 +400,58 @@ class Script:
                     logging.warning('Settled command %s given for updating, skipping', slot)
         return primitives
 
-def _make_slots(commands: Iterable[Command]) -> tuple[dict[Command, Slot], list[Slot]]:
-    """
-    Browse the dag upstream of the commands given as inputs, initializing
-    slots
-    """
-    # Mapping command -> slot, to ensure we create exactly one slot per
-    # command that compares equal. Also acts as a closed set
-    all_slots = {}
-    # Slots with no children
-    leaves = []
+    def _make_slots(self, commands: Iterable[Command]) -> list[Slot]:
+        """
+        Browse the dag upstream of the commands given as inputs, initializing
+        slots
+        """
+        # Mapping command -> slot, to ensure we create exactly one slot per
+        # command that compares equal. Also acts as a closed set
+        new_slots = {}
+        # Slots with no children
+        leaves = []
 
-    # Open set of commands for which a slot has to be created
-    commands = list(commands)
-    while commands:
-        command = commands.pop()
-        # Command was already reached through an other path, skip
-        if command in all_slots:
-            continue
-        # First time seeing this command, create a slot
-        if isinstance(command, Primitive):
-            slot = Slot(command)
-        else:
-            slot = Slot(Pending([], command.eval))
-        all_slots[command] = slot
-        # Add its inputs
-        if command.inputs:
-            commands.extend(command.inputs)
-        else:
-            leaves.append(slot)
+        # Open set of commands for which a slot has to be created
+        commands = list(commands)
+        while commands:
+            command = commands.pop()
+            # Command was added in a earlier call, skip
+            if command in self.slots:
+                continue
+            # First time seeing this command, create a slot
+            if isinstance(command, Primitive):
+                slot = Slot(command)
+            else:
+                slot = Slot(Pending([], command.eval))
+            new_slots[command] = slot
+            self.slots[command] = slot
+            # Add its inputs
+            if command.inputs:
+                commands.extend(command.inputs)
 
-    # Now we have slots, but no links between them
-    for command, slot in all_slots.items():
-        if not isinstance(slot.state, Pending):
-            continue
-        for cin in command.inputs:
-            all_slots[cin].outputs.add(slot)
-            slot.state.inputs.append(all_slots[cin])
+        # Now we have slots, but no links between them
+        # We also need to collect potential leaves
+        for command, slot in new_slots.items():
+            # Any static leave (primitive, empty gather, result)
+            if not command.inputs:
+                leaves.append(slot)
+            # Primitive. In that case inputs should be empty anyway but
+            # typechecker can't know that
+            if not isinstance(slot.state, Pending):
+                continue
+            # Slot with some inputs. Then we add link and watch out for any
+            # input that is already settled
+            any_done = False
+            for cin in command.inputs:
+                slot_in = self.slots[cin]
+                slot_in.outputs.add(slot)
+                slot.state.inputs.append(slot_in)
+                any_done |= (slot_in.get_value() is not None)
+            # Slot has input already settled, candidate dynamic leave
+            if any_done:
+                leaves.append(slot)
 
-    return all_slots, leaves
+        return leaves
 
 R = TypeVar('R')
 

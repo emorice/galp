@@ -2,8 +2,6 @@
 Unit tests for asyn
 """
 
-import pytest
-
 import galp.asyn as ga
 from galp.result import Ok
 
@@ -26,7 +24,6 @@ def test_run_command():
 
     assert ga.run_command(command, lambda prim: Ok(prim.value)) == Ok(2)
 
-@pytest.mark.xfail
 def test_run_command_double_ref():
     """
     run_command handles the same command being referenced twice
