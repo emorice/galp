@@ -2,7 +2,7 @@
 Lists of internal commands
 """
 
-from typing import Sequence, Hashable, TypeVar
+from typing import Hashable, TypeVar
 from dataclasses import dataclass
 
 import galp.net.requests.types as gr
@@ -11,7 +11,6 @@ import galp.task_types as gtt
 import galp.asyn as ga
 
 from galp.result import Result, Ok, Error
-from galp.serialize import LoadError
 from galp.asyn import Command, collect, Primitive, CommandLike
 
 # Custom Script
@@ -77,19 +76,9 @@ class ExecOptions:
 # Routines
 # --------
 
-def _deprecated_safe_deserialize(res: gtt.Serialized, children: Sequence[object]):
-    """
-    Wrap serializer in a guard for invalid payloads
-    """
-    match res.deserialize(children):
-        case LoadError() as err:
-            return err
-        case Ok(result):
-            return result
-
 def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized]:
     """
-    Get an object but do not deserailize it yet.
+    Get an object but do not deserialize it yet.
 
     Includes bypass for Literals.
     """
@@ -101,7 +90,7 @@ def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized]:
 
 def rget(task: gtt.Task) -> CommandLike[object]:
     """
-    Get a task result, then rescursively get all the sub-parts of it
+    Get a task result, then recursively get all the sub-parts of it
 
     This unconditionally fails if a sub-part fails.
     """
