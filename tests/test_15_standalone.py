@@ -4,6 +4,7 @@ Tests running galp tasks on a locally created galp system with minimum setup
 
 import signal
 
+import asyncio
 from async_timeout import timeout
 
 import pytest
@@ -75,7 +76,7 @@ def test_oneshot_timeout(run):
     """
     Raise if the task never completes
     """
-    with pytest.raises(TimeoutError):
+    with pytest.raises(asyncio.TimeoutError):
         run(gts.busy_loop())
 
 def test_oneshot_dryrun(run):
