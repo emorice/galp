@@ -306,6 +306,10 @@ class Slot(Generic[OkT]):
 class Script:
     """
     Interface to a DAG of promises.
+
+    This holds the mutable state of the promises. Primary interface to buil up
+    the DAG is `init_command`, while `done` is used to provides updates to the
+    primitive states.
     """
     def __init__(self) -> None:
         # References to all identical primitives
@@ -342,7 +346,13 @@ class Script:
         return self._advance_all(prim_outputs)
 
     def init_command(self, command: Command) -> list[Primitive]:
-        """Return the first initial primitives this command depends on"""
+        """
+        Return the first initial primitives this command depends on
+
+        Since the command is also used as a key with `get_value` to fetch the
+        result later on, this cannot apply `on_command` and therefore requires
+        true Command objects, not Command-like objects.
+        """
         leaves = self._make_slots([command])
         return self._advance_all(leaves)
 
@@ -478,13 +488,14 @@ def filter_commands(commands: Iterable[Primitive],
         commands.extend(cur_tofilter)
     return filtered
 
-def run_command(command: Command[OkT],
+def run_command(command_like: CommandLike[OkT],
                 callback: Callable[[Primitive], Result]
                 ) -> Result[OkT]:
     """
     Run command by fulfilling primitives with given synchronous callback
     """
     script = Script()
+    command = as_command(command_like)
     primitives = script.init_command(command)
     def _filter(prim: Primitive) -> tuple[list[None], list[Primitive]]:
         return [], script.done(prim.key, callback(prim))

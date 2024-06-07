@@ -24,15 +24,25 @@ def test_run_command():
 
     assert ga.run_command(command, lambda prim: Ok(prim.value)) == Ok(2)
 
+def test_run_command_accepts_result():
+    """
+    run_command also works on an Ok/Error and not only a Command
+    """
+    def _filter(_):
+        assert False, 'Should not never be called'
+    some_ok = Ok(2)
+
+    assert ga.run_command(some_ok, _filter) == some_ok
+
 def test_run_command_double_ref():
     """
     run_command handles the same command being referenced twice
     """
     count = [0]
-    def _double(x: int) -> Ok[int]:
+    def _double(val: int) -> Ok[int]:
         print('Doubling !', flush=True)
         count[0] += 1
-        return Ok(2 * x)
+        return Ok(2 * val)
     two = MockPrimitive(1).then(_double)
 
     five = (MockPrimitive(1)
