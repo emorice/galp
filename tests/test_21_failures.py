@@ -223,7 +223,11 @@ async def test_vmlimit(make_galp_set, make_client):
 
     task_a, task_b = [gts.alloc_mem(2**30, x) for x in 'ab']
 
-    ans = await unlimited_client.collect(task_a, timeout=3)
+    await asyncio.wait_for(
+            unlimited_client.collect(task_a),
+            3)
 
     with pytest.raises(galp.TaskFailedError):
-        ans = await limited_client.collect(task_b, timeout=3)
+        await asyncio.wait_for(
+                limited_client.collect(task_b),
+                3)
