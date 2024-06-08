@@ -2,8 +2,9 @@
 Lists of internal commands
 """
 
-from typing import Hashable, TypeVar
+from typing import Hashable, TypeVar, Callable
 from dataclasses import dataclass
+from weakref import WeakValueDictionary
 
 import galp.net.requests.types as gr
 import galp.net.core.types as gm
@@ -76,6 +77,26 @@ class ExecOptions:
 # Routines
 # --------
 
+U = TypeVar('U')
+V = TypeVar('V')
+def weak_cache(function: Callable[[U], V]) -> Callable[[U], V]:
+    """Like functools cache but based on a weak-value cache"""
+    cache: WeakValueDictionary[U, V] = WeakValueDictionary()
+    def wrapper(arg: U) -> V:
+        try:
+            return cache[arg]
+        except KeyError:
+            print('Creating!')
+            val = function(arg)
+            cache[arg] = val
+            return val
+    return wrapper
+
+@weak_cache
+def send_get(name: gtt.TaskName) -> Command[gtt.Serialized]:
+    """Deduplicated get primitive creation"""
+    return Send(gm.Get(name))
+
 def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized]:
     """
     Get an object but do not deserialize it yet.
@@ -86,7 +107,7 @@ def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized]:
     if isinstance(task, gtt.LiteralTaskNode):
         return Ok(task.serialized)
 
-    return Send(gm.Get(task.name))
+    return send_get(task.name)
 
 def rget(task: gtt.Task) -> CommandLike[object]:
     """
