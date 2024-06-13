@@ -33,33 +33,41 @@ def test_rget() -> None:
 def test_rget_losange() -> None:
     """
     Rget creates only one primitive in losange fetch
+
+      1
+     / \\
+    0    3
+     \\ /
+       2
     """
     root = TaskRef(_as_name(0))
 
     cmd = gac.rget(root)
     count: defaultdict[TaskName, int] = defaultdict(int)
 
+    def _deserialize(_data, children):
+        print('Deserializing with children', children)
+        return Ok(list(children)) if children else Ok(None)
+
     def _answer(_prim):
         name = _prim.request.name
         count[name] += 1
+        print('Answering request for', name)
         if name == _as_name(0):
             return Ok(Serialized(
                 b'',
                 [TaskRef(_as_name(1)), TaskRef(_as_name(2))],
-                lambda _, children: Ok(list(children))
-                ))
+                _deserialize))
         if name in (_as_name(1), _as_name(2)):
             return Ok(Serialized(
                 b'',
                 [TaskRef(_as_name(3))],
-                lambda _, children: Ok(list(children))
-                ))
+                _deserialize))
         if name == _as_name(3):
             return Ok(Serialized(
                 b'',
                 [],
-                lambda *_: Ok(None)
-                ))
+                _deserialize))
         assert False, 'Bad name'
 
     assert run_command(cmd, _answer) == Ok([[None], [None]])

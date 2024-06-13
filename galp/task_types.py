@@ -176,7 +176,7 @@ TaskDef = Annotated[
 # Tasks: possibly recursive objects representing graphs of tasks
 # --------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class TaskRef:
     """
     A reference to a defined task by name.
@@ -197,7 +197,7 @@ class TaskRef:
         _ = indent
         return repr(self)
 
-@dataclass
+@dataclass(frozen=True)
 class TaskNode:
     """
     A task, with links to all its dependencies
@@ -258,7 +258,7 @@ class TaskNode:
         string += pad + '])'
         return string
 
-@dataclass
+@dataclass(frozen=True)
 class LiteralTaskNode(TaskNode):
     """"
     TaskNode for a literal task, includes the serialized literal object

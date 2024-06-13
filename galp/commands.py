@@ -79,20 +79,22 @@ class ExecOptions:
 
 U = TypeVar('U')
 V = TypeVar('V')
-def weak_cache(function: Callable[[U], V]) -> Callable[[U], V]:
+def weak_asyn_cache(function: Callable[[U], CommandLike[V]]
+        ) -> Callable[[U], CommandLike[V]]:
     """Like functools cache but based on a weak-value cache"""
     cache: WeakValueDictionary[U, V] = WeakValueDictionary()
-    def wrapper(arg: U) -> V:
+    def _cacheit(arg: U) -> Callable[[V], Ok[V]]:
+        def _inner(obj: V) -> Ok[V]:
+            cache[arg] = obj
+            return Ok(obj)
+        return _inner
+    def wrapper(arg: U) -> CommandLike[V]:
         try:
-            return cache[arg]
+            return Ok(cache[arg])
         except KeyError:
-            print('Creating!')
-            val = function(arg)
-            cache[arg] = val
-            return val
+            return function(arg).then(_cacheit(arg))
     return wrapper
 
-@weak_cache
 def send_get(name: gtt.TaskName) -> Command[gtt.Serialized]:
     """Deduplicated get primitive creation"""
     return Send(gm.Get(name))
@@ -109,6 +111,7 @@ def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized]:
 
     return send_get(task.name)
 
+#@weak_asyn_cache
 def rget(task: gtt.Task) -> CommandLike[object]:
     """
     Get a task result, then recursively get all the sub-parts of it
