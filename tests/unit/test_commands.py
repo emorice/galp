@@ -29,6 +29,7 @@ def test_rget() -> None:
 
     assert run_command(cmd, _answer) == Ok(None)
 
+
 def test_rget_losange() -> None:
     """
     Rget creates only one primitive in losange fetch
@@ -45,29 +46,58 @@ def test_rget_losange() -> None:
     count: defaultdict[TaskName, int] = defaultdict(int)
 
     def _deserialize(_data, children):
-        print('Deserializing with children', children)
         return Ok(list(children)) if children else Ok(None)
+    def _node(children: list[int]):
+        return Ok(Serialized(b'',
+                    [TaskRef(_as_name(i)) for i in children],
+                    _deserialize))
 
     def _answer(_prim):
         name = _prim.request.name
         count[name] += 1
-        print('Answering request for', name)
         if name == _as_name(0):
-            return Ok(Serialized(
-                b'',
-                [TaskRef(_as_name(1)), TaskRef(_as_name(2))],
-                _deserialize))
+            return _node([1, 2])
         if name in (_as_name(1), _as_name(2)):
-            return Ok(Serialized(
-                b'',
-                [TaskRef(_as_name(3))],
-                _deserialize))
+            return _node([3])
         if name == _as_name(3):
-            return Ok(Serialized(
-                b'',
-                [],
-                _deserialize))
+            return _node([])
         assert False, 'Bad name'
 
     assert run_command(cmd, _answer) == Ok([[None], [None]])
     assert count == {_as_name(i): 1 for i in range(4)}
+
+@pytest.mark.xfail
+def test_rget_multiple() -> None:
+    """
+    Rget creates only one primitive with multiple simultaneaous references
+
+      1
+     /
+    0
+     \\
+       1
+    """
+    root = TaskRef(_as_name(0))
+
+    cmd = gac.rget(root)
+    des_count: defaultdict[TaskName, int] = defaultdict(int)
+
+    def _deserialize(tid):
+        def _inner(_data, children):
+            des_count[tid] += 1
+            return Ok(list(children)) if children else Ok(None)
+        return _inner
+    def _node(name, children: list[int]):
+        return Ok(Serialized(b'',
+                    [TaskRef(_as_name(i)) for i in children],
+                    _deserialize(name)))
+    def _answer(_prim):
+        name = _prim.request.name
+        if name == _as_name(0):
+            return _node(0, [1, 1])
+        if name == _as_name(1):
+            return _node(1, [])
+        assert False, 'Bad name'
+
+    assert run_command(cmd, _answer) == Ok([None, None])
+    assert des_count == {i: 1 for i in range(2)}
