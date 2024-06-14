@@ -22,6 +22,13 @@ class Ok(Generic[OkT]):
         """Unpack Ok type"""
         return function(self.value)
 
+    def eventually(self, function: 'Callable[[Result[OkT]], R]') -> R:
+        """Trivially apply function to self.
+
+        Part of unified interface with async operations
+        """
+        return function(self)
+
     def unwrap(self) -> OkT:
         """Unsafe unpacking"""
         return self.value
@@ -46,6 +53,13 @@ class Error(Exception, Generic[ErrMessageT]):
     def then(self, _function) -> Self:
         """Propagate Error type"""
         return self
+
+    def eventually(self, function: 'Callable[[Result[OkT]], R]') -> R:
+        """Trivially apply function to self.
+
+        Part of unified interface with async operations
+        """
+        return function(self)
 
     def unwrap(self) -> NoReturn:
         """Unsafe unpacking"""

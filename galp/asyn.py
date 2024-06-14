@@ -5,7 +5,8 @@ Functional, framework-agnostic, asynchronous programming system
 import logging
 from weakref import WeakKeyDictionary, WeakSet
 from typing import (TypeVar, Generic, Callable, Iterable, TypeAlias,
-    Hashable, Mapping, Sequence)
+    Mapping, Sequence)
+from collections.abc import Hashable
 from dataclasses import dataclass, field
 from functools import wraps
 from galp.result import Ok, Error, Result, all_ok as result_all_ok

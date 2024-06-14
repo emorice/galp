@@ -3,7 +3,6 @@ Unit tests for commands
 """
 
 from collections import defaultdict
-import pytest
 
 from galp.task_types import TaskRef, TaskName, Serialized
 from galp.asyn import run_command
@@ -28,7 +27,6 @@ def test_rget() -> None:
         return Ok(Serialized(b'', [], lambda *_: Ok(None)))
 
     assert run_command(cmd, _answer) == Ok(None)
-
 
 def test_rget_losange() -> None:
     """
@@ -73,7 +71,6 @@ def test_rget_losange() -> None:
     assert count == {_as_name(i): 1 for i in range(4)}
     assert des_count == {i: 1 for i in range(4)}
 
-@pytest.mark.xfail
 def test_rget_multiple() -> None:
     """
     Rget creates only one primitive with multiple simultaneaous references

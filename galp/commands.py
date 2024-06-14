@@ -2,9 +2,9 @@
 Lists of internal commands
 """
 
-from typing import Hashable, TypeVar, Callable
+from typing import TypeVar, Callable
+from collections.abc import Hashable
 from dataclasses import dataclass
-from weakref import WeakValueDictionary
 
 import galp.net.requests.types as gr
 import galp.net.core.types as gm
@@ -77,7 +77,7 @@ class ExecOptions:
 # Routines
 # --------
 
-U = TypeVar('U')
+U = TypeVar('U', bound=Hashable)
 V = TypeVar('V')
 def recursive_async_cache(function: Callable[[U, Callable[[U], CommandLike[V]]], CommandLike[V]]
         ) -> Callable[[U], CommandLike[V]]:
@@ -88,17 +88,24 @@ def recursive_async_cache(function: Callable[[U, Callable[[U], CommandLike[V]]],
     to recurse. This allows to build correct asynchronous algorithms to act on
     directed acyclic graphs.
     """
-    cache: dict[U, V] = {}
-    def _cacheit(arg: U) -> Callable[[V], Ok[V]]:
-        def _inner(obj: V) -> Ok[V]:
-            cache[arg] = obj
-            return Ok(obj)
+    cache: dict[U, CommandLike[V]] = {}
+    def _cacheit(arg: U) -> Callable[[Result[V]], Result[V]]:
+        def _inner(res: Result[V]) -> Result[V]:
+            cache[arg] = res
+            return res
         return _inner
     def wrapper(arg: U) -> CommandLike[V]:
         try:
-            return Ok(cache[arg])
+            return cache[arg]
         except KeyError:
-            return function(arg, wrapper).then(_cacheit(arg))
+            command = function(arg, wrapper)
+            # Already put the command in the cache, so that overlapping async
+            # calls don't create it twice
+            cache[arg] = command
+            # Also add a callback to eventually overwrite the command with its
+            # result. It's not strictly necessary but allows the now useless
+            # command memory to be reclaimed.
+            return command.eventually(_cacheit(arg))
     return wrapper
 
 def send_get(name: gtt.TaskName) -> Command[gtt.Serialized]:
