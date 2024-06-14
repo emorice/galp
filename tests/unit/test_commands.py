@@ -29,7 +29,6 @@ def test_rget() -> None:
 
     assert run_command(cmd, _answer) == Ok(None)
 
-@pytest.mark.xfail
 def test_rget_losange() -> None:
     """
     Rget creates only one primitive in losange fetch

@@ -202,7 +202,8 @@ class TaskNode:
     """
     A task, with links to all its dependencies
 
-    Dependencies here means $sub-dep, including children.
+    Dependencies here means $sub-dep, including children. TaskNodes compare
+    equal and hash based on the identity of the task being described.
 
     Attributes:
         task_def: the name and definition of the task
@@ -243,6 +244,16 @@ class TaskNode:
         # Hard getitem, we actually insert an extra task
         return galp.steps.getitem(self, index)
 
+    def __eq__(self, other: object) -> bool:
+        match other:
+            case TaskNode():
+                return self.name == other.name
+            case _:
+                return False
+
+    def __hash__(self):
+        return hash(self.name)
+
     def tree_print(self, indent: int = 0) -> str:
         """
         Debug-friendly printing
@@ -258,7 +269,7 @@ class TaskNode:
         string += pad + '])'
         return string
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False) # Use TaskNode eq/hash
 class LiteralTaskNode(TaskNode):
     """"
     TaskNode for a literal task, includes the serialized literal object

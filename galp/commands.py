@@ -79,10 +79,16 @@ class ExecOptions:
 
 U = TypeVar('U')
 V = TypeVar('V')
-def weak_asyn_cache(function: Callable[[U], CommandLike[V]]
+def recursive_async_cache(function: Callable[[U, Callable[[U], CommandLike[V]]], CommandLike[V]]
         ) -> Callable[[U], CommandLike[V]]:
-    """Like functools cache but based on a weak-value cache"""
-    cache: WeakValueDictionary[U, V] = WeakValueDictionary()
+    """Recursive asynchronous cache.
+
+    Wraps the asynchronous function to insert a local cache lookup. The wrapped
+    function is injected as the last argument of itself, to allow the function
+    to recurse. This allows to build correct asynchronous algorithms to act on
+    directed acyclic graphs.
+    """
+    cache: dict[U, V] = {}
     def _cacheit(arg: U) -> Callable[[V], Ok[V]]:
         def _inner(obj: V) -> Ok[V]:
             cache[arg] = obj
@@ -92,7 +98,7 @@ def weak_asyn_cache(function: Callable[[U], CommandLike[V]]
         try:
             return Ok(cache[arg])
         except KeyError:
-            return function(arg).then(_cacheit(arg))
+            return function(arg, wrapper).then(_cacheit(arg))
     return wrapper
 
 def send_get(name: gtt.TaskName) -> Command[gtt.Serialized]:
@@ -111,20 +117,27 @@ def fetch(task: gtt.Task) -> CommandLike[gtt.Serialized]:
 
     return send_get(task.name)
 
-#@weak_asyn_cache
+def _inner_rget(task: gtt.Task,
+        next_rget: Callable[[gtt.Task], CommandLike[object]]
+        ) -> CommandLike[object]:
+    return (
+        fetch(task)
+        .then(lambda res: (
+            collect([next_rget(c) for c in res.children], keep_going=False)
+            .then(res.deserialize)
+            ))
+        )
+
 def rget(task: gtt.Task) -> CommandLike[object]:
     """
     Get a task result, then recursively get all the sub-parts of it
 
     This unconditionally fails if a sub-part fails.
     """
-    return (
-        fetch(task)
-        .then(lambda res: (
-            collect([rget(c) for c in res.children], keep_going=False)
-            .then(res.deserialize)
-            ))
-        )
+    # Creates a one-off cache
+    _rget = recursive_async_cache(_inner_rget)
+    # Makes recursive calls that share said cache
+    return _rget(task)
 
 def sget(task: gtt.Task) -> CommandLike[object]:
     """
