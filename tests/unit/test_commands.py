@@ -44,27 +44,34 @@ def test_rget_losange() -> None:
 
     cmd = gac.rget(root)
     count: defaultdict[TaskName, int] = defaultdict(int)
+    des_count: defaultdict[TaskName, int] = defaultdict(int)
 
-    def _deserialize(_data, children):
-        return Ok(list(children)) if children else Ok(None)
-    def _node(children: list[int]):
+    def _deserialize(tid):
+        def _inner(_data, children):
+            des_count[tid] += 1
+            return Ok(list(children)) if children else Ok(None)
+        return _inner
+    def _node(name, children: list[int]):
         return Ok(Serialized(b'',
                     [TaskRef(_as_name(i)) for i in children],
-                    _deserialize))
+                    _deserialize(name)))
 
     def _answer(_prim):
         name = _prim.request.name
         count[name] += 1
         if name == _as_name(0):
-            return _node([1, 2])
-        if name in (_as_name(1), _as_name(2)):
-            return _node([3])
+            return _node(0, [1, 2])
+        if name == _as_name(1):
+            return _node(1, [3])
+        if name == _as_name(2):
+            return _node(2, [3])
         if name == _as_name(3):
-            return _node([])
+            return _node(3, [])
         assert False, 'Bad name'
 
     assert run_command(cmd, _answer) == Ok([[None], [None]])
     assert count == {_as_name(i): 1 for i in range(4)}
+    assert des_count == {i: 1 for i in range(4)}
 
 @pytest.mark.xfail
 def test_rget_multiple() -> None:
