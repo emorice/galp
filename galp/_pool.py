@@ -74,6 +74,7 @@ class Pool:
                     self.forkserver_socket = forkserver_socket
 
                     await self.notify_ready()
+                    # TODO: are we sure there's no race condition here?
                     while True:
                         await self.pending_signal.wait()
                         sig = self.signal
