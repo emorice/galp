@@ -14,7 +14,7 @@ from pydantic_core import CoreSchema, core_schema
 from pydantic import (GetCoreSchemaHandler, BaseModel, Field, PlainSerializer,
         model_validator)
 
-from galp.serializer import Serializer, GenSerialized
+from galp.serializer import Serializer, GenSerialized, dump_model
 import galp.steps
 
 # Core task type definitions
@@ -104,6 +104,13 @@ class BaseTaskDef(BaseModel):
         """
         raise NotImplementedError
 
+@dataclass(frozen=True)
+class ResourceClaim:
+    """
+    Resources claimed by a task
+    """
+    cpus: int = Field(ge=0)
+
 # False positive https://github.com/pydantic/pydantic/issues/3125
 class CoreTaskDef(BaseTaskDef): # type: ignore[no-redef]
     """
@@ -116,6 +123,7 @@ class CoreTaskDef(BaseTaskDef): # type: ignore[no-redef]
     args: list[TaskInput]
     kwargs: dict[str, TaskInput]
     vtags: list[str] # ideally ascii
+    resources: ResourceClaim
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         # Only base deps
@@ -345,7 +353,7 @@ def make_task_def(cls: type[T], attrs, extra=None) -> T:
     wanted type
     """
     name = obj_to_name(msgpack.dumps((attrs, extra),
-        default=lambda m: m.model_dump()))
+        default=dump_model))
     return cls(name=name, **attrs)
 
 # Literal and child tasks
@@ -497,13 +505,6 @@ class ReadyCoreTaskDef(BaseModel):
                 != self.inputs.keys):
             raise ValueError('Wrong inputs')
         return self
-
-@dataclass(frozen=True)
-class ResourceClaim:
-    """
-    Resources claimed by a task
-    """
-    cpus: int = Field(ge=0)
 
 @dataclass(frozen=True)
 class Resources:

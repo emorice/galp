@@ -42,10 +42,9 @@ class Client:
     Args:
         endpoint: a ZeroMQ endpoint string to the worker. The client will create
             its own socket and destroy it in the end, using the global sync context.
-        cpus_per_task: number of cpus *per task* to allocate
     """
 
-    def __init__(self, endpoint: str, cpus_per_task: int | None = None):
+    def __init__(self, endpoint: str):
         # Public attribute: counter for the number of SUBMITs for each task
         # Used for reporting and testing cache behavior
         self.submitted_count : defaultdict[gtt.TaskName, int] = defaultdict(int)
@@ -55,8 +54,6 @@ class Client:
         self._command_queue: ControlQueue[cm.Primitive] = ControlQueue()
         # Async graph
         self._script = cm.Script()
-        # Misc param
-        self._cpus_per_task = cpus_per_task or 1
 
         # Communication
         def on_message(_write: Writer[gm.Message], msg: gm.Message
@@ -97,8 +94,7 @@ class Client:
         task_nodes = list(map(gtt.ensure_task_node, tasks))
 
         cmd_vals = await self._run_collection(task_nodes, cm.ExecOptions(
-                    keep_going=return_exceptions, dry=dry_run,
-                    resources=gtt.ResourceClaim(cpus=self._cpus_per_task)
+                    keep_going=return_exceptions, dry=dry_run
                     ))
 
         if isinstance(cmd_vals, Error):

@@ -92,9 +92,11 @@ def test_oneshot_suicide(run):
     with pytest.raises(galp.TaskFailedError):
         run(gts.suicide(signal.SIGKILL))
 
-@pytest.mark.parametrize('cpus', [1, 2])
-def test_oneshot_cpus(run, cpus):
+def test_definition_cpus(run):
     """
-    Run two tasks with a different number of default cpus
+    Run two tasks defined with a different number of cpus
     """
-    assert run(gts.utils.get_cpus(), pool_size=2, cpus_per_task=cpus) == cpus
+    one = gts.utils.get_cpus()
+    with galp.resources(cpus=2):
+        two = gts.utils.get_cpus()
+    assert run([one, two], pool_size=2, pin_workers=True) == (1, 2)

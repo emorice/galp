@@ -19,14 +19,11 @@ class LocalSystem:
 
     Tries to pass on the current default log level to the forked processes.
     """
-    def __init__(self, pool_size=1, pin_workers=False, cpus_per_task=None, **worker_options):
+    def __init__(self, pool_size=1, pin_workers=False, **worker_options):
         self._stack = AsyncExitStack()
 
         endpoint = f'ipc://@galp_wk_{os.getpid()}'
         self.endpoint = endpoint
-
-        if cpus_per_task is not None:
-            pin_workers = True
 
         self._broker = Broker(
             endpoint=endpoint,
@@ -41,9 +38,8 @@ class LocalSystem:
             self._pool_config['log_level'] = logging.getLogger().level
 
         self.client = None
-        self.cpus_per_task = cpus_per_task
 
-    async def start(self):
+    async def start(self) -> Client:
         """
         Starts a load-balancer and pool manager in the background, returns the
         corresponding client.
@@ -57,10 +53,10 @@ class LocalSystem:
         self._stack.enter_context(
             _spawn_pool(self._pool_config)
             )
-        self.client =  Client(self.endpoint, self.cpus_per_task)
+        self.client =  Client(self.endpoint)
         return self.client
 
-    async def stop(self):
+    async def stop(self) -> None:
         """
         Stops background tasks and clean up
         """

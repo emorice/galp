@@ -68,11 +68,9 @@ class ExecOptions:
         dry: whether to perform a dry-run or real run
         keep_going: whether to continue executing independent branches of the
             graph after a failure
-        resources: how much resources to require for each task
     """
     dry: bool = False
     keep_going: bool = False
-    resources: gtt.ResourceClaim = gtt.ResourceClaim(cpus=1)
 
 # Routines
 # --------
@@ -260,7 +258,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
 
     return (
             gather_deps
-            .then(lambda _: Send(gm.Submit(task_def, options.resources)))
+            .then(lambda _: Send(gm.Submit(task_def)))
             )
 
 def rsubmit(task: gtt.Task, options: ExecOptions

@@ -225,7 +225,7 @@ class CommonProtocol:
         Determine resources requested by a request
         """
         if isinstance(msg, gm.Submit):
-            return msg.resources
+            return msg.task_def.resources
         return gtt.ResourceClaim(cpus=1)
 
     def on_request(self, client: ReplyFromSession, msg: gm.Request

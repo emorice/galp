@@ -133,7 +133,6 @@ class Submit(BaseRequest[gtt.FlatResultRef], key='submit'):
         resources: to be allocated to the task
     """
     task_def: gtt.CoreTaskDef
-    resources: gtt.ResourceClaim
 
     @property
     def input_id(self) -> gtt.TaskName:

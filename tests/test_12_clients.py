@@ -11,7 +11,6 @@ from async_timeout import timeout
 
 import galp
 import tests.steps as gts
-import galp.task_types as gtt
 
 from galp.result import Ok
 from galp.protocol import make_stack
@@ -97,8 +96,7 @@ async def test_fill_queue(make_blocked_client):
         async with timeout(1):
             await client._transport.send_message(
                     # pylint: disable=no-member
-                    Submit(task_def=task.task_def,
-                           resources=gtt.Resources(cpus=1))
+                    Submit(task_def=task.task_def)
                     )
 
 @pytest.mark.xfail

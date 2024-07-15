@@ -8,6 +8,7 @@ import functools
 from typing import Any, Callable
 
 import galp.task_types as gtt
+from galp.default_resources import get_resources
 from galp.task_types import (StepType, TaskNode, CoreTaskDef, QueryTaskDef)
 
 def raise_if_bad_signature(step: 'Step', args, kwargs) -> None:
@@ -28,7 +29,9 @@ def raise_if_bad_signature(step: 'Step', args, kwargs) -> None:
                 ) from exc
 
 def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
-                   vtag: str | None = None, items: int | None = None) -> TaskNode:
+                   resources: gtt.ResourceClaim,
+                   vtag: str | None = None, items: int | None = None,
+                   ) -> TaskNode:
     """
     Build a core task from a function call
     """
@@ -55,7 +58,8 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
             'kwargs': kwarg_inputs,
             'step': step.key,
             'vtags': ([ascii(vtag) ] if vtag is not None else []),
-            'scatter':items
+            'scatter':items,
+            'resources': resources
             }
 
     ndef = gtt.make_task_def(CoreTaskDef, tdef)
@@ -118,7 +122,7 @@ class Step(StepType):
 
         Does not perform the injection
         """
-        return make_core_task(self, args, kwargs, **self.task_options)
+        return make_core_task(self, args, kwargs, get_resources(), **self.task_options)
 
     def collect_kwargs(self, given, injected):
         """
