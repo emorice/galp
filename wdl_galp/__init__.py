@@ -18,7 +18,7 @@ import galp
 pbl = galp.Block()
 
 @pbl.step
-def run(uri, _galp, **kwargs):
+def run(uri, **kwargs):
     """
     Wraps execution of a wdl workflow in a galp task
 
@@ -28,7 +28,7 @@ def run(uri, _galp, **kwargs):
 
     result = {}
 
-    workspace = _galp.new_path()
+    workspace = galp.new_path()
 
     os.makedirs(workspace, exist_ok=True)
 
