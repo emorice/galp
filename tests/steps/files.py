@@ -7,25 +7,25 @@ import galp
 export = galp.Block()
 
 @export
-def write_file(string, _galp):
+def write_file(string):
     """
     Write to a unique file
     """
-    path = _galp.new_path()
+    path = galp.new_path()
     with open(path, 'w', encoding='utf8') as stream:
         stream.write(string)
 
-    with open(_galp.new_path(), 'w', encoding='utf8') as stream:
+    with open(galp.new_path(), 'w', encoding='utf8') as stream:
         stream.write('clobber !')
 
     return path
 
 @export
-def copy_file(path, _galp):
+def copy_file(path):
     """
     Transfer content to a new file
     """
-    dst = _galp.new_path()
+    dst = galp.new_path()
     with open(dst, 'w', encoding='utf8') as dst_stream:
         with open(path, encoding='utf8') as src_stream:
             dst_stream.write(src_stream.read())
@@ -40,18 +40,21 @@ def read_file(path):
         return stream.read()
 
 @export
-def injectable_writer(_galp):
+def injectable_writer():
     """
     Write constant to file
     """
-    path = _galp.new_path()
+    path = galp.new_path()
     with open(path, encoding='utf8', mode='w') as stream:
         stream.write('wizard')
     return path
 
 @export
-def injected_copier(injectable_writer, _galp):
-    dst = _galp.new_path()
+def injected_copier(injectable_writer):
+    """
+    Transfer content to new file where source file gets injected
+    """
+    dst = galp.new_path()
     with open(dst, 'w', encoding='utf8') as dst_stream:
         with open(injectable_writer, encoding='utf8') as src_stream:
             dst_stream.write(src_stream.read())

@@ -17,12 +17,7 @@ def raise_if_bad_signature(step: 'Step', args, kwargs) -> None:
     and not only when we run it
     """
     try:
-        full_kwargs = dict(kwargs, **{
-            kw: WorkerSideInject()
-            for kw in _WORKER_INJECTABLES
-            if kw in step.kw_names
-            })
-        inspect.signature(step.function).bind(*args, **full_kwargs)
+        inspect.signature(step.function).bind(*args, **kwargs)
     except TypeError as exc:
         raise TypeError(
                 f'{step.function.__name__}() {str(exc)}'
@@ -206,13 +201,11 @@ class Step(StepType):
             injectable = injectables[name]
 
             # If not itself a Step, injection stops here
-            # We still add it to the post_order as we'll need to inject it,
-            # unless it's worker-side
+            # We still add it to the post_order as we'll need to inject it
             if not isinstance(injectable, StepType):
                 oset.remove(name)
                 cset.add(name)
-                if not isinstance(injectable, WorkerSideInject):
-                    post_order.append(name)
+                post_order.append(name)
                 pending.pop()
                 continue
 
@@ -336,22 +329,13 @@ class NoSuchStep(ValueError):
     No step with the given name has been registered
     """
 
-# Placholder type for an object injected by the worker
-WorkerSideInject = type('WorkerSideInject', tuple(), {})
-
-# Keys reserved for resources injected by the worker at runtime.
-_WORKER_INJECTABLES = ['_galp']
-
 class Block:
     """A collection of steps and bound arguments"""
     def __init__(self, steps=None):
         # Note: if we inherit steps, we don't touch their scope
         self._steps = {} if steps is None else steps
 
-        self.injectables = {
-                k: WorkerSideInject()
-                for k in _WORKER_INJECTABLES
-                }
+        self.injectables = {}
 
     def step(self, *decorated, **options):
         """Decorator to make a function a step.

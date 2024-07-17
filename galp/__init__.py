@@ -8,6 +8,7 @@ from .local_system_utils import temp_system, TempSystem
 from .client import Client, TaskFailedError
 from .graph import Block, StepSet, query
 from .default_resources import resources
+from .context import new_path
 from . import steps
 
 def run(*tasks, **options):

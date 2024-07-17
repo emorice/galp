@@ -40,6 +40,7 @@ from galp.profiler import Profiler
 from galp.net_store import handle_get, handle_stat, handle_upload
 from galp.net.core.dump import add_request_id, Writer
 from galp.asyn import filter_commands
+from galp.context import set_path
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -283,18 +284,6 @@ class Worker:
     # Task execution logic
     # ====================
 
-    def inject_path_maker(self, step: Step, task_def: CoreTaskDef, kwargs: dict
-                          ) -> dict:
-        """
-        Inject path maker if requested
-        """
-        if '_galp' in step.kw_names:
-            return dict(kwargs, _galp=PathMaker(
-                self.store.dirpath,
-                task_def.name.hex()
-                ))
-        return kwargs
-
     def run_submission(self, job: Job) -> TransportMessage:
         """
         Actually run the task
@@ -321,11 +310,10 @@ class Worker:
                 logging.exception('No such step known to worker: %s', step_name)
                 raise NonFatalTaskError from exc
 
-            kwargs = self.inject_path_maker(step, task_def, kwargs)
-
             # This may block for a long time, by design
             try:
-                result = self.profiler.wrap(name, step)(*args, **kwargs)
+                with set_path(self.store.dirpath, name.hex()):
+                    result = self.profiler.wrap(name, step)(*args, **kwargs)
             except Exception as exc:
                 logging.exception('Submitted task step failed: %s [%s]',
                 step_name, name)
@@ -350,26 +338,6 @@ class Worker:
                 'running asynchronous task. This signals a bug in GALP itself.')
             raise
 
-@dataclass
-class PathMaker:
-    """
-    State keeping path to generate new paths inside steps
-    """
-    dirpath: str
-    task: str
-    fileno: int = 0
-
-    def new_path(self):
-        """
-        Returns a new unique path
-        """
-        fileno = self.fileno
-        self.fileno += 1
-        return os.path.join(
-            self.dirpath,
-            'galp',
-            f'{self.task}_{fileno}'
-            )
 
 def fork(config):
     """
