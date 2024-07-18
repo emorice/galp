@@ -86,16 +86,3 @@ async def test_path(client):
     async with timeout(3):
         res = await client.run(downstream)
         assert res == '42'
-
-async def test_inject_path(client):
-    """
-    Simultaneous use of injection and path providers
-    """
-
-    downstream = gts.files.read_file(
-            gts.files.injected_copier
-            )
-
-    async with timeout(3):
-        res = await client.run(downstream)
-        assert res == 'wizard'

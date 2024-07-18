@@ -64,10 +64,3 @@ async def test_index_anything(assert_task_equal):
     Subscript a task that was declared as itemizable
     """
     await assert_task_equal(gts.arange(3)[2], 2)
-
-async def test_index_step(assert_task_equal):
-    """
-    Subscript a step with injected parameters
-    """
-    await assert_task_equal(gts.inject.uses_inject[2], 'j')
-    await assert_task_equal(gts.inject.uses_indexed(free_arg='Hello'), 'l')

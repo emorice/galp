@@ -12,14 +12,13 @@ import pyarrow as pa # type: ignore[import]
 
 import galp
 
-from . import utils, inject, dashboard, files, query
+from . import utils, dashboard, files, query
 from .utils import identity
 
 export = galp.Block()
 
 # Submodules exports
 export += utils.export
-export += inject.export
 export += dashboard.export
 export += files.export
 export += query.blk

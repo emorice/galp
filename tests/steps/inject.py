@@ -31,8 +31,6 @@ def sum_inject(injected_list):
     """
     return sum(injected_list)
 
-export.bind(injected_list=[identity(5), identity(7)])
-
 @export
 def sum_inject_trans(injected_list_trans):
     """
@@ -53,8 +51,6 @@ def injects_none(none_value):
     Step expecting an actual None as value to inject
     """
     return none_value is None
-
-export.bind(none_value=None)
 
 @export
 def has_default(value=42):
@@ -121,17 +117,8 @@ def co_cyclic(cyclic):
     del cyclic
 
 @export
-def has_free_arg(free_arg):
-    """
-    A step with an argument to fill
-    """
-    return free_arg
-
-@export
 def uses_indexed(indexed):
     """
     To inject with an indexed step
     """
     return indexed
-
-export.bind(indexed=has_free_arg[3])

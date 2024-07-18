@@ -45,12 +45,15 @@ def render_object(obj):
     # Fallback to str
     return False, str(obj)
 
-def create_app(config):
+def create_app(endpoints: dict[str, TaskNode], store: str) -> Flask:
     """
     Creates the dashboard flask app from a galp.config-compatible dictionnary
     """
     app = Flask(__name__)
-    app.galp = galp.config.load_config(config)
+    app.galp = { # type: ignore[attr-defined]
+            'endpoints': endpoints,
+            'store': CacheStack(store, TaskSerializer)
+            }
 
     @app.route('/')
     def landing():
@@ -58,7 +61,7 @@ def create_app(config):
         Landing page of the app
         """
         return render_template('landing.html',
-                steps=app.galp['steps'].all_steps
+                steps=app.galp['endpoints']
                 )
 
     @app.route('/step/<step_name>')

@@ -8,6 +8,7 @@ import signal
 import psutil
 
 import pytest
+from async_timeout import timeout
 
 import galp
 import tests.steps as gts
@@ -231,3 +232,14 @@ async def test_vmlimit(make_galp_set, make_client):
         await asyncio.wait_for(
                 limited_client.collect(task_b),
                 3)
+
+async def test_missing_argument(client):
+    """
+    Raises early when missing arguments
+    """
+    async with timeout(3):
+        # This must raise with a TypeError at graph construction time and not a
+        # TaskFailedError at runtime.
+        with pytest.raises(TypeError) as err:
+            await client.run(gts.arange, dry_run=True)
+        print(err)

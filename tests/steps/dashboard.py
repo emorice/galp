@@ -2,6 +2,8 @@
 Dashboard specific steps, aka views
 """
 
+from typing import Any
+
 import plotly.graph_objects as go # type: ignore[import]
 
 import galp
@@ -30,17 +32,17 @@ def fortytwo():
     return 42
 
 @export.view
-def view_with_inject(fortytwo):
+def view_with_arg(value):
     """
     View requiring the output of an other step
     """
-    return {'data': fortytwo}
+    return {'data': value}
 
-@export.view
-def view_with_injected_literal(bound_fortytwo):
+def get_endpoints() -> dict[str, Any]:
     """
-    View requiring a bound_constant
+    Dict of items to include in dashboard
     """
-    return {'data': bound_fortytwo}
-
-export.bind(bound_fortytwo={'x': fortytwo})
+    return {
+            'plotly_figure': plotly_figure(),
+            'view_with_arg': view_with_arg(fortytwo())
+            }

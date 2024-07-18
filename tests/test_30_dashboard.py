@@ -24,7 +24,7 @@ def render_parse(tmpdir, data):
         app = create_app({
             'log_level': 'info',
             'store': tmpdir,
-            'steps': ['tests.steps']
+            'endpoints': gts.dashboard.get_endpoints()
             })
         ctx = app.request_context(environ)
         ctx.push()
@@ -57,11 +57,4 @@ def test_inject(render_parse):
     Render a view depending on data in store
     """
     soup = render_parse('view_with_inject')
-    assert any('42' in s for s in soup.strings)
-
-def test_inject_literal(render_parse):
-    """
-    Render a view depending on a graph constant
-    """
-    soup = render_parse('view_with_injected_literal')
     assert any('42' in s for s in soup.strings)
