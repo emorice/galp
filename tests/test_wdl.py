@@ -17,8 +17,7 @@ def run(tmpdir):
     """
     Bind test parameters for galp.run
     """
-    return partial(galp.run, store=tmpdir, steps=['wdl_galp'],
-            log_level='info')
+    return partial(galp.run, store=tmpdir, log_level='info')
 
 @pytest.fixture
 def local_file():
