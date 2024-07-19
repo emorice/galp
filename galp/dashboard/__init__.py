@@ -14,6 +14,7 @@ import galp.asyn as ga
 from galp.net.core.types import Get
 from galp.task_types import (TaskSerializer, TaskNode, CoreTaskDef, Serialized,
     TaskRef)
+from galp.graph import load_step_by_key
 from galp.cache import CacheStack
 from galp.result import Result, Ok
 from galp.query import collect_task_inputs
@@ -64,41 +65,43 @@ def create_app(endpoints: dict[str, TaskNode], store: str) -> Flask:
                 steps=app.galp['endpoints']
                 )
 
-    @app.route('/step/<step_name>')
-    def run(step_name):
+    @app.route('/step/<task_name>')
+    def run(task_name):
         """
         Execute a no-argument step and displays the result
         """
-        steps = app.galp['steps']
+        endpoints = app.galp['endpoints']
         store = app.galp['store']
 
-        if step_name not in steps:
+        if task_name not in endpoints:
+            logging.error('No such endpoint: %s', task_name)
+            logging.debug('Available: %s', list(endpoints))
             abort(404)
 
-        step = steps[step_name]
-        task = step()
-
-        if step.is_view:
-            # inject deps and check for missing args
-            task = step()
-
-            kwargs = collect_kwargs(store, task)
-
-            # Run the step
-            result = step.function(**kwargs)
-            # Render the result
-            is_safe, rep = render_object(result)
-            return render_template('step.html', safe_obj=is_safe, obj=rep)
+        task = endpoints[task_name]
 
         if task.name in store:
             obj = store.get_native(task.name)
             is_safe, rep = render_object(obj)
             return render_template('step.html', safe_obj=is_safe, obj=rep)
 
+        # If not in store, maybe execute it locally
+        task_def = task.task_def
+        if isinstance(task_def, CoreTaskDef):
+            step = load_step_by_key(task_def.step)
+            if step.is_view:
+                args, kwargs = collect_args(store, task)
+
+                # Run the step
+                result = step.function(*args, **kwargs)
+                # Render the result
+                is_safe, rep = render_object(result)
+                return render_template('step.html', safe_obj=is_safe, obj=rep)
+
         return 'Neither a view nor an object in store'
     return app
 
-def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
+def collect_args(store: CacheStack, task: TaskNode) -> tuple[list, dict]:
     """
     Re-use client logic to parse the graph and sort out which pieces
     need to be fetched from store
@@ -116,11 +119,9 @@ def collect_kwargs(store: CacheStack, task: TaskNode) -> dict:
         name = command.request.name
         return Ok(store.get_serial(name))
 
-    ## Collect args from local and remote store. Since we don't pass any
-    ## argument to the step, all arguments are injected, and therefore keyword arguments
+    ## Collect args from local and remote store.
     args, kwargs = ga.run_command(
             collect_task_inputs(task, tdef),
             _exec).unwrap()
-    assert not args
 
-    return kwargs
+    return args, kwargs

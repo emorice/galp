@@ -19,13 +19,12 @@ def render_parse(tmpdir, data):
     """
     _ = data
     def _render_parse(name):
-        url = f'/step/tests.steps.dashboard::{name}'
+        url = f'/step/{name}'
         environ = werkzeug.test.create_environ(url)
-        app = create_app({
-            'log_level': 'info',
-            'store': tmpdir,
-            'endpoints': gts.dashboard.get_endpoints()
-            })
+        app = create_app(
+            store=tmpdir,
+            endpoints=gts.dashboard.get_endpoints(),
+            )
         ctx = app.request_context(environ)
         ctx.push()
         try:
@@ -56,5 +55,5 @@ def test_inject(render_parse):
     """
     Render a view depending on data in store
     """
-    soup = render_parse('view_with_inject')
+    soup = render_parse('view_with_arg')
     assert any('42' in s for s in soup.strings)

@@ -4,12 +4,16 @@ General routines to build and operate on graphs of tasks.
 import inspect
 import warnings
 import functools
+import logging
 
+from importlib import import_module
 from typing import Any, Callable
 
 import galp.task_types as gtt
 from galp.default_resources import get_resources
 from galp.task_types import (StepType, TaskNode, CoreTaskDef, QueryTaskDef)
+
+MODULE_SEPARATOR: str = '::'
 
 def raise_if_bad_signature(step: 'Step', args, kwargs) -> None:
     """
@@ -77,7 +81,7 @@ class Step(StepType):
 
     def __init__(self, scope: 'Block', function: Callable, is_view: bool = False, **task_options):
         self.function = function
-        self.key = function.__module__ + '::' + function.__qualname__
+        self.key = function.__module__ + MODULE_SEPARATOR + function.__qualname__
         self.task_options = task_options
         self.scope = scope
         self.is_view = is_view
@@ -250,3 +254,24 @@ def query(subject: Any, query_doc: Any) -> TaskNode:
                 ),
             dependencies=[subj_node]
             )
+
+def load_step_by_key(key: str) -> Step:
+    """
+    Try to import the module containing a step and access such step
+    """
+    module_name, step_name = key.split(MODULE_SEPARATOR)
+
+    try:
+        module = import_module(module_name)
+    except ModuleNotFoundError:
+        logging.error('Error while loading step %s: could not import module %s',
+                key, module_name)
+        raise
+
+    try:
+        return getattr(module, step_name)
+    except AttributeError:
+        logging.error(
+        'Error while loading step %s: could not import find step %s in %s',
+                key, step_name, module_name)
+        raise
