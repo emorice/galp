@@ -65,11 +65,9 @@ def test_cli_keep_going(tmpdir):
     Start a failing job
     """
     with pytest.raises(subprocess.CalledProcessError):
-        _ = run(f'python3 -m galp.client -s {tmpdir} --steps tests.steps '
-                'tests.steps suicide')
+        _ = run(f'python3 -m galp.client -s {tmpdir} tests.steps suicide')
 
-    out = run(f'python3 -m galp.client -s {tmpdir} --steps tests.steps -k '
-            'tests.steps suicide')
+    out = run(f'python3 -m galp.client -s {tmpdir} -k tests.steps suicide')
     assert 'failed' in out.lower()
 
 async def test_path(client):

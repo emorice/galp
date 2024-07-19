@@ -259,10 +259,6 @@ def make_cli(config):
                 if val:
                     args.append('--store')
                     args.append(val)
-            case 'steps':
-                for step in val or []:
-                    args.append('--steps')
-                    args.append(step)
             case 'log_level':
                 if val:
                     args.append('--log-level')

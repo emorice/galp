@@ -162,9 +162,9 @@ async def test_vtags(client):
     """
     Exercises version tags
     """
-    # Only tagged1 is legit
+    # Only tag_me is legit
     tasks = [
-        gts.tagged1(),
+        gts.tag_me(),
         gts.tagged2(),
         gts.untagged(),
     ]

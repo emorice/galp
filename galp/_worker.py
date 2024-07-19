@@ -21,7 +21,7 @@ import psutil
 import zmq
 import zmq.asyncio
 
-import galp.steps
+import galp.steps # FIXME: this avoids a circular import but that's clearly bad
 import galp.cli
 import galp.net.core.types as gm
 import galp.net.requests.types as gr
@@ -34,8 +34,8 @@ from galp.cache import StoreReadError
 from galp.protocol import make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import collect_task_inputs
-from galp.graph import NoSuchStep, Step
-from galp.task_types import TaskRef, CoreTaskDef
+from galp.graph import load_step_by_key, NoSuchStep
+from galp.task_types import TaskRef
 from galp.profiler import Profiler
 from galp.net_store import handle_get, handle_stat, handle_upload
 from galp.net.core.dump import add_request_id, Writer
@@ -102,11 +102,6 @@ def make_worker_init(config):
         args: an object whose attributes are the the parsed arguments, as
             returned by argparse.ArgumentParser.parse_args.
     """
-    if config.get('steps'):
-        config['steps'].append('galp.steps')
-    else:
-        config['steps'] = ['galp.steps']
-
     # Early setup, make sure this work before attempting config
     galp.cli.setup("worker", config.get('log_level'))
     galp.cli.set_sync_handlers()
@@ -164,7 +159,6 @@ class Worker:
                 make_stack(on_message, name='BK'),
                 setup['endpoint'], zmq.DEALER # pylint: disable=no-member
                 )
-        self.step_dir = setup['steps']
         self.profiler = Profiler(setup.get('profile'))
         self.mission = setup.get('mission', b'')
         self.store = setup['store']
@@ -305,7 +299,7 @@ class Worker:
             logging.info('Executing step %s (%s)', name, step_name)
 
             try:
-                step = self.step_dir.get(step_name)
+                step = load_step_by_key(step_name)
             except NoSuchStep as exc:
                 logging.exception('No such step known to worker: %s', step_name)
                 raise NonFatalTaskError from exc

@@ -26,8 +26,6 @@ parser.add_argument('-j', '--jobs', type=int, help='Number of worker processes'
         ' to run in parallel. Ignored with -e.', default=1, dest='pool_size')
 parser.add_argument('--pin-workers', action='store_true',
         help='Set cpu affinity to pin each worker to one cpu core')
-parser.add_argument('--steps', action='append',
-        help='Add the given python module to the set of usable steps')
 parser.add_argument('-k', '--keep_going', action='store_true',
         help='Continue running on failure, returning exceptions')
 galp.cache.add_store_argument(parser, optional=True)
@@ -52,7 +50,7 @@ async def run(target):
                 galp.local_system(**{
                     k: getattr(args, k)
                     for k in ['config', 'log_level', 'store', 'pool_size',
-                    'pin_workers', 'steps']
+                    'pin_workers']
                     })
                 )
         return await client.run(

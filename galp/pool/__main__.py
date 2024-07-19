@@ -14,8 +14,6 @@ def add_parser_arguments(parser):
     """
     galp.worker.add_parser_arguments(parser)
     parser.add_argument('--pin_workers', action='store_true')
-    parser.add_argument('--steps', action='append',
-            help='Add the given python module to the set of usable steps')
 
 _parser = argparse.ArgumentParser()
 add_parser_arguments(_parser)

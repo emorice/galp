@@ -47,11 +47,13 @@ def tag_me():
     """
     return 'tagged'
 
-# Only this one can be called
-tagged1 = export.step(vtag=0)(tag_me)
-
 untagged = _export2.step(tag_me)
 tagged2 = _export3.step(vtag=1)(tag_me)
+
+# Only this one can be called because it is re-bound to the true name. The other
+# two can only be used to test naming
+tag_me = export.step(vtag=0)(tag_me)
+
 
 def naive_fib(n): # pylint: disable=invalid-name
     """

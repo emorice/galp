@@ -258,20 +258,23 @@ def query(subject: Any, query_doc: Any) -> TaskNode:
 def load_step_by_key(key: str) -> Step:
     """
     Try to import the module containing a step and access such step
+
+    Raises:
+        NoSuchStep: if loading the module or accessing the step fails
     """
     module_name, step_name = key.split(MODULE_SEPARATOR)
 
     try:
         module = import_module(module_name)
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
         logging.error('Error while loading step %s: could not import module %s',
                 key, module_name)
-        raise
+        raise NoSuchStep(key) from exc
 
     try:
         return getattr(module, step_name)
-    except AttributeError:
+    except AttributeError as exc:
         logging.error(
         'Error while loading step %s: could not import find step %s in %s',
                 key, step_name, module_name)
-        raise
+        raise NoSuchStep(key) from exc

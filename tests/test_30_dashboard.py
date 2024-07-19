@@ -40,9 +40,7 @@ def data(tmpdir):
     Run some steps so that we have data to vizualize
     """
     galp.run(gts.dashboard.fortytwo,
-            store=tmpdir,
-            steps=['tests.steps']
-            )
+            store=tmpdir)
 
 def test_plotly(render_parse):
     """
