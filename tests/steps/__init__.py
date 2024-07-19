@@ -17,12 +17,6 @@ from .utils import identity
 
 export = galp.Block()
 
-# Submodules exports
-export += utils.export
-export += dashboard.export
-export += files.export
-export += query.blk
-
 # Alternative namespaces to register the same function several times
 _export2 = galp.Block()
 _export3 = galp.Block()

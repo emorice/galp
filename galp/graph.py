@@ -79,11 +79,10 @@ class Step(StepType):
             handle pointing to the individual items.
     """
 
-    def __init__(self, scope: 'Block', function: Callable, is_view: bool = False, **task_options):
+    def __init__(self, function: Callable, is_view: bool = False, **task_options):
         self.function = function
         self.key = function.__module__ + MODULE_SEPARATOR + function.__qualname__
         self.task_options = task_options
-        self.scope = scope
         self.is_view = is_view
         functools.update_wrapper(self, self.function)
 
@@ -148,10 +147,6 @@ class NoSuchStep(ValueError):
 
 class Block:
     """A collection of steps and bound arguments"""
-    def __init__(self, steps=None):
-        # Note: if we inherit steps, we don't touch their scope
-        self._steps = {} if steps is None else steps
-
     def step(self, *decorated, **options):
         """Decorator to make a function a step.
 
@@ -182,13 +177,7 @@ class Block:
         See Task for the possible options.
         """
         def _step_maker(function):
-            step = Step(
-                self,
-                function,
-                **options,
-                )
-            self._steps[step.key] = step
-            return step
+            return Step(function, **options)
 
         if decorated:
             return _step_maker(*decorated)
@@ -206,31 +195,6 @@ class Block:
         Shortcut for StepSet.step
         """
         return self.step(*decorated, **options)
-
-    def get(self, key: str) -> Step:
-        """Return step by full name"""
-        try:
-            return self._steps[key]
-        except KeyError:
-            raise NoSuchStep(key) from None
-
-    @property
-    def all_steps(self):
-        """
-        Dictionary of current steps
-        """
-        return self._steps
-
-    def __contains__(self, key):
-        return key in self._steps
-
-    def __getitem__(self, key):
-        return self.get(key)
-
-    def __iadd__(self, other):
-        self._steps.update(other._steps)
-        # We do not merge the injectables by default
-        return self
 
 class StepSet(Block):
     """
