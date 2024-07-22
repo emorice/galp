@@ -182,8 +182,6 @@ def load_model(model_type: type[T], payload: bytes) -> Ok[T] | LoadError:
     # If you want to catch all error, catch Exception instead.:
     except Exception: # pylint: disable=broad-except
         err = f'Invalid msgpack message: {payload!r}'
-        logging.exception(err)
-        logging.error('%s', LoadError(err))
         return LoadError(err)
 
     try:

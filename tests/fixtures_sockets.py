@@ -36,16 +36,16 @@ def worker_socket(ctx, make_worker):
     """Dealer socket connected to a standalone worker (no pool nor broker)
 
     Returns:
-        (socket, endpoint, worker_handle)
+        (socket, endpoint, worker_process)
     """
 
     socket = ctx.socket(zmq.DEALER)
     socket.bind('tcp://127.0.0.1:*')
     endpoint = socket.getsockopt(zmq.LAST_ENDPOINT)
 
-    endpoint, handle = make_worker(endpoint)
+    endpoint, process = make_worker(endpoint)
 
-    yield socket, endpoint, handle
+    yield socket, endpoint, process
 
     # Closing with linger since we do not know if the test has failed or left
     # pending messages for whatever reason.
@@ -63,9 +63,9 @@ def async_worker_socket(async_ctx, make_worker):
     socket.bind('tcp://127.0.0.1:*')
     endpoint = socket.getsockopt(zmq.LAST_ENDPOINT)
 
-    endpoint, handle = make_worker(endpoint)
+    endpoint, process = make_worker(endpoint)
 
-    yield socket, endpoint, handle
+    yield socket, endpoint, process
 
     # Closing with linger since we do not know if the test has failed or left
     # pending messages for whatever reason.

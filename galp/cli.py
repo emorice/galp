@@ -139,13 +139,16 @@ async def cleanup_tasks(tasks):
             pass
         # let other exceptions be raised
 
-def run_in_fork(function, *args, **kwargs):
+def run_in_fork(function, *args, **kwargs) -> int:
     """
     Functional Wrapper for fork including exception handling and clean-up
+
+    Returns:
+        Child pid
     """
     pid = os.fork()
     if pid == 0:
-        ret = 1
+        ret = None
         try:
             ret = function(*args, **kwargs)
         except:
@@ -155,5 +158,5 @@ def run_in_fork(function, *args, **kwargs):
         finally:
             # Not sys.exit after a fork as it could call parent-specific
             # callbacks
-            os._exit(ret) # pylint: disable=protected-access
+            os._exit(0 if ret is None else 1) # pylint: disable=protected-access
     return pid

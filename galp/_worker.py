@@ -11,7 +11,6 @@ within the job and easy to patch if the code has to be run somewhere else.
 import os
 import asyncio
 import logging
-import argparse
 import resource
 
 from typing import Iterable, TypeAlias
@@ -332,8 +331,7 @@ class Worker:
                 'running asynchronous task. This signals a bug in GALP itself.')
             raise
 
-
-def fork(config):
+def fork(config: dict) -> int:
     """
     Forks a worker with the given arguments.
 
@@ -344,7 +342,7 @@ def fork(config):
     """
     return galp.cli.run_in_fork(main, config)
 
-def main(config):
+def main(config: dict):
     """
     Normal entry point
     """
@@ -357,8 +355,9 @@ def main(config):
     async def _coro(make_worker):
         worker = make_worker()
         ret = await worker.listen()
+        obj = ret.unwrap()
         logging.info("Worker terminating normally")
-        return ret
+        return obj
     return asyncio.run(_coro(make_worker))
 
 def add_parser_arguments(parser):
@@ -374,11 +373,3 @@ def add_parser_arguments(parser):
         help='Limit on process virtual memory size, e.g. "2M" or "1G"')
 
     galp.cli.add_parser_arguments(parser)
-
-def make_parser():
-    """
-    Creates argument parser and configures it
-    """
-    _parser = argparse.ArgumentParser()
-    add_parser_arguments(_parser)
-    return _parser

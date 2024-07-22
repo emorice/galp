@@ -67,18 +67,17 @@ def assert_ready(socket):
 def test_signals(worker_socket, sig):
     """Test for termination on INT and TERM)"""
 
-    socket, _endpoint, worker_handle = worker_socket
+    socket, _endpoint, process = worker_socket
 
-    assert worker_handle.poll() is None
+    assert process.is_running()
     assert_ready(socket)
 
-    process = psutil.Process(worker_handle.pid)
     children = process.children(recursive=True)
 
     # If not our children list may not be valid
     assert process.status() != psutil.STATUS_ZOMBIE
 
-    worker_handle.send_signal(sig)
+    process.send_signal(sig)
 
     _gone, alive = psutil.wait_procs([process, *children], timeout=4)
     assert not alive
@@ -94,12 +93,11 @@ def test_signals(worker_socket, sig):
 def test_illegals(worker_socket, msg_body):
     """Tests a few messages that should trigger worker abort"""
 
-    socket, _endpoint, worker_handle = worker_socket
+    socket, _endpoint, process = worker_socket
 
-    assert worker_handle.poll() is None
+    assert process.is_running()
     assert_ready(socket)
 
-    process = psutil.Process(worker_handle.pid)
     children = process.children(recursive=True)
 
     # If not our children list may not be valid

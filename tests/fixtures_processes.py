@@ -6,7 +6,12 @@ import logging
 import subprocess
 import sys
 
+from contextlib import ExitStack, contextmanager
+
 import pytest
+import psutil
+
+import galp.worker
 
 @pytest.fixture
 def port():
@@ -49,27 +54,40 @@ def make_process():
             pass
 
 @pytest.fixture
-def make_worker(make_process, port, tmp_path):
+def make_worker(port, tmp_path):
     """Worker fixture, starts a worker in background.
 
     Returns:
-        (endpoint, Popen) tuple
+        (endpoint, psutil Process) tuple
     """
-    def _make(endpoint=None):
+
+    @contextmanager
+    def _make_one(endpoint=None):
         if endpoint is None:
             endpoint = f"tcp://127.0.0.1:{port()}"
 
-        phandle = make_process(
-            '-m', 'galp.worker',
-            '-c', 'tests/config.toml',
-            '--log-level', log_level(),
-            endpoint,
-            '--store', str(tmp_path)
-            )
+        pid = galp.worker.fork({
+            'config': 'tests/config.toml',
+            'log-level': log_level(),
+            'endpoint': endpoint,
+            'store': str(tmp_path)})
+        process = psutil.Process(pid)
 
-        return endpoint, phandle
+        yield endpoint, process
 
-    return _make
+        try:
+            process.terminate()
+        except psutil.NoSuchProcess:
+            pass
+        try:
+            process.wait()
+        except psutil.NoSuchProcess:
+            pass
+
+    with ExitStack() as stack:
+        def _make(endpoint=None):
+            return stack.enter_context(_make_one(endpoint))
+        yield _make
 
 @pytest.fixture
 def make_pool(make_process, port, tmp_path):
