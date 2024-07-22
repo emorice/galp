@@ -49,13 +49,10 @@ async def test_step_error(client):
     Test running a task containing a bug, and test that the error message is
     somewhat helpful.
     """
-    with pytest.raises(galp.TaskFailedError):
-        try:
-            await asyncio.wait_for(client.collect(gts.raises_error()), 3)
-        except galp.TaskFailedError as exc:
-            # ensure it's written somewhere that this is not a client-side error
-            assert 'worker' in str(exc).lower()
-            raise
+    with pytest.raises(galp.TaskFailedError) as exc:
+        await asyncio.wait_for(client.collect(gts.raises_error()), 3)
+    # ensure it's written somewhere that this is not a client-side error
+    assert 'worker' in str(exc).lower()
 
 async def test_suicide(client):
     """
