@@ -127,3 +127,4 @@ async def test_fork_worker(tmpdir):
         assert isinstance(load_message(msg), gm.Ready)
     finally:
         os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
