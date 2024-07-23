@@ -12,10 +12,10 @@ from galp.net.core.types import Get, Stat, Upload, Message
 from galp.net.core.dump import Writer
 from galp.net.requests.types import NotFound, Found, StatDone, RemoteError
 from galp.net.core.dump import add_request_id
-from galp.cache import CacheStack, StoreReadError
+from galp.store import Store, StoreReadError
 from galp.protocol import TransportMessage
 
-def handle_get(write: Writer[Message], msg: Get, store: CacheStack
+def handle_get(write: Writer[Message], msg: Get, store: Store
         ) -> Iterable[TransportMessage]:
     """
     Answers GET requests based on underlying store
@@ -35,7 +35,7 @@ def handle_get(write: Writer[Message], msg: Get, store: CacheStack
         logging.exception('GET: %s: %s', err, name)
     return [write_reply(RemoteError(err))]
 
-def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
+def handle_stat(write: Writer[Message], msg: Stat, store: Store
         ) -> Iterable[TransportMessage]:
     """
     Answers STAT requests based on underlying store
@@ -48,7 +48,7 @@ def handle_stat(write: Writer[Message], msg: Stat, store: CacheStack
         logging.exception('STAT: %s: %s', err, msg.name)
     return [write_reply(RemoteError(err))]
 
-def handle_upload(write: Writer[Message], msg: Upload, store: CacheStack
+def handle_upload(write: Writer[Message], msg: Upload, store: Store
                   ) -> Iterable[TransportMessage]:
     """
     Check object into store

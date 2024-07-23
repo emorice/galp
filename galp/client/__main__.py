@@ -9,7 +9,7 @@ from contextlib import AsyncExitStack
 from importlib import import_module
 
 import galp
-import galp.cache
+import galp.store
 import galp.cli
 
 parser = argparse.ArgumentParser()
@@ -28,7 +28,7 @@ parser.add_argument('--pin-workers', action='store_true',
         help='Set cpu affinity to pin each worker to one cpu core')
 parser.add_argument('-k', '--keep_going', action='store_true',
         help='Continue running on failure, returning exceptions')
-galp.cache.add_store_argument(parser, optional=True)
+galp.store.add_store_argument(parser, optional=True)
 galp.cli.add_parser_arguments(parser)
 
 args = parser.parse_args()

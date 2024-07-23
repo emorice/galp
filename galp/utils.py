@@ -8,7 +8,7 @@ import galp.commands as cm
 import galp.asyn as ga
 from galp.result import Result, Ok
 from galp.net.core.types import Get
-from galp.cache import CacheStack
+from galp.store import Store
 from galp.task_types import TaskName, TaskRef, Task, CoreTaskDef, TaskSerializer
 from galp.graph import load_step_by_key
 from galp.query import collect_task_inputs
@@ -17,7 +17,7 @@ def prepare_task(task_name: TaskName, store_path: str) -> partial:
     """
     Loads input for a task and bind them to the task step.
     """
-    store = CacheStack(store_path, TaskSerializer)
+    store = Store(store_path, TaskSerializer)
     task_def = store.get_task_def(task_name)
     if not isinstance(task_def, CoreTaskDef):
         raise TypeError('Must be a Core task')
@@ -25,7 +25,7 @@ def prepare_task(task_name: TaskName, store_path: str) -> partial:
     args, kwargs = collect_args(store, TaskRef(task_name), task_def)
     return partial(step.function, *args, **kwargs)
 
-def collect_args(store: CacheStack, task: Task, task_def: CoreTaskDef) -> tuple[list, dict]:
+def collect_args(store: Store, task: Task, task_def: CoreTaskDef) -> tuple[list, dict]:
     """
     Re-use client logic to parse the graph and sort out which pieces
     need to be fetched from store

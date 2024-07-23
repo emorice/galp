@@ -8,10 +8,10 @@ from typing import Type
 from galp.result import Ok, Error
 import galp.net.requests.types as gr
 import galp.net.core.types as gm
+from galp.store import StoreReadError
 from . import commands as cm
 from . import task_types as gtt
 from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
-from .cache import StoreReadError
 from .asyn import as_command, collect, collect_dict
 
 def run_task(task: TaskNode, options: cm.ExecOptions

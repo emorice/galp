@@ -29,7 +29,7 @@ import galp.task_types as gtt
 from galp.result import Result, Ok, Error
 
 from galp.config import load_config
-from galp.cache import StoreReadError
+from galp.store import StoreReadError
 from galp.protocol import make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import collect_task_inputs
@@ -371,7 +371,7 @@ def add_parser_arguments(parser):
         help="Endpoint to bind to, in ZMQ format, e.g. tcp://127.0.0.2:12345 "
             "or ipc://path/to/socket ; see also man zmq_bind."
         )
-    galp.cache.add_store_argument(parser, optional=True)
+    galp.store.add_store_argument(parser, optional=True)
 
     parser.add_argument('--vm',
         help='Limit on process virtual memory size, e.g. "2M" or "1G"')

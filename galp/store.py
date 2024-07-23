@@ -20,7 +20,7 @@ class StoreReadError(Exception):
     store raises KeyError instead).
     """
 
-class CacheStack():
+class Store():
     """Synchronous cache proxy.
 
     If `dirpath` is none, serialized objects are only kept in memory and no

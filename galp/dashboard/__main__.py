@@ -17,7 +17,7 @@ def add_parser_arguments(_parser):
             default=5000)
 
 parser = argparse.ArgumentParser()
-galp.cache.add_store_argument(parser, optional=True)
+galp.store.add_store_argument(parser, optional=True)
 galp.cli.add_parser_arguments(parser)
 add_parser_arguments(parser)
 args = parser.parse_args()

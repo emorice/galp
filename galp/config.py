@@ -7,7 +7,7 @@ import logging
 
 import toml
 
-from galp.cache import CacheStack
+from galp.store import Store
 from galp.task_types import TaskSerializer
 
 class ConfigError(Exception):
@@ -50,7 +50,7 @@ def load_config(config=None, mandatory=None):
             raise ConfigError(f'Missing "{key}"')
 
     logging.info("Storing in %s", setup['store'])
-    setup['store'] = CacheStack(setup.get('store'), TaskSerializer)
+    setup['store'] = Store(setup.get('store'), TaskSerializer)
 
     return setup
 

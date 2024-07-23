@@ -38,7 +38,7 @@ def poisoned_cache(tmpdir, request):
     # Invalid data but we should fail before that
     data = bytes.fromhex('0123456789abcdef')
 
-    cache = galp.cache.CacheStack(tmpdir, None)
+    cache = galp.store.Store(tmpdir, None)
     cache.serialcache[name + b'.children'] = children
     cache.serialcache[name + b'.data'] = data
 

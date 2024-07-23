@@ -15,7 +15,7 @@ from galp.net.core.types import Get
 from galp.task_types import (TaskSerializer, TaskNode, CoreTaskDef, Serialized,
     TaskRef)
 from galp.graph import load_step_by_key
-from galp.cache import CacheStack
+from galp.store import Store
 from galp.result import Result, Ok
 from galp.utils import collect_args
 
@@ -53,7 +53,7 @@ def create_app(endpoints: dict[str, TaskNode], store: str) -> Flask:
     app = Flask(__name__)
     app.galp = { # type: ignore[attr-defined]
             'endpoints': endpoints,
-            'store': CacheStack(store, TaskSerializer)
+            'store': Store(store, TaskSerializer)
             }
 
     @app.route('/')
