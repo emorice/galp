@@ -295,7 +295,6 @@ class Worker:
                 raise NonFatalTaskError(inputs.error)
             args, kwargs = inputs.value
 
-            logging.info('Executing step %s (%s)', name, step_name)
 
             try:
                 step = load_step_by_key(step_name)
@@ -303,6 +302,12 @@ class Worker:
                 logging.exception('No such step known to worker: %s', step_name)
                 raise NonFatalTaskError from exc
 
+            # Put the task definition in store as soon as we've validated the
+            # step and inputs. This allows to start interactive debugging from
+            # just the task name is execution fails.
+            self.store.put_task_def(task_def)
+
+            logging.info('Executing step %s (%s)', name, step_name)
             # This may block for a long time, by design
             try:
                 with set_path(self.store.dirpath, name.hex()):
@@ -312,8 +317,7 @@ class Worker:
                 step_name, name)
                 raise NonFatalTaskError from exc
 
-            # Store the result back, along with the task definition
-            self.store.put_task_def(task_def)
+            # Store the result back
             result_ref = self.store.put_native(name, result, task_def.scatter)
 
             return job.write_reply(Ok(result_ref))
@@ -322,7 +326,7 @@ class Worker:
             # All raises include exception logging so it's safe to discard the
             # exception here
             return job.write_reply(gr.RemoteError(
-                f'Failed to execute task {task_def}, check worker logs'
+                f'Failed to execute task {step_name} [{name.hex()}], check worker logs'
                 ))
         except Exception as exc:
             # Ensures we log as soon as the error happens. The exception may be

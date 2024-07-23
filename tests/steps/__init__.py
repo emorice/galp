@@ -113,6 +113,13 @@ def raises_error():
     """
     return 1 / 0
 
+@export.step
+def divide(num, den):
+    """
+    Division, errors when den is 0
+    """
+    return num / den
+
 @export(items=3)
 def light_syntax():
     """

@@ -9,6 +9,7 @@ from .client import Client, TaskFailedError
 from .graph import Block, StepSet, query
 from .default_resources import resources
 from .context import new_path
+from .utils import prepare_task
 from . import steps
 
 def run(*tasks, **options):

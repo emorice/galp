@@ -23,7 +23,7 @@ add_parser_arguments(parser)
 args = parser.parse_args()
 galp.cli.setup('dashboard', args.log_level)
 
-app = create_app(vars(args))
+app = create_app(**vars(args))
 
 with make_server('', args.port, app) as httpd:
     print("Serving HTTP on port", args.port, flush=True)

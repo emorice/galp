@@ -240,3 +240,31 @@ async def test_missing_argument(client):
         with pytest.raises(TypeError) as err:
             await client.run(gts.arange, dry_run=True)
         print(err)
+
+async def test_rerun_local(client, tmp_path):
+    """
+    Re-run a failed task in current interpreter
+    """
+    zero_task = gts.divide(0, den=1) # 0 / 1, ok
+    bad_task = gts.divide(1, zero_task) # 1 / 0, error
+
+    async with timeout(3):
+        ret, = await client.collect(zero_task)
+        assert ret == 0.
+        with pytest.raises(galp.TaskFailedError) as exc:
+            await client.collect(bad_task)
+        # ensure the full task name is printed out
+        assert bad_task.name.hex() in str(exc)
+
+    # Good task, inspect args and reproduce result
+    run_ok = galp.prepare_task(zero_task.name, store_path=str(tmp_path))
+    assert run_ok.args == (0,)
+    assert run_ok.keywords == {'den': 1}
+    assert run_ok() == 0.0
+
+    # Bad task, inspect args and reproduce error
+    run_bad = galp.prepare_task(bad_task.name, store_path=str(tmp_path))
+    assert run_bad.args == (1, 0.0)
+    assert run_bad.keywords == {}
+    with pytest.raises(ZeroDivisionError):
+        run_bad()

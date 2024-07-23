@@ -17,7 +17,7 @@ from galp.task_types import (TaskSerializer, TaskNode, CoreTaskDef, Serialized,
 from galp.graph import load_step_by_key
 from galp.cache import CacheStack
 from galp.result import Result, Ok
-from galp.query import collect_task_inputs
+from galp.utils import collect_args
 
 def render_object(obj):
     """
@@ -90,7 +90,7 @@ def create_app(endpoints: dict[str, TaskNode], store: str) -> Flask:
         if isinstance(task_def, CoreTaskDef):
             step = load_step_by_key(task_def.step)
             if step.is_view:
-                args, kwargs = collect_args(store, task)
+                args, kwargs = collect_args(store, task, task_def)
 
                 # Run the step
                 result = step.function(*args, **kwargs)
@@ -100,28 +100,3 @@ def create_app(endpoints: dict[str, TaskNode], store: str) -> Flask:
 
         return 'Neither a view nor an object in store'
     return app
-
-def collect_args(store: CacheStack, task: TaskNode) -> tuple[list, dict]:
-    """
-    Re-use client logic to parse the graph and sort out which pieces
-    need to be fetched from store
-    """
-    tdef = task.task_def
-    assert isinstance(tdef, CoreTaskDef)
-
-    ## Define how to fetch missing pieces (direct read from store)
-    def _exec(command: cm.Primitive) -> Result:
-        """Fulfill commands by reading from stores"""
-        if not isinstance(command, cm.Send):
-            raise NotImplementedError(command)
-        if not isinstance(command.request, Get):
-            raise NotImplementedError(command)
-        name = command.request.name
-        return Ok(store.get_serial(name))
-
-    ## Collect args from local and remote store.
-    args, kwargs = ga.run_command(
-            collect_task_inputs(task, tdef),
-            _exec).unwrap()
-
-    return args, kwargs
