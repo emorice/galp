@@ -1,10 +1,8 @@
 """
 Fixtures related to creating galp processes to interact with
 """
-import itertools
+import os
 import logging
-import subprocess
-import sys
 
 from contextlib import (ExitStack, contextmanager, AsyncExitStack,
         asynccontextmanager)
@@ -15,36 +13,26 @@ import psutil
 import galp.worker
 
 @pytest.fixture
-def port():
-    # TODO: these ports could be in use
-    ports = itertools.count(48652)
-
-    def _next_port(ports=ports):
-        return next(ports)
-
-    return _next_port
-
-def log_level():
-    return logging.getLevelName(logging.getLogger().level).lower()
-
-@pytest.fixture
-def make_worker(port, tmp_path):
+def make_worker(tmp_path):
     """Worker fixture, starts a worker in background.
 
     Returns:
         (endpoint, psutil Process) tuple
     """
+    _count = [0]
 
     @contextmanager
     def _make_one(endpoint=None):
         if endpoint is None:
-            endpoint = f"tcp://127.0.0.1:{port()}"
+            endpoint = f'ipc://@galp_test_wk_{os.getpid()}_{_count[0]}'
+            _count[0] += 1
+        log_level = logging.getLevelName(logging.getLogger().level).lower()
 
         pid = galp.worker.fork({
             'config': 'tests/config.toml',
-            'log-level': log_level(),
+            'log-level': log_level,
             'endpoint': endpoint,
-            'store': str(tmp_path)})
+            'store': tmp_path})
         process = psutil.Process(pid)
 
         yield endpoint, process
@@ -66,12 +54,12 @@ def make_worker(port, tmp_path):
 @asynccontextmanager
 async def _make_set(**kwargs):
     """
-    Start and stop a broker+pool, yields endpoint and pool
+    Start and stop a broker+pool, yields LocalSystem object
     """
     gls = galp.LocalSystem(**kwargs)
     try:
         await gls.start()
-        yield gls.endpoint, gls.pool
+        yield gls
     finally:
         await gls.stop()
 

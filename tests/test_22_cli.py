@@ -36,7 +36,7 @@ async def test_cli_run(galp_set_one):
     """
     Start a client on the command line and run a task
     """
-    endpoint, _ = galp_set_one
+    endpoint = galp_set_one.endpoint
 
     out = await run(f'python3 -m galp.client -e {endpoint} tests.steps hello')
 
@@ -46,7 +46,7 @@ async def test_cli_run_noprint(galp_set_one):
     """
     Client on cli without echoing
     """
-    endpoint, _ = galp_set_one
+    endpoint = galp_set_one.endpoint
 
     out = await run(f'python3 -m galp.client -q -e {endpoint} tests.steps hello')
 
@@ -56,7 +56,7 @@ async def test_cli_run_empty(galp_set_one):
     """
     Start a client on the command line and run a task
     """
-    endpoint, _ = galp_set_one
+    endpoint = galp_set_one.endpoint
 
     out = await run(f'python3 -m galp.client -e {endpoint} tests.steps empty --log-level=info')
 
