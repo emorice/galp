@@ -35,7 +35,6 @@ from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import collect_task_inputs
 from galp.graph import load_step_by_key, NoSuchStep
 from galp.task_types import TaskRef
-from galp.profiler import Profiler
 from galp.net_store import handle_get, handle_stat, handle_upload
 from galp.net.core.dump import add_request_id, Writer
 from galp.asyn import filter_commands
@@ -95,8 +94,6 @@ def limit_task_resources(resources: gtt.Resources):
 def make_worker_init(config):
     """Prepare a worker factory function. Must be called in main thread.
 
-    This involves parsing the config and loading plug-in steps.
-
     Args:
         args: an object whose attributes are the the parsed arguments, as
             returned by argparse.ArgumentParser.parse_args.
@@ -106,7 +103,7 @@ def make_worker_init(config):
     galp.cli.set_sync_handlers()
     limit_resources(config.get('vm'), config.get('cpus_per_task'))
 
-    # Parse configuration
+    # Open store
     setup = load_config(config,
             mandatory=['endpoint', 'store']
             )
@@ -158,7 +155,6 @@ class Worker:
                 make_stack(on_message, name='BK'),
                 setup['endpoint'], zmq.DEALER # pylint: disable=no-member
                 )
-        self.profiler = Profiler(setup.get('profile'))
         self.mission = setup.get('mission', b'')
         self.store = setup['store']
         self.script = cm.Script()
@@ -311,7 +307,7 @@ class Worker:
             # This may block for a long time, by design
             try:
                 with set_path(self.store.dirpath, name.hex()):
-                    result = self.profiler.wrap(name, step)(*args, **kwargs)
+                    result = step.function(*args, **kwargs)
             except Exception as exc:
                 logging.exception('Submitted task step failed: %s [%s]',
                 step_name, name)

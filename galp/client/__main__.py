@@ -49,7 +49,7 @@ async def run(target):
             client = await stack.enter_async_context(
                 galp.local_system(**{
                     k: getattr(args, k)
-                    for k in ['config', 'log_level', 'store', 'pool_size',
+                    for k in ['log_level', 'store', 'pool_size',
                     'pin_workers']
                     })
                 )

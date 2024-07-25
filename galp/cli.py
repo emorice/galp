@@ -9,14 +9,12 @@ import asyncio
 import logging
 import signal
 
-import galp.config
 from galp.result import Error
 
 def add_parser_arguments(parser):
     """Add generic arguments to the given parser"""
     parser.add_argument('--log-level',
         help='specify logging level (warning, info, debug)')
-    galp.config.add_config_argument(parser)
 
 def setup(name, loglevel=None):
     """

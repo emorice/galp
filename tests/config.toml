@@ -1,3 +1,0 @@
-[profile]
-dir = "/tmp/galp_prof"
-steps = [ "profile_me$" ]

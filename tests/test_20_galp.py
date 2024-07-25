@@ -187,19 +187,6 @@ async def test_inline(client):
 
     assert ans == [11, 11]
 
-async def test_profiling(client):
-    """Tests the integrated python profiler"""
-    task = gts.profile_me(27)
-    ans = await asyncio.wait_for(client.collect(task), 3)
-    assert ans == [196418]
-
-    path = '/tmp/galp_prof/' + task.name.hex() + '.profile'
-
-    assert os.path.isfile(path)
-
-    stats = pstats.Stats(path)
-    stats.print_stats()
-
 async def test_npserializer(client):
     """Tests fetching a non-standard type"""
     task = gts.arange(10)

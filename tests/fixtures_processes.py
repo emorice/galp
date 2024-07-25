@@ -29,8 +29,7 @@ def make_worker(tmp_path):
         log_level = logging.getLevelName(logging.getLogger().level).lower()
 
         pid = galp.worker.fork({
-            'config': 'tests/config.toml',
-            'log-level': log_level,
+            'log_level': log_level,
             'endpoint': endpoint,
             'store': tmp_path})
         process = psutil.Process(pid)
