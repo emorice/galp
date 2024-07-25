@@ -19,10 +19,14 @@ class LocalSystem:
 
     Tries to pass on the current default log level to the forked processes.
     """
+
+    _instances = 0 # To generate unique endpoint names
+
     def __init__(self, pool_size=1, pin_workers=False, **worker_options):
         self._stack = AsyncExitStack()
 
-        endpoint = f'ipc://@galp_wk_{os.getpid()}'
+        endpoint = f'ipc://@galp_{os.getpid()}_{self._instances}'
+        LocalSystem._instances += 1
         self.endpoint = endpoint
 
         self._broker = Broker(
@@ -37,6 +41,7 @@ class LocalSystem:
         if 'log_level' not in self._pool_config:
             self._pool_config['log_level'] = logging.getLogger().level
 
+        self.pool = None
         self.client = None
 
     async def start(self) -> Client:
@@ -50,7 +55,7 @@ class LocalSystem:
         await self._stack.enter_async_context(
             background(self._broker.run())
             )
-        self._stack.enter_context(
+        self.pool = self._stack.enter_context(
             _spawn_pool(self._pool_config)
             )
         self.client =  Client(self.endpoint)
@@ -66,7 +71,7 @@ class LocalSystem:
 @contextmanager
 def _spawn_pool(config):
     popen = galp.pool.spawn(config)
-    yield
+    yield popen
     popen.terminate()
     popen.wait()
 

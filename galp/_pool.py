@@ -267,6 +267,10 @@ def make_cli(config):
                 if val:
                     args.append('--config')
                     args.append(val)
+            case 'vm':
+                if val:
+                    args.append('--vm')
+                    args.append(val)
             case _:
                 raise ValueError(f'Argument {key} is not supported by the pool'
                     'spawn entry point')

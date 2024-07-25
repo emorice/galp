@@ -6,7 +6,8 @@ import logging
 import subprocess
 import sys
 
-from contextlib import ExitStack, contextmanager
+from contextlib import (ExitStack, contextmanager, AsyncExitStack,
+        asynccontextmanager)
 
 import pytest
 import psutil
@@ -25,33 +26,6 @@ def port():
 
 def log_level():
     return logging.getLevelName(logging.getLogger().level).lower()
-
-@pytest.fixture
-def make_process():
-    """Worker fixture, starts a worker pool in background.
-
-    Returns:
-        (endpoint, Popen) tuple
-    """
-    phandles = []
-
-    def _make(*arg_list):
-        phandle = subprocess.Popen([
-            sys.executable,
-            *arg_list
-            ])
-        phandles.append(phandle)
-
-        return phandle
-
-    yield _make
-
-    for phandle in phandles:
-        try:
-            phandle.terminate()
-            phandle.wait()
-        except ProcessLookupError:
-            pass
 
 @pytest.fixture
 def make_worker(port, tmp_path):
@@ -89,64 +63,33 @@ def make_worker(port, tmp_path):
             return stack.enter_context(_make_one(endpoint))
         yield _make
 
-@pytest.fixture
-def make_pool(make_process, port, tmp_path):
-    """Pool fixture, starts a worker pool in background.
-
-    Returns:
-        (endpoint, Popen) tuple
+@asynccontextmanager
+async def _make_set(**kwargs):
     """
-    def _make(endpoint=None, extra_args=[]):
-        if endpoint is None:
-            endpoint = f"tcp://127.0.0.1:{port()}"
-
-        phandle = make_process(
-            '-m', 'galp.pool',
-            '-c', 'tests/config.toml',
-            '--log-level', log_level(),
-            endpoint,
-            '--store', str(tmp_path),
-            *extra_args
-            )
-
-        return endpoint, phandle
-
-    return _make
+    Start and stop a broker+pool, yields endpoint and pool
+    """
+    gls = galp.LocalSystem(**kwargs)
+    try:
+        await gls.start()
+        yield gls.endpoint, gls.pool
+    finally:
+        await gls.stop()
 
 @pytest.fixture
-def make_broker(make_process, port, tmp_path):
-    """Broker fixture, starts a broker in background.
+async def make_galp_set(tmp_path):
+    """
+    A set of one broker, one pool manager and up to n connected workers
 
     Returns:
-        (endpoint, Popen) tuple
+        (client_endpoint, pool_handle)
     """
-    def _make(pool_size=1):
-        endpoint = f"tcp://127.0.0.1:{port()}"
-
-        phandle = make_process(
-            '-m', 'galp.broker',
-            '--log-level', log_level(),
-            endpoint, str(pool_size)
-            )
-        return endpoint, phandle
-
-    return _make
-
-@pytest.fixture
-def make_galp_set(make_broker, make_pool):
-    """
-    A set of one broker, one pool manager and n connected workers
-
-    Returns:
-        (client_endpoint, (broker_handle, pool_handle))
-    """
-    def _make(pool_size, extra_pool_args=[]):
-        endpoint, broker_handle = make_broker(pool_size)
-        ep2, pool_handle = make_pool(endpoint, extra_args=extra_pool_args)
-        assert endpoint == ep2
-        return endpoint, (broker_handle, pool_handle)
-
-    return _make
+    async with AsyncExitStack() as stack:
+        async def _make(pool_size, extra_pool_args=None):
+            return await stack.enter_async_context(
+                _make_set(store=tmp_path, pool_size=pool_size,
+                    **(extra_pool_args or {}))
+                )
+        yield _make
 
 @pytest.fixture
 def worker(make_worker):
@@ -156,15 +99,15 @@ def worker(make_worker):
     return make_worker()
 
 @pytest.fixture
-def galp_set_one(make_galp_set):
+async def galp_set_one(make_galp_set):
     """
     A set including a single worker
     """
-    return make_galp_set(1)
+    return await make_galp_set(1)
 
 @pytest.fixture
-def galp_set_many(make_galp_set):
+async def galp_set_many(make_galp_set):
     """
-    A set including 10 workers
+    A set including at most 10 workers
     """
-    return make_galp_set(10)
+    return await make_galp_set(10)

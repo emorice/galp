@@ -83,17 +83,16 @@ async def test_missing_step_error(client):
         await asyncio.wait_for(client.collect(missing()), 3)
 
 @pytest.mark.parametrize('sig', [signal.SIGINT, signal.SIGTERM])
-async def test_signals_busyloop(client, galp_set_one, sig):
+async def test_signals_busyloop(client_and_handle, sig):
     """Tests that worker terminate on signal when stuck in busy loop"""
-    client_endoint, all_handles = galp_set_one
-    broker_handle, pool_handle = all_handles
+    client, pool_handle = client_and_handle
 
     # This is only supposed to kill the pool and its one child
     handles = [pool_handle]
 
     task = gts.busy_loop()
 
-    bg = asyncio.create_task(client.collect(task))
+    background = asyncio.create_task(client.collect(task))
 
     #FIXME: we should wait for the DOING message instead
     await asyncio.sleep(1)
@@ -116,12 +115,12 @@ async def test_signals_busyloop(client, galp_set_one, sig):
         handle.send_signal(sig)
 
     # Check everyone died
-    gone, alive = psutil.wait_procs(processes + children, timeout=4)
+    _gone, alive = psutil.wait_procs(processes + children, timeout=4)
     assert not alive
 
-    bg.cancel()
+    background.cancel()
     try:
-        await bg
+        await background
     except asyncio.CancelledError:
         pass
 
@@ -213,8 +212,8 @@ async def test_vmlimit(make_galp_set, make_client):
     """
     Worker  fails tasks if going above virtual memory limit
     """
-    unlimited_ep, _ = make_galp_set(1)
-    limited_ep, _ = make_galp_set(1, extra_pool_args=['--vm', '2G'])
+    unlimited_ep, _ = await make_galp_set(1)
+    limited_ep, _ = await make_galp_set(1, extra_pool_args={'vm': '2G'})
 
     unlimited_client = make_client(unlimited_ep)
     limited_client = make_client(limited_ep)

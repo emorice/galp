@@ -13,10 +13,22 @@ def make_client():
     return _make
 
 @pytest.fixture
-def client(make_client, galp_set_one):
+async def client(tmp_path):
     """A client connected to a pool with one worker through a broker"""
-    endpoint, _ = galp_set_one
-    return make_client(endpoint)
+    async with galp.local_system(store=tmp_path) as the_client:
+        yield the_client
+
+@pytest.fixture
+async def client_and_handle(tmp_path):
+    """A client connected to a pool with one worker through a broker
+
+    Yields:
+        (Client, subprocess.Popen)
+    """
+    system = galp.LocalSystem(store=tmp_path)
+    await system.start()
+    yield system.client, system.pool
+    await system.stop()
 
 @pytest.fixture
 def client_pool(make_client, galp_set_many):
@@ -37,9 +49,9 @@ def client_pair(galp_set_one, make_client):
     return c1, c2
 
 @pytest.fixture
-def disjoined_client_pair(make_galp_set, make_client):
+async def disjoined_client_pair(make_galp_set, make_client):
     """A pair of clients connected to two different sets of galp processes with
     one worker in each"""
-    e1, _ = make_galp_set(1)
-    e2, _ = make_galp_set(1)
+    e1, _ = await make_galp_set(1)
+    e2, _ = await make_galp_set(1)
     return make_client(e1), make_client(e2)

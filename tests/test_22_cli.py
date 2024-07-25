@@ -4,8 +4,8 @@ Command line and file-oriented features.
 These bridge the gap with tools like make.
 """
 
+import asyncio
 import subprocess
-
 from async_timeout import timeout
 
 import pytest
@@ -13,61 +13,72 @@ import pytest
 import galp
 import tests.steps as gts
 
-def run(command):
+async def run(command):
     """
-    Run a subproces and returns its stdout, rstrip'ed
+    Run a subprocess and returns its stdout, rstrip'ed
     """
-    return subprocess.check_output(
-            command, shell=True, text=True, timeout=3
-            ).rstrip()
+    proc = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=None)
 
-def test_cli_run(galp_set_one):
+    async with timeout(3):
+        stdout, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(
+                returncode=proc.returncode,
+                cmd=command)
+    assert stderr is None
+    return stdout.decode().rstrip()
+
+async def test_cli_run(galp_set_one):
     """
     Start a client on the command line and run a task
     """
     endpoint, _ = galp_set_one
 
-    out = run(f'python3 -m galp.client -e {endpoint} tests.steps hello')
+    out = await run(f'python3 -m galp.client -e {endpoint} tests.steps hello')
 
     assert out == gts.hello.function()
 
-def test_cli_run_noprint(galp_set_one):
+async def test_cli_run_noprint(galp_set_one):
     """
     Client on cli without echoing
     """
     endpoint, _ = galp_set_one
 
-    out = run(f'python3 -m galp.client -q -e {endpoint} tests.steps hello')
+    out = await run(f'python3 -m galp.client -q -e {endpoint} tests.steps hello')
 
     assert out == ''
 
-def test_cli_run_empty(galp_set_one):
+async def test_cli_run_empty(galp_set_one):
     """
     Start a client on the command line and run a task
     """
     endpoint, _ = galp_set_one
 
-    out = run(f'python3 -m galp.client -e {endpoint} tests.steps empty --log-level=info')
+    out = await run(f'python3 -m galp.client -e {endpoint} tests.steps empty --log-level=info')
 
     assert out == '()'
 
-def test_cli_jobs(tmpdir):
+async def test_cli_jobs(tmpdir):
     """
     Start a pool from cli
     """
-    out = run(f'python3 -m galp.client -s {tmpdir} -j 2 galp.steps galp_hello '
+    out = await run(f'python3 -m galp.client -s {tmpdir} -j 2 galp.steps galp_hello '
         '--log-level=info --pin-workers')
 
     assert out == str(galp.steps.galp_hello.function())
 
-def test_cli_keep_going(tmpdir):
+async def test_cli_keep_going(tmpdir):
     """
     Start a failing job
     """
     with pytest.raises(subprocess.CalledProcessError):
-        _ = run(f'python3 -m galp.client -s {tmpdir} tests.steps suicide')
+        _ = await run(f'python3 -m galp.client -s {tmpdir} tests.steps suicide')
 
-    out = run(f'python3 -m galp.client -s {tmpdir} -k tests.steps suicide')
+    out = await run(f'python3 -m galp.client -s {tmpdir} -k tests.steps suicide')
     assert 'failed' in out.lower()
 
 async def test_path(client):
