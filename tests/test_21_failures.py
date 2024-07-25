@@ -4,6 +4,7 @@ Handle various common runtime failures nicely
 
 import asyncio
 import signal
+import cProfile
 
 import psutil
 
@@ -268,3 +269,18 @@ async def test_rerun_local(client, tmp_path):
     assert run_bad.keywords == {}
     with pytest.raises(ZeroDivisionError):
         run_bad()
+
+async def test_rerun_profile(client, tmp_path):
+    """
+    Re-run a task and profile it
+
+    This is arguably not really a test and more of a demo
+    """
+    task = gts.profile_me(27)
+
+    async with timeout(3):
+        ret, = await client.collect(task)
+        assert ret == 196418
+
+    run_it = galp.prepare_task(task.name, store_path=str(tmp_path))
+    cProfile.runctx('run()', globals(), {'run': run_it})
