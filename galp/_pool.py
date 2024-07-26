@@ -10,6 +10,7 @@ import signal
 import threading
 from contextlib import asynccontextmanager
 import subprocess
+import socket
 
 import psutil
 import zmq
@@ -22,6 +23,8 @@ from galp.protocol import make_stack
 from galp.net.core.dump import dump_message
 from galp.net.core.load import parse_core_message
 from galp.async_utils import background
+
+FORKSERVER_BUFSIZE = 4096
 
 class Pool:
     """
@@ -92,8 +95,9 @@ class Pool:
         """
         Starts a worker.
         """
-        self.forkserver_socket.send_multipart(dump_message(fork_msg))
-        b_pid = self.forkserver_socket.recv()
+        _key, buf = dump_message(fork_msg)
+        self.forkserver_socket.sendall(buf)
+        b_pid = self.forkserver_socket.recv(FORKSERVER_BUFSIZE)
         pid = int.from_bytes(b_pid, 'little')
 
         logging.info('Started worker %d', pid)
@@ -156,22 +160,22 @@ class Pool:
                 rpid, rexit = os.waitpid(pid, 0)
                 logging.info('Child %s exited with code %d', pid, rexit >> 8)
 
-def forkserver(config) -> None:
+def forkserver(sock_server, config) -> None:
     """
     A dedicated loop to fork workers on demand and return the pids.
 
     Start this in a clean new thread that does not have a running asyncio event
     loop or any state of the sort.
     """
-    socket = zmq.Context.instance().socket(zmq.PAIR) # pylint: disable=no-member
-    socket.connect('inproc://galp_forkserver')
-
     if config.get('pin_workers'):
         cpus = psutil.Process().cpu_affinity() or []
         assert cpus
 
     while True:
-        msg = parse_core_message(socket.recv_multipart())
+        buf = sock_server.recv(FORKSERVER_BUFSIZE)
+        if not buf:
+            break
+        msg = parse_core_message([gm.Fork.message_get_key(), buf])
         match msg:
             case Ok(gm.Fork() as fork):
                 _config = dict(config, mission=fork.mission,
@@ -189,25 +193,26 @@ def forkserver(config) -> None:
                     pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
                 else:
                     pid = galp.worker.fork(_config)
-                socket.send(pid.to_bytes(4, 'little'))
+                sock_server.sendall(pid.to_bytes(4, 'little'))
             case _:
                 break
+    sock_server.close()
 
 @asynccontextmanager
 async def run_forkserver(config):
     """
     Async context handler to start a forkserver thread.
     """
-    socket = zmq.Context.instance().socket(zmq.PAIR) # pylint: disable=no-member
-    socket.bind('inproc://galp_forkserver')
+    sock_server, sock_client = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
 
-    thread = threading.Thread(target=forkserver, args=(config,))
+    thread = threading.Thread(target=forkserver, args=(sock_server, config))
     thread.start()
 
     try:
-        yield socket
+        yield sock_client
     finally:
-        socket.send(b'')
+        sock_client.sendall(b'')
+        sock_client.close()
         thread.join()
 
 def on_signal(sig, pool):
