@@ -4,9 +4,7 @@ Steps related to the path provider feature
 
 import galp
 
-export = galp.Block()
-
-@export
+@galp.step
 def write_file(string):
     """
     Write to a unique file
@@ -20,7 +18,7 @@ def write_file(string):
 
     return path
 
-@export
+@galp.step
 def copy_file(path):
     """
     Transfer content to a new file
@@ -31,7 +29,7 @@ def copy_file(path):
             dst_stream.write(src_stream.read())
     return dst
 
-@export
+@galp.step
 def read_file(path):
     """
     Return content of an utf8 text file

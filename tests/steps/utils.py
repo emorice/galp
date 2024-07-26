@@ -4,9 +4,7 @@ Galp test steps used to build other steps
 
 import galp
 
-export = galp.Block()
-
-@export
+@galp.step
 def identity(arg):
     """
     Returns its arg unchanged
@@ -14,7 +12,7 @@ def identity(arg):
     print(arg)
     return arg
 
-@export
+@galp.step
 def get_cpus():
     """
     Return currently configured number of (openmp) threads

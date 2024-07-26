@@ -2,7 +2,6 @@
 General routines to build and operate on graphs of tasks.
 """
 import inspect
-import warnings
 import functools
 import logging
 
@@ -15,19 +14,19 @@ from galp.task_types import (StepType, TaskNode, CoreTaskDef, QueryTaskDef)
 
 MODULE_SEPARATOR: str = '::'
 
-def raise_if_bad_signature(step: 'Step', args, kwargs) -> None:
+def raise_if_bad_signature(stp: 'Step', args, kwargs) -> None:
     """
     Check arguments number and names so that we can fail when creating a step
     and not only when we run it
     """
     try:
-        inspect.signature(step.function).bind(*args, **kwargs)
+        inspect.signature(stp.function).bind(*args, **kwargs)
     except TypeError as exc:
         raise TypeError(
-                f'{step.function.__qualname__}() {str(exc)}'
+                f'{stp.function.__qualname__}() {str(exc)}'
                 ) from exc
 
-def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
+def make_core_task(stp: 'Step', args: list[Any], kwargs: dict[str, Any],
                    resources: gtt.ResourceClaim,
                    vtag: str | None = None, items: int | None = None,
                    ) -> TaskNode:
@@ -37,7 +36,7 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
     # Before anything else, type check the call. This ensures we don't wait
     # until actually trying to run the task to realize we're missing
     # arguments.
-    raise_if_bad_signature(step, args, kwargs)
+    raise_if_bad_signature(stp, args, kwargs)
 
     # Collect all arguments as nodes
     arg_inputs = []
@@ -55,7 +54,7 @@ def make_core_task(step: 'Step', args: list[Any], kwargs: dict[str, Any],
     tdef = {
             'args': arg_inputs,
             'kwargs': kwarg_inputs,
-            'step': step.key,
+            'step': stp.key,
             'vtags': ([ascii(vtag) ] if vtag is not None else []),
             'scatter':items,
             'resources': resources
@@ -145,66 +144,48 @@ class NoSuchStep(ValueError):
     No step with the given name has been registered
     """
 
-class Block:
-    """A collection of steps and bound arguments"""
-    def step(self, *decorated, **options):
-        """Decorator to make a function a step.
+def step(*decorated, **options):
+    """Decorator to make a function a step.
 
-        This has two effects:
-            * it makes the function a delayed function, so that calling it will
-              return an object pointing to the actual function, not actually
-              execute it. This object is the Task.
-            * it register the function and information about it in a event
-              namespace, so that it can be called from a key.
+    This has two effects:
+        * it makes the function a delayed function, so that calling it will
+          return an object pointing to the actual function, not actually
+          execute it. This object is the Task.
+        * it register the function and information about it in a event
+          namespace, so that it can be called from a key.
 
-        For convenience, the decorator can be applied in two fashions:
-        ```
-        @step
-        def foo():
-            pass
-        ```
-        or
-        ```
-        @step(param=value, ...)
-        def foo():
-            pass
-        ```
-        This is allowed because the decorator checks whether it was applied
-        directly to the function, or called with named arguments. In the second
-        case, note that arguments must be given by name for the call to be
-        unambiguous.
+    For convenience, the decorator can be applied in two fashions:
+    ```
+    @step
+    def foo():
+        pass
+    ```
+    or
+    ```
+    @step(param=value, ...)
+    def foo():
+        pass
+    ```
+    This is allowed because the decorator checks whether it was applied
+    directly to the function, or called with named arguments. In the second
+    case, note that arguments must be given by name for the call to be
+    unambiguous.
 
-        See Task for the possible options.
-        """
-        def _step_maker(function):
-            return Step(function, **options)
-
-        if decorated:
-            return _step_maker(*decorated)
-        return _step_maker
-
-    def view(self, *decorated, **options):
-        """
-        Shortcut to register a view step
-        """
-        options['is_view'] = True
-        return self.step(*decorated, **options)
-
-    def __call__(self, *decorated, **options):
-        """
-        Shortcut for StepSet.step
-        """
-        return self.step(*decorated, **options)
-
-class StepSet(Block):
+    See Task for the possible options.
     """
-    Obsolete alias for PipelineBlock
+    def _step_maker(function):
+        return Step(function, **options)
+
+    if decorated:
+        return _step_maker(*decorated)
+    return _step_maker
+
+def view(*decorated, **options):
     """
-    def __init__(self, *args, **kwargs):
-        warnings.warn(
-                'StepSet is now an alias to Block and will be removed in the future',
-                FutureWarning, stacklevel=2)
-        super().__init__(*args, **kwargs)
+    Shortcut to register a view step
+    """
+    options['is_view'] = True
+    return step(*decorated, **options)
 
 def query(subject: Any, query_doc: Any) -> TaskNode:
     """

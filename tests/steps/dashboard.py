@@ -8,11 +8,9 @@ import plotly.graph_objects as go # type: ignore[import]
 
 import galp
 
-export = galp.Block()
-
 # pylint: disable=redefined-outer-name
 
-@export.view
+@galp.view
 def plotly_figure():
     """
     View that returns a plotly figure object
@@ -24,14 +22,14 @@ def plotly_figure():
                 )
             )
 
-@export
+@galp.step
 def fortytwo():
     """
     Constant step
     """
     return 42
 
-@export.view
+@galp.view
 def view_with_arg(value):
     """
     View requiring the output of an other step

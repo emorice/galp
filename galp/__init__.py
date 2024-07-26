@@ -6,7 +6,7 @@ import asyncio
 from .local_system_utils import local_system, LocalSystem
 from .local_system_utils import temp_system, TempSystem
 from .client import Client, TaskFailedError
-from .graph import Block, StepSet, query
+from .graph import step, view, query
 from .default_resources import resources
 from .context import new_path
 from .utils import prepare_task

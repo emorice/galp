@@ -7,11 +7,9 @@ and make sure they are never called in prod.
 """
 import logging
 
-from galp.graph import Block
+from galp.graph import step
 
-export = Block()
-
-@export
+@step
 def getitem(obj, index):
     """
     Task representing obj[index]
@@ -21,7 +19,7 @@ def getitem(obj, index):
 # The steps below are mostly for testing, they should be moved somewhere else
 # ===
 
-@export.step
+@step
 def galp_hello():
     """
     Test step, to be removed
@@ -29,7 +27,7 @@ def galp_hello():
     logging.info('Task "Hello" running')
     return 42
 
-@export.step
+@step
 def galp_double(value=1):
     """
     Test step, to be removed
@@ -37,7 +35,7 @@ def galp_double(value=1):
     logging.info('Task "Double" running')
     return 2 * value
 
-@export.step
+@step
 def galp_sub(a, b): # pylint: disable=invalid-name # math like operator.sub
     """Computes a - b, trivial non commutative function"""
     return a - b

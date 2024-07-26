@@ -11,24 +11,19 @@ import numpy as np
 import pyarrow as pa # type: ignore[import]
 
 import galp
+from galp import step
 
 from . import utils, dashboard, files, query
 from .utils import identity
 
-export = galp.Block()
-
-# Alternative namespaces to register the same function several times
-_export2 = galp.Block()
-_export3 = galp.Block()
-
-@export.step
+@step
 def hello():
     """
     Takes no arguments, returns a constant, simplest step
     """
     return '6*7'
 
-@export.step()
+@step()
 def alt_decorator_syntax():
     """
     Step using a call to `step()` in the decorator
@@ -41,12 +36,12 @@ def tag_me():
     """
     return 'tagged'
 
-untagged = _export2.step(tag_me)
-tagged2 = _export3.step(vtag=1)(tag_me)
+untagged = step(tag_me)
+tagged2 = step(vtag=1)(tag_me)
 
 # Only this one can be called because it is re-bound to the true name. The other
 # two can only be used to test naming
-tag_me = export.step(vtag=0)(tag_me)
+tag_me = step(vtag=0)(tag_me)
 
 
 def naive_fib(n): # pylint: disable=invalid-name
@@ -57,26 +52,26 @@ def naive_fib(n): # pylint: disable=invalid-name
         return 1
     return naive_fib(n-1) + naive_fib(n-2)
 
-@export.step
+@step
 def profile_me(n): # pylint: disable=invalid-name
     """
     Wrapper around `naive_fib`
     """
     return naive_fib(n)
 
-@export.step
+@step
 def arange(n): # pylint: disable=invalid-name
     """Numpy return type"""
     return np.arange(n)
 
-@export.step
+@step
 def npsum(vect):
     """
     Numpy input but generic return type
     """
     return float(np.sum(vect))
 
-@export.step
+@step
 def some_table():
     """
     Pyarrow return type
@@ -86,7 +81,7 @@ def some_table():
         'y': [1.0, -0.0, 7]
         })
 
-@export.step(items=2)
+@step(items=2)
 def some_tuple():
     """
     Returns two resources that can be addressed separately
@@ -96,7 +91,7 @@ def some_tuple():
         10
     )
 
-@export.step(items=2)
+@step(items=2)
 def native_tuple():
     """
     Returns two resources that can be addressed separately
@@ -106,35 +101,35 @@ def native_tuple():
         14
     )
 
-@export.step
+@step
 def raises_error():
     """
     Never completes, raises a divide-by-zero error
     """
     return 1 / 0
 
-@export.step
+@step
 def divide(num, den):
     """
     Division, errors when den is 0
     """
     return num / den
 
-@export(items=3)
+@step(items=3)
 def light_syntax():
     """
     Uses directly the StepSet as a decorator
     """
     return 5, ("a", "b"), {'x': 7.}
 
-@export(items=2)
+@step(items=2)
 def raises_error_multiple():
     """
     Like raises_error, but returns an iterable handle
     """
     return True, 1 / 0
 
-@export
+@step
 def sleeps(secs, some_arg):
     """
     Sleeps for the given time and return the argument unchanged
@@ -142,21 +137,21 @@ def sleeps(secs, some_arg):
     time.sleep(secs)
     return some_arg
 
-@export
+@step
 def sum_variadic(*args):
     """
     Step that takes variadic positional args
     """
     return sum(args)
 
-@export
+@step
 def sum_variadic_dict(**kwargs):
     """
     Step that takes variadic keyword args
     """
     return sum(kwargs.values())
 
-@export
+@step
 def busy_loop():
     """
     Infinite pure python loop
@@ -164,7 +159,7 @@ def busy_loop():
     while True:
         pass
 
-@export
+@step
 def suicide(sig=signal.SIGKILL):
     """
     Steps that mocks a crash py sending a signal to its own process
@@ -184,7 +179,7 @@ class RefCounted: # pylint: disable=too-few-public-methods
     def __del__(self):
         RefCounted.count -= 1
         logging.info('Destroying refcounted object, counter now %d', RefCounted.count)
-@export
+@step
 def refcount(dummy, fail=True):
     """
     Create an instance of a reference-counted class and returns instance number
@@ -197,7 +192,7 @@ def refcount(dummy, fail=True):
         raise ValueError
     return obj.count
 
-@export
+@step
 def alloc_mem(N, dummy): # pylint: disable=invalid-name
     """
     Tries to alloc N bytes of memory
@@ -209,7 +204,7 @@ def alloc_mem(N, dummy): # pylint: disable=invalid-name
     logging.info('VM: %d', proc.memory_info().vms)
     return some_array.sum()
 
-@export
+@step
 def sum_dict(some_dict):
     """
     Sums the values in a dict, ignoring keys, by iteration
@@ -222,7 +217,7 @@ def sum_dict(some_dict):
 # Trivial empty target for CLI galp.client
 empty: list = []
 
-@export
+@step
 def meta(values):
     """
     A list of tasks
@@ -231,7 +226,7 @@ def meta(values):
         identity(value) for value in values
         ]
 
-@export
+@step
 def meta_meta(values):
     """
     More complicated meta graph involving a literal in between steps
@@ -241,7 +236,7 @@ def meta_meta(values):
         ]
     return meta(intermediate_list)
 
-@export
+@step
 def meta_error():
     """
     A valid meta step returning a task which itself fails
