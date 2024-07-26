@@ -15,9 +15,7 @@ import WDL.runtime
 
 import galp
 
-pbl = galp.Block()
-
-@pbl.step
+@galp.step
 def run(uri, **kwargs):
     """
     Wraps execution of a wdl workflow in a galp task
