@@ -3,12 +3,13 @@ Start and re-start processes, keep track of crashes and failed tasks
 """
 
 import os
+from os import write
 import sys
 import asyncio
 import logging
 import signal
 import threading
-from contextlib import asynccontextmanager
+from contextlib import contextmanager
 import subprocess
 import socket
 
@@ -36,11 +37,16 @@ class Pool:
             forwarded to the workers; and pool-specific options like pool size
             are still visible to the worker.
     """
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, broker_endpoint, forkserver_socket):
         self.pids = set()
-        self.signal = None
-        self.pending_signal = asyncio.Event()
+
+        # Self-pipe to receive signals
+        # The write end is non-blocking, to make sure we get an error and not a
+        # deadlock in the case (which should never happen) of signals filling
+        # the pipe.
+        # TODO: we should probably close the pipe after forking
+        self._signal_read_fd, self.signal_write_fd = os.pipe()
+        os.set_blocking(self.signal_write_fd, False)
 
         def on_message(_write, msg: gm.Message
                 ) -> list[TransportMessage] | Error:
@@ -52,41 +58,37 @@ class Pool:
                     return Error(f'Unexpected {msg}')
         stack = make_stack(on_message, name='BK')
         self.broker_transport = ZmqAsyncTransport(stack,
-            config['endpoint'], zmq.DEALER # pylint: disable=no-member
+            broker_endpoint, zmq.DEALER # pylint: disable=no-member
             )
 
-        self.forkserver_socket = None
+        self.forkserver_socket = forkserver_socket
 
-    def set_signal(self, sig):
-        """
-        Synchronously marks that a signal is pending
-        """
-        self.signal = sig
-        self.pending_signal.set()
 
     async def run(self):
         """
         Start one task to create and monitor each worker, along with the
         listening loop
         """
+        # Wrap pipe into an awaitable reader
+        signal_reader = asyncio.StreamReader()
+        await asyncio.get_event_loop().connect_read_pipe(
+                lambda: asyncio.StreamReaderProtocol(signal_reader),
+                open(self._signal_read_fd, 'rb', buffering=0) # pylint: disable=consider-using-with
+                )
         try:
             async with background(
                 self.broker_transport.listen_reply_loop()
                 ):
-                async with run_forkserver(self.config) as forkserver_socket:
-                    self.forkserver_socket = forkserver_socket
-
-                    await self.notify_ready()
-                    # TODO: are we sure there's no race condition here?
-                    while True:
-                        await self.pending_signal.wait()
-                        sig = self.signal
-                        if sig == signal.SIGCHLD:
-                            await self.check_deaths()
-                            self.pending_signal.clear()
-                        else:
-                            self.kill_all(sig)
-                            break
+                await self.notify_ready()
+                while True:
+                    _sig_b = await signal_reader.read(1)
+                    sig = signal.Signals(int.from_bytes(_sig_b, 'little'))
+                    logging.info('Received signal %s', sig)
+                    if sig == signal.SIGCHLD:
+                        await self.check_deaths()
+                    else:
+                        self.kill_all(sig)
+                        break
         except asyncio.CancelledError:
             self.kill_all()
             raise
@@ -128,18 +130,7 @@ class Pool:
                 if rpid not in self.pids:
                     logging.error('Ignoring exit of unknown child %s', rpid)
                     continue
-                rsig = rstatus & 0x7F
-                rdumped = rstatus & 0x80
-                rret = rstatus >> 8
-                if rsig:
-                    logging.error('Worker %s killed by signal %d (%s) %s', rpid,
-                            rsig,
-                            signal.strsignal(rsig),
-                            '(core dumped)' if rdumped else ''
-                            )
-                else:
-                    logging.error('Worker %s exited with code %s',
-                            rpid, rret)
+                log_child_exit(rpid, rstatus, logging.ERROR)
                 await self.notify_exit(rpid)
                 self.pids.remove(rpid)
 
@@ -158,7 +149,25 @@ class Pool:
             rpid = 0
             while not rpid:
                 rpid, rexit = os.waitpid(pid, 0)
-                logging.info('Child %s exited with code %d', pid, rexit >> 8)
+                log_child_exit(rpid, rexit)
+
+def log_child_exit(rpid, rstatus,
+        nosignal_level=logging.INFO, signal_level=logging.ERROR):
+    """
+    Parse and log exit status
+    """
+    rsig = rstatus & 0x7F
+    rdumped = rstatus & 0x80
+    rret = rstatus >> 8
+    if rsig:
+        logging.log(signal_level, 'Worker %s killed by signal %d (%s) %s', rpid,
+                rsig,
+                signal.strsignal(rsig),
+                '(core dumped)' if rdumped else ''
+                )
+    else:
+        logging.log(nosignal_level, 'Worker %s exited with code %s',
+                rpid, rret)
 
 def forkserver(sock_server, config) -> None:
     """
@@ -198,8 +207,8 @@ def forkserver(sock_server, config) -> None:
                 break
     sock_server.close()
 
-@asynccontextmanager
-async def run_forkserver(config):
+@contextmanager
+def run_forkserver(config):
     """
     Async context handler to start a forkserver thread.
     """
@@ -215,17 +224,6 @@ async def run_forkserver(config):
         sock_client.close()
         thread.join()
 
-def on_signal(sig, pool):
-    """
-    Signal handler, propagates it to the pool
-
-    Does not handle race conditions where a signal is received before the
-    previous is handled, but that should not be a problem: CHLD always does the
-    same thing and TERM or INT would supersede CHLD.
-    """
-    logging.info("Caught signal %d (%s)", sig, signal.strsignal(sig))
-    pool.set_signal(sig)
-
 def main(config):
     """
     Main process entry point
@@ -233,19 +231,25 @@ def main(config):
     galp.cli.setup(" pool ", config.get('log_level'))
     logging.info("Starting worker pool")
 
-    async def _amain(config):
-        pool = Pool(config)
+    async def _amain(config, forkserver_socket):
+        pool = Pool(config['endpoint'], forkserver_socket)
 
         loop = asyncio.get_event_loop()
+        # pool.signal_write_fd is non blocking, this will raise in the main code
+        # if the pipe overflows
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD):
-            loop.add_signal_handler(sig,
-                lambda sig=sig, pool=pool: on_signal(sig, pool)
-            )
+            loop.add_signal_handler(
+                    sig,
+                    lambda sig=sig, fd=pool.signal_write_fd: write(
+                        fd, sig.to_bytes(1, 'little')
+                        )
+                    )
 
         await pool.run()
 
         logging.info("Pool manager exiting")
-    asyncio.run(_amain(config))
+    with run_forkserver(config) as forkserver_socket:
+        asyncio.run(_amain(config, forkserver_socket))
     return 0
 
 def make_cli(config):
