@@ -60,7 +60,7 @@ class Pool:
                 ) -> list[TransportMessage] | Error:
             match msg:
                 case gm.Fork():
-                    self.start_worker(msg)
+                    socket_send_message(self.forkserver_socket, msg)
                     return []
                 case _:
                     return Error(f'Unexpected {msg}')
@@ -73,6 +73,7 @@ class Pool:
         self.forkserver_socket = forkserver_socket
 
 
+    # Main
     async def run(self):
         """
         Start one task to create and monitor each worker, along with the
@@ -89,27 +90,7 @@ class Pool:
             self.kill_all()
             raise
 
-    async def listen_signal_loop(self):
-        """Waits for signals"""
-        # Wrap pipe into an awaitable reader
-        signal_reader = asyncio.StreamReader()
-        await asyncio.get_event_loop().connect_read_pipe(
-                lambda: asyncio.StreamReaderProtocol(signal_reader),
-                open(self._signal_read_fd, 'rb', buffering=0) # pylint: disable=consider-using-with
-                )
-
-        while True:
-            _sig_b = await signal_reader.read(1)
-            sig = signal.Signals(int.from_bytes(_sig_b, 'little'))
-            logging.info('Received signal %s', sig)
-            if sig == signal.SIGCHLD:
-                await self.check_deaths()
-            elif sig in (signal.SIGINT, signal.SIGTERM):
-                self.kill_all(sig)
-                break
-            else:
-                logging.debug('Ignoring signal %s', sig)
-
+    # Proxy
     async def listen_forkserver(self):
         """Process messages from the forkserver"""
         while True:
@@ -125,12 +106,6 @@ class Pool:
                 case _:
                     raise ValueError(f'Unexpected {message}')
 
-    def start_worker(self, fork_msg: gm.Fork):
-        """
-        Starts a worker.
-        """
-        socket_send_message(self.forkserver_socket, fork_msg)
-
     async def notify_ready(self):
         """
         Sends a message back to broker to signal we joined, and with which cpus
@@ -138,7 +113,30 @@ class Pool:
         cpus = list(psutil.Process().cpu_affinity())
         await self.broker_transport.send_message(gm.PoolReady(cpus=cpus))
 
-    async def check_deaths(self):
+
+    # Pool
+    async def listen_signal_loop(self):
+        """Waits for signals"""
+        # Wrap pipe into an awaitable reader
+        signal_reader = asyncio.StreamReader()
+        await asyncio.get_event_loop().connect_read_pipe(
+                lambda: asyncio.StreamReaderProtocol(signal_reader),
+                open(self._signal_read_fd, 'rb', buffering=0) # pylint: disable=consider-using-with
+                )
+
+        while True:
+            _sig_b = await signal_reader.read(1)
+            sig = signal.Signals(int.from_bytes(_sig_b, 'little'))
+            logging.info('Received signal %s', sig)
+            if sig == signal.SIGCHLD:
+                self.check_deaths()
+            elif sig in (signal.SIGINT, signal.SIGTERM):
+                self.kill_all(sig)
+                break
+            else:
+                logging.debug('Ignoring signal %s', sig)
+
+    def check_deaths(self):
         """
         Check for children deaths and send messages to broker
         """

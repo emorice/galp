@@ -31,37 +31,82 @@ def send_multipart(sock: socket.socket, message: TransportMessage):
     if message:
         send_frame(sock, message[-1], send_more=False)
 
-def recv_exact(sock: socket.socket, size: int) -> bytes:
+def on_bytes(fixed):
     """
-    Naive fixed size reader
+    Generator yielding hints at how much data to read, accepting any number of bytes.
+    Forwards full frames to `fixed`, which yields the exact wanted size, and
+    accepts the corresponding full frame.
     """
     buf = b''
-    while len(buf) < size:
-        buf += sock.recv(size - len(buf))
-    return buf
+    size = fixed.send(None)
+    while True:
+        while len(buf) < size:
+            buf += yield size - len(buf)
+        frame, buf = buf[:size], buf[size:]
+        size = fixed.send(frame)
 
-def recv_frame(sock: socket.socket) -> tuple[bytes, bool]:
+def on_fixed(framed):
+    """Generator yielding number of exact bytes to read, accepting bytes
+    Forwards dynamically-sized frames and send-more bits to `framed`, which
+    accepts nothing
     """
-    Receives a single frame and send_more bit
-    """
+    framed.send(None)
+    while True:
+        buf = yield 4
+        header = int.from_bytes(buf, 'little')
+        size = header >> 1
+        send_more = bool(header & 1)
+        frame = yield size
+        framed.send((frame, send_more))
 
-    header = int.from_bytes(recv_exact(sock, 4), 'little')
-    size = header >> 1
-    send_more = bool(header & 1)
-    frame = recv_exact(sock, size)
-    return frame, send_more
+def on_frame(on_multipart):
+    """Generator yielding nothing, accepting frames and send-more flags.
+    Calls callback with each multipart message
+    """
+    while True:
+        message = []
+        send_more = True
+        while send_more:
+            frame, send_more = yield
+            message.append(frame)
+        on_multipart(message)
+
+def make_multipart_protocol(on_multipart):
+    """
+    Generator accepting yielding read length cues, accepting bytes, calling
+    on_multipart with each multipart message
+    """
+    return on_bytes(
+            on_fixed(
+                on_frame(
+                    on_multipart
+                    )
+                )
+            )
+
+class Done(BaseException):
+    """
+    Glue exception.
+
+    Works exactly like StopIteration, but is meant to voluntarily bubble up
+    through nested generators
+    """
+    def __init__(self, value):
+        self.value = value
 
 def recv_multipart(sock: socket.socket) -> TransportMessage:
     """
     Receives a multipart message
     """
-    message = []
-    send_more = True
-    while send_more:
-        frame, send_more = recv_frame(sock)
-        message.append(frame)
-    return message
-
+    def _on_multipart(message):
+        raise Done(message)
+    _on_bytes = make_multipart_protocol(_on_multipart)
+    size = _on_bytes.send(None)
+    while True:
+        try:
+            size = _on_bytes.send(sock.recv(size))
+        except Done as done:
+            return done.value
 
 # Asyncio copy-paste version, because every other solution is going to be much
 # more complicated than copy-pasting three functions
