@@ -36,16 +36,10 @@ class Pool:
             forwarded to the workers; and pool-specific options like pool size
             are still visible to the worker.
     """
-    def __init__(self, broker_endpoint, forkserver_socket):
+    def __init__(self, broker_endpoint, signal_read_fd, forkserver_socket):
         self.pids = set()
 
-        # Self-pipe to receive signals
-        # The write end is non-blocking, to make sure we get an error and not a
-        # deadlock in the case (which should never happen) of signals filling
-        # the pipe.
-        # TODO: we should probably close the pipe after forking
-        self._signal_read_fd, self.signal_write_fd = os.pipe()
-        os.set_blocking(self.signal_write_fd, False)
+        self._signal_read_fd = signal_read_fd
 
         def on_message(_write, msg: gm.Message
                 ) -> list[TransportMessage] | Error:
@@ -236,18 +230,22 @@ def main(config):
     galp.cli.setup(" pool ", config.get('log_level'))
     logging.info("Starting worker pool")
 
-    async def _amain(config, forkserver_socket):
-        pool = Pool(config['endpoint'], forkserver_socket)
+    # Self-pipe to receive signals
+    # The write end is non-blocking, to make sure we get an error and not a
+    # deadlock in the case (which should never happen) of signals filling
+    # the pipe.
+    # TODO: we should probably close the pipe after forking
+    signal_read_fd, signal_write_fd = os.pipe()
+    os.set_blocking(signal_write_fd, False)
+    signal.set_wakeup_fd(signal_write_fd, warn_on_full_buffer=True)
+    for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: None)
 
-        signal.set_wakeup_fd(pool.signal_write_fd, warn_on_full_buffer=True)
-        for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, lambda *_: None)
-
-        await pool.run()
-
-        logging.info("Pool manager exiting")
     with run_forkserver(config) as forkserver_socket:
-        asyncio.run(_amain(config, forkserver_socket))
+        pool = Pool(config['endpoint'], signal_read_fd, forkserver_socket)
+        asyncio.run(pool.run())
+        logging.info("Pool manager exiting")
+
     return 0
 
 def make_cli(config):
