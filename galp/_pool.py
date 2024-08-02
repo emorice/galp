@@ -8,6 +8,7 @@ import asyncio
 import logging
 import signal
 import threading
+import selectors
 from contextlib import contextmanager
 import subprocess
 import socket
@@ -24,8 +25,6 @@ from galp.protocol import make_stack
 from galp.net.core.dump import dump_message
 from galp.net.core.load import parse_core_message
 from galp.async_utils import background
-
-FORKSERVER_BUFSIZE = 4096
 
 def socket_send_message(sock: socket.socket, message: gm.Message):
     """Serialize and send galp message over sock"""
@@ -201,8 +200,8 @@ def forkserver(sock_server, config) -> None:
         cpus = psutil.Process().cpu_affinity() or []
         assert cpus
 
-    while True:
-        msg = socket_recv_message(sock_server)
+    def _on_multipart(frames):
+        msg = parse_core_message(frames)
         match msg:
             case Ok(gm.Fork() as fork):
                 _config = dict(config, mission=fork.mission,
@@ -222,7 +221,30 @@ def forkserver(sock_server, config) -> None:
                     pid = galp.worker.fork(_config)
                 socket_send_message(sock_server, gm.Ready(str(pid), b''))
             case _:
-                break
+                logging.error('Unexpected %s', msg)
+    multipart_reader = galp.socket_transport.make_multipart_generator(
+            _on_multipart
+            )
+    multipart_reader.send(None)
+
+    def _on_socket():
+        buf = sock_server.recv(4096)
+        if buf:
+            multipart_reader.send(buf)
+            return False
+        # Disconnect
+        return True
+
+    selector = selectors.DefaultSelector()
+    selector.register(sock_server, selectors.EVENT_READ, _on_socket)
+
+    leave = False
+    while not leave:
+        events = selector.select()
+        for key, _mask in events:
+            callback = key.data
+            leave = callback()
+
     sock_server.close()
 
 @contextmanager
@@ -238,8 +260,7 @@ def run_forkserver(config):
     try:
         yield sock_client, sock_server
     finally:
-        socket_send_message(sock_client, gm.Exited(''))
-        sock_client.close()
+        sock_client.close() # Forkserver will detect connection closed
         thread.join()
 
 def main(config):

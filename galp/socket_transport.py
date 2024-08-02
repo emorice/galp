@@ -71,17 +71,18 @@ def on_frame(on_multipart):
             message.append(frame)
         on_multipart(message)
 
-def make_multipart_generator():
+def _on_multipart(message):
+    raise Done(message)
+
+def make_multipart_generator(on_multipart=_on_multipart):
     """
     Generator accepting yielding read length cues, accepting bytes, calling
     on_multipart with each multipart message
     """
-    def _on_multipart(message):
-        raise Done(message)
     return on_bytes(
             on_fixed(
                 on_frame(
-                    _on_multipart
+                    on_multipart
                     )
                 )
             )
