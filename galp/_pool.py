@@ -189,44 +189,49 @@ def log_child_exit(rpid, rstatus,
         logging.log(noerror_level, 'Worker %s exited with code %s',
                 rpid, rret)
 
-def forkserver(sock_server, config) -> None:
+def on_socket_frames(frames, config, cpus, sock_server):
     """
-    A dedicated loop to fork workers on demand and return the pids.
+    Handler for messages proxied to forkserver
+    """
+    msg = parse_core_message(frames)
+    match msg:
+        case Ok(gm.Fork() as fork):
+            _config = dict(config, mission=fork.mission,
+                           cpus_per_task=fork.resources.cpus)
+            if _config.get('pin_workers'):
+                # We always pin to the first n cpus. This does not mean that
+                # we will actually execute on these ; cpu pins should be
+                # reset in the worker based on information from the broker
+                # at each task. Rather, it is a matter of having the right
+                # number of bits in the cpu mask when modules that inspect
+                # the mask are loaded, possibly even before the first task
+                # is run.
+                _cpus = cpus[:fork.resources.cpus]
+                logging.info('Pinning new worker to cpus %s', _cpus)
+                pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
+            else:
+                pid = galp.worker.fork(_config)
+            socket_send_message(sock_server, gm.Ready(str(pid), b''))
+        case _:
+            logging.error('Unexpected %s', msg)
 
-    Start this in a clean new thread that does not have a running asyncio event
-    loop or any state of the sort.
+def register_socket_handler(selector, config, sock_server):
     """
+    Initialize the handler for broker messages, which does the actual forking
+    work
+    """
+    cpus = []
     if config.get('pin_workers'):
-        cpus = psutil.Process().cpu_affinity() or []
+        cpus = psutil.Process().cpu_affinity()
         assert cpus
 
-    def _on_multipart(frames):
-        msg = parse_core_message(frames)
-        match msg:
-            case Ok(gm.Fork() as fork):
-                _config = dict(config, mission=fork.mission,
-                               cpus_per_task=fork.resources.cpus)
-                if _config.get('pin_workers'):
-                    # We always pin to the first n cpus. This does not mean that
-                    # we will actually execute on these ; cpu pins should be
-                    # reset in the worker based on information from the broker
-                    # at each task. Rather, it is a matter of having the right
-                    # number of bits in the cpu mask when modules that inspect
-                    # the mask are loaded, possibly even before the first task
-                    # is run.
-                    _cpus = cpus[:fork.resources.cpus]
-                    logging.info('Pinning new worker to cpus %s', _cpus)
-                    pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
-                else:
-                    pid = galp.worker.fork(_config)
-                socket_send_message(sock_server, gm.Ready(str(pid), b''))
-            case _:
-                logging.error('Unexpected %s', msg)
+    # Set up protocol
     multipart_reader = galp.socket_transport.make_multipart_generator(
-            _on_multipart
+            lambda frames: on_socket_frames(frames, config, cpus, sock_server)
             )
     multipart_reader.send(None)
 
+    # Connect transport
     def _on_socket():
         buf = sock_server.recv(4096)
         if buf:
@@ -234,9 +239,17 @@ def forkserver(sock_server, config) -> None:
             return False
         # Disconnect
         return True
-
-    selector = selectors.DefaultSelector()
     selector.register(sock_server, selectors.EVENT_READ, _on_socket)
+
+def forkserver(sock_server, config) -> None:
+    """
+    A dedicated loop to fork workers on demand and return the pids.
+
+    Start this in a clean new thread that does not have a running asyncio event
+    loop or any state of the sort.
+    """
+    selector = selectors.DefaultSelector()
+    register_socket_handler(selector, config, sock_server)
 
     leave = False
     while not leave:
