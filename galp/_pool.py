@@ -17,6 +17,7 @@ import zmq
 
 import galp.worker
 import galp.net.core.types as gm
+import galp.socket_transport as socket_transport
 from galp.result import Ok, Error
 from galp.zmq_async_transport import ZmqAsyncTransport, TransportMessage
 from galp.protocol import make_stack
@@ -92,8 +93,8 @@ class Pool:
         """
         Starts a worker.
         """
-        _key, buf = dump_message(fork_msg)
-        self.forkserver_socket.sendall(buf)
+        frames = dump_message(fork_msg)
+        socket_transport.send_multipart(self.forkserver_socket, frames)
         b_pid = self.forkserver_socket.recv(FORKSERVER_BUFSIZE)
         pid = int.from_bytes(b_pid, 'little')
 
@@ -180,10 +181,8 @@ def forkserver(sock_server, config) -> None:
         assert cpus
 
     while True:
-        buf = sock_server.recv(FORKSERVER_BUFSIZE)
-        if not buf:
-            break
-        msg = parse_core_message([gm.Fork.message_get_key(), buf])
+        frames = socket_transport.recv_multipart(sock_server)
+        msg = parse_core_message(frames)
         match msg:
             case Ok(gm.Fork() as fork):
                 _config = dict(config, mission=fork.mission,
@@ -211,7 +210,7 @@ def run_forkserver(config):
     """
     Async context handler to start a forkserver thread.
     """
-    sock_server, sock_client = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM, 0)
+    sock_server, sock_client = socket.socketpair()
 
     thread = threading.Thread(target=forkserver, args=(sock_server, config))
     thread.start()
@@ -219,7 +218,7 @@ def run_forkserver(config):
     try:
         yield sock_client
     finally:
-        sock_client.sendall(b'')
+        socket_transport.send_multipart(sock_client, [b''])
         sock_client.close()
         thread.join()
 
