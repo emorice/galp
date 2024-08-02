@@ -17,8 +17,8 @@ import zmq
 
 import galp.worker
 import galp.net.core.types as gm
-import galp.socket_transport as socket_transport
-from galp.result import Ok, Error
+import galp.socket_transport
+from galp.result import Result, Ok, Error
 from galp.zmq_async_transport import ZmqAsyncTransport, TransportMessage
 from galp.protocol import make_stack
 from galp.net.core.dump import dump_message
@@ -26,6 +26,18 @@ from galp.net.core.load import parse_core_message
 from galp.async_utils import background
 
 FORKSERVER_BUFSIZE = 4096
+
+def socket_send_message(sock: socket.socket, message: gm.Message):
+    """Serialize and send galp message over sock"""
+    return galp.socket_transport.send_multipart(sock, dump_message(message))
+
+def socket_recv_message(sock: socket.socket) -> Result[gm.Message]:
+    """Receive and deserialize galp message over sock"""
+    return parse_core_message(galp.socket_transport.recv_multipart(sock))
+
+async def async_socket_recv_message(sock: socket.socket) -> Result[gm.Message]:
+    """Receive and deserialize galp message over sock"""
+    return parse_core_message(await galp.socket_transport.async_recv_multipart(sock))
 
 class Pool:
     """
@@ -37,8 +49,10 @@ class Pool:
             forwarded to the workers; and pool-specific options like pool size
             are still visible to the worker.
     """
-    def __init__(self, broker_endpoint, signal_read_fd, forkserver_socket):
+    def __init__(self, broker_endpoint, signal_read_fd, forkserver_socket,
+            tmp_fk_sock):
         self.pids = set()
+        self.tmp_fk_sock = tmp_fk_sock # Temporatily give access to the forkserver write side
 
         self._signal_read_fd = signal_read_fd
 
@@ -55,6 +69,7 @@ class Pool:
             broker_endpoint, zmq.DEALER # pylint: disable=no-member
             )
 
+        forkserver_socket.setblocking(False)
         self.forkserver_socket = forkserver_socket
 
 
@@ -63,49 +78,68 @@ class Pool:
         Start one task to create and monitor each worker, along with the
         listening loop
         """
+        try:
+            async with background(
+                self.broker_transport.listen_reply_loop()
+                ):
+                async with background(self.listen_forkserver()):
+                    await self.notify_ready()
+                    await self.listen_signal_loop()
+        except asyncio.CancelledError:
+            self.kill_all()
+            raise
+
+    async def listen_signal_loop(self):
+        """Waits for signals"""
         # Wrap pipe into an awaitable reader
         signal_reader = asyncio.StreamReader()
         await asyncio.get_event_loop().connect_read_pipe(
                 lambda: asyncio.StreamReaderProtocol(signal_reader),
                 open(self._signal_read_fd, 'rb', buffering=0) # pylint: disable=consider-using-with
                 )
-        try:
-            async with background(
-                self.broker_transport.listen_reply_loop()
-                ):
-                await self.notify_ready()
-                while True:
-                    _sig_b = await signal_reader.read(1)
-                    sig = signal.Signals(int.from_bytes(_sig_b, 'little'))
-                    logging.info('Received signal %s', sig)
-                    if sig == signal.SIGCHLD:
-                        await self.check_deaths()
-                    elif sig in (signal.SIGINT, signal.SIGTERM):
-                        self.kill_all(sig)
-                        break
-                    else:
-                        logging.debug('Ignoring signal %s', sig)
-        except asyncio.CancelledError:
-            self.kill_all()
-            raise
+
+        while True:
+            _sig_b = await signal_reader.read(1)
+            sig = signal.Signals(int.from_bytes(_sig_b, 'little'))
+            logging.info('Received signal %s', sig)
+            if sig == signal.SIGCHLD:
+                await self.check_deaths()
+            elif sig in (signal.SIGINT, signal.SIGTERM):
+                self.kill_all(sig)
+                break
+            else:
+                logging.debug('Ignoring signal %s', sig)
+
+    async def listen_forkserver(self):
+        """Process messages from the forkserver"""
+        while True:
+            message = await async_socket_recv_message(self.forkserver_socket)
+            match message:
+                case Ok(gm.Ready(local_id=s_pid)):
+                    pid = int(s_pid)
+                    logging.info('Started worker %d', pid)
+                    self.pids.add(pid)
+                case _:
+                    raise ValueError(f'Unexpected {message}')
 
     def start_worker(self, fork_msg: gm.Fork):
         """
         Starts a worker.
         """
-        frames = dump_message(fork_msg)
-        socket_transport.send_multipart(self.forkserver_socket, frames)
-        b_pid = self.forkserver_socket.recv(FORKSERVER_BUFSIZE)
-        pid = int.from_bytes(b_pid, 'little')
+        socket_send_message(self.forkserver_socket, fork_msg)
+        #message = socket_recv_message(self.forkserver_socket).unwrap()
+        #assert isinstance(message, gm.Ready)
+        #pid = int(message.local_id)
 
-        logging.info('Started worker %d', pid)
+        #logging.info('Started worker %d', pid)
 
-        self.pids.add(pid)
+        #self.pids.add(pid)
 
     async def notify_exit(self, pid):
         """
         Sends a message back to broker to signal a worker died
         """
+        #socket_transport.send_multipart(self.tmp_fk_sock, dump_message(gm.Exited(peer=str(pid))))
         await self.broker_transport.send_message(gm.Exited(peer=str(pid)))
 
     async def notify_ready(self):
@@ -181,8 +215,7 @@ def forkserver(sock_server, config) -> None:
         assert cpus
 
     while True:
-        frames = socket_transport.recv_multipart(sock_server)
-        msg = parse_core_message(frames)
+        msg = socket_recv_message(sock_server)
         match msg:
             case Ok(gm.Fork() as fork):
                 _config = dict(config, mission=fork.mission,
@@ -200,7 +233,7 @@ def forkserver(sock_server, config) -> None:
                     pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
                 else:
                     pid = galp.worker.fork(_config)
-                sock_server.sendall(pid.to_bytes(4, 'little'))
+                socket_send_message(sock_server, gm.Ready(str(pid), b''))
             case _:
                 break
     sock_server.close()
@@ -216,9 +249,9 @@ def run_forkserver(config):
     thread.start()
 
     try:
-        yield sock_client
+        yield sock_client, sock_server
     finally:
-        socket_transport.send_multipart(sock_client, [b''])
+        socket_send_message(sock_client, gm.Exited(''))
         sock_client.close()
         thread.join()
 
@@ -240,8 +273,9 @@ def main(config):
     for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: None)
 
-    with run_forkserver(config) as forkserver_socket:
-        pool = Pool(config['endpoint'], signal_read_fd, forkserver_socket)
+    with run_forkserver(config) as (forkserver_socket, tmp_fk_sock):
+        pool = Pool(config['endpoint'], signal_read_fd, forkserver_socket,
+                tmp_fk_sock)
         asyncio.run(pool.run())
         logging.info("Pool manager exiting")
 

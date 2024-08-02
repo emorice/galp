@@ -2,6 +2,7 @@
 Framing utils to transfer multipart messages over a classical socket
 """
 import socket
+import asyncio
 
 from galp.writer import TransportMessage
 
@@ -58,5 +59,43 @@ def recv_multipart(sock: socket.socket) -> TransportMessage:
     send_more = True
     while send_more:
         frame, send_more = recv_frame(sock)
+        message.append(frame)
+    return message
+
+
+# Asyncio copy-paste version, because every other solution is going to be much
+# more complicated than copy-pasting three functions
+## s/def /async def async_/
+## s/sock.recv(/await asyncio.get_event_loop().sock_recv(sock, /
+## s/ recv/await async_recv
+
+async def async_recv_exact(sock: socket.socket, size: int) -> bytes:
+    """
+    Naive fixed size reader
+    """
+    buf = b''
+    while len(buf) < size:
+        buf += await asyncio.get_event_loop().sock_recv(sock, size - len(buf))
+    return buf
+
+async def async_recv_frame(sock: socket.socket) -> tuple[bytes, bool]:
+    """
+    Receives a single frame and send_more bit
+    """
+
+    header = int.from_bytes(await async_recv_exact(sock, 4), 'little')
+    size = header >> 1
+    send_more = bool(header & 1)
+    frame =await async_recv_exact(sock, size)
+    return frame, send_more
+
+async def async_recv_multipart(sock: socket.socket) -> TransportMessage:
+    """
+    Receives a multipart message
+    """
+    message = []
+    send_more = True
+    while send_more:
+        frame, send_more =await async_recv_frame(sock)
         message.append(frame)
     return message
