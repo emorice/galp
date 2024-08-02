@@ -119,6 +119,9 @@ class Pool:
                     pid = int(s_pid)
                     logging.info('Started worker %d', pid)
                     self.pids.add(pid)
+                case Ok(message):
+                    # Forward anything else to broker
+                    await self.broker_transport.send_message(message)
                 case _:
                     raise ValueError(f'Unexpected {message}')
 
@@ -127,20 +130,6 @@ class Pool:
         Starts a worker.
         """
         socket_send_message(self.forkserver_socket, fork_msg)
-        #message = socket_recv_message(self.forkserver_socket).unwrap()
-        #assert isinstance(message, gm.Ready)
-        #pid = int(message.local_id)
-
-        #logging.info('Started worker %d', pid)
-
-        #self.pids.add(pid)
-
-    async def notify_exit(self, pid):
-        """
-        Sends a message back to broker to signal a worker died
-        """
-        #socket_transport.send_multipart(self.tmp_fk_sock, dump_message(gm.Exited(peer=str(pid))))
-        await self.broker_transport.send_message(gm.Exited(peer=str(pid)))
 
     async def notify_ready(self):
         """
@@ -161,7 +150,7 @@ class Pool:
                     logging.error('Ignoring exit of unknown child %s', rpid)
                     continue
                 log_child_exit(rpid, rstatus, logging.ERROR)
-                await self.notify_exit(rpid)
+                socket_send_message(self.tmp_fk_sock, gm.Exited(peer=str(rpid)))
                 self.pids.remove(rpid)
 
     def kill_all(self, sig=signal.SIGTERM):
