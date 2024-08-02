@@ -71,15 +71,17 @@ def on_frame(on_multipart):
             message.append(frame)
         on_multipart(message)
 
-def make_multipart_protocol(on_multipart):
+def make_multipart_generator():
     """
     Generator accepting yielding read length cues, accepting bytes, calling
     on_multipart with each multipart message
     """
+    def _on_multipart(message):
+        raise Done(message)
     return on_bytes(
             on_fixed(
                 on_frame(
-                    on_multipart
+                    _on_multipart
                     )
                 )
             )
@@ -98,9 +100,7 @@ def recv_multipart(sock: socket.socket) -> TransportMessage:
     """
     Receives a multipart message
     """
-    def _on_multipart(message):
-        raise Done(message)
-    _on_bytes = make_multipart_protocol(_on_multipart)
+    _on_bytes = make_multipart_generator()
     size = _on_bytes.send(None)
     while True:
         try:
@@ -108,39 +108,16 @@ def recv_multipart(sock: socket.socket) -> TransportMessage:
         except Done as done:
             return done.value
 
-# Asyncio copy-paste version, because every other solution is going to be much
-# more complicated than copy-pasting three functions
-## s/def /async def async_/
-## s/sock.recv(/await asyncio.get_event_loop().sock_recv(sock, /
-## s/ recv/await async_recv
-
-async def async_recv_exact(sock: socket.socket, size: int) -> bytes:
-    """
-    Naive fixed size reader
-    """
-    buf = b''
-    while len(buf) < size:
-        buf += await asyncio.get_event_loop().sock_recv(sock, size - len(buf))
-    return buf
-
-async def async_recv_frame(sock: socket.socket) -> tuple[bytes, bool]:
-    """
-    Receives a single frame and send_more bit
-    """
-
-    header = int.from_bytes(await async_recv_exact(sock, 4), 'little')
-    size = header >> 1
-    send_more = bool(header & 1)
-    frame =await async_recv_exact(sock, size)
-    return frame, send_more
-
 async def async_recv_multipart(sock: socket.socket) -> TransportMessage:
     """
-    Receives a multipart message
+    Receives a multipart message, async flavor
     """
-    message = []
-    send_more = True
-    while send_more:
-        frame, send_more =await async_recv_frame(sock)
-        message.append(frame)
-    return message
+    loop = asyncio.get_event_loop()
+    _on_bytes = make_multipart_generator()
+    size = _on_bytes.send(None)
+    while True:
+        try:
+            buf = await loop.sock_recv(sock, size)
+            size = _on_bytes.send(buf)
+        except Done as done:
+            return done.value
