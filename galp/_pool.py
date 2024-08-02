@@ -3,7 +3,6 @@ Start and re-start processes, keep track of crashes and failed tasks
 """
 
 import os
-from os import write
 import sys
 import asyncio
 import logging
@@ -86,9 +85,11 @@ class Pool:
                     logging.info('Received signal %s', sig)
                     if sig == signal.SIGCHLD:
                         await self.check_deaths()
-                    else:
+                    elif sig in (signal.SIGINT, signal.SIGTERM):
                         self.kill_all(sig)
                         break
+                    else:
+                        logging.debug('Ignoring signal %s', sig)
         except asyncio.CancelledError:
             self.kill_all()
             raise
@@ -152,7 +153,7 @@ class Pool:
                 log_child_exit(rpid, rexit)
 
 def log_child_exit(rpid, rstatus,
-        nosignal_level=logging.INFO, signal_level=logging.ERROR):
+                   noerror_level=logging.INFO):
     """
     Parse and log exit status
     """
@@ -160,13 +161,17 @@ def log_child_exit(rpid, rstatus,
     rdumped = rstatus & 0x80
     rret = rstatus >> 8
     if rsig:
-        logging.log(signal_level, 'Worker %s killed by signal %d (%s) %s', rpid,
+        if rsig in (signal.SIGTERM, signal.SIGINT):
+            level = noerror_level
+        else:
+            level = logging.ERROR
+        logging.log(level, 'Worker %s killed by signal %d (%s) %s', rpid,
                 rsig,
                 signal.strsignal(rsig),
                 '(core dumped)' if rdumped else ''
                 )
     else:
-        logging.log(nosignal_level, 'Worker %s exited with code %s',
+        logging.log(noerror_level, 'Worker %s exited with code %s',
                 rpid, rret)
 
 def forkserver(sock_server, config) -> None:
@@ -234,16 +239,9 @@ def main(config):
     async def _amain(config, forkserver_socket):
         pool = Pool(config['endpoint'], forkserver_socket)
 
-        loop = asyncio.get_event_loop()
-        # pool.signal_write_fd is non blocking, this will raise in the main code
-        # if the pipe overflows
-        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD):
-            loop.add_signal_handler(
-                    sig,
-                    lambda sig=sig, fd=pool.signal_write_fd: write(
-                        fd, sig.to_bytes(1, 'little')
-                        )
-                    )
+        signal.set_wakeup_fd(pool.signal_write_fd, warn_on_full_buffer=True)
+        for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, lambda *_: None)
 
         await pool.run()
 
