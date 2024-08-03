@@ -118,7 +118,12 @@ async def async_recv_multipart(sock: socket.socket) -> TransportMessage:
     size = _on_bytes.send(None)
     while True:
         try:
-            buf = await loop.sock_recv(sock, size)
+            if size > 0:
+                buf = await loop.sock_recv(sock, size)
+                if not buf:
+                    raise EOFError
+            else:
+                buf = b''
             size = _on_bytes.send(buf)
         except Done as done:
             return done.value

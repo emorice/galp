@@ -26,37 +26,27 @@ from galp.net.core.dump import dump_message
 from galp.net.core.load import parse_core_message
 from galp.async_utils import background
 
+# Communication utils
+# ===================
+
 def socket_send_message(sock: socket.socket, message: gm.Message):
     """Serialize and send galp message over sock"""
     return galp.socket_transport.send_multipart(sock, dump_message(message))
-
-def socket_recv_message(sock: socket.socket) -> Result[gm.Message]:
-    """Receive and deserialize galp message over sock"""
-    return parse_core_message(galp.socket_transport.recv_multipart(sock))
 
 async def async_socket_recv_message(sock: socket.socket) -> Result[gm.Message]:
     """Receive and deserialize galp message over sock"""
     return parse_core_message(await galp.socket_transport.async_recv_multipart(sock))
 
-class Pool:
+# Proxying
+# ========
+
+class Proxy:
     """
-    A pool of worker processes.
-
-    Args:
-        config: pool and worker config. There is no distinction between the two,
-            any worker-specific option can be given to the pool and will be
-            forwarded to the workers; and pool-specific options like pool size
-            are still visible to the worker.
+    Proxy between unix socket and zmq
     """
-    def __init__(self, broker_endpoint, signal_read_fd, forkserver_socket,
-            tmp_fk_sock):
-        self.pids = set()
-        self.tmp_fk_sock = tmp_fk_sock # Temporatily give access to the forkserver write side
-
-        self._signal_read_fd = signal_read_fd
-
+    def __init__(self, broker_endpoint: str, forkserver_socket: socket.socket):
         def on_message(_write, msg: gm.Message
-                ) -> list[TransportMessage] | Error:
+                       ) -> list[TransportMessage] | Error:
             match msg:
                 case gm.Fork():
                     socket_send_message(self.forkserver_socket, msg)
@@ -71,101 +61,37 @@ class Pool:
         forkserver_socket.setblocking(False)
         self.forkserver_socket = forkserver_socket
 
-
     # Main
     async def run(self):
         """
         Start one task to create and monitor each worker, along with the
         listening loop
         """
-        try:
-            async with background(
-                self.broker_transport.listen_reply_loop()
-                ):
-                async with background(self.listen_forkserver()):
-                    await self.notify_ready()
-                    await self.listen_signal_loop()
-        except asyncio.CancelledError:
-            self.kill_all()
-            raise
-
-    # Proxy
-    async def listen_forkserver(self):
-        """Process messages from the forkserver"""
-        while True:
-            message = await async_socket_recv_message(self.forkserver_socket)
-            match message:
-                case Ok(gm.Ready(local_id=s_pid)):
-                    pid = int(s_pid)
-                    logging.info('Started worker %d', pid)
-                    self.pids.add(pid)
-                case Ok(message):
-                    # Forward anything else to broker
-                    await self.broker_transport.send_message(message)
-                case _:
-                    raise ValueError(f'Unexpected {message}')
-
-    async def notify_ready(self):
-        """
-        Sends a message back to broker to signal we joined, and with which cpus
-        """
         cpus = list(psutil.Process().cpu_affinity())
         await self.broker_transport.send_message(gm.PoolReady(cpus=cpus))
 
+        async with background(
+            self.broker_transport.listen_reply_loop()
+            ):
+            await self.listen_forkserver()
 
-    # Pool
-    async def listen_signal_loop(self):
-        """Waits for signals"""
-        # Wrap pipe into an awaitable reader
-        signal_reader = asyncio.StreamReader()
-        await asyncio.get_event_loop().connect_read_pipe(
-                lambda: asyncio.StreamReaderProtocol(signal_reader),
-                open(self._signal_read_fd, 'rb', buffering=0) # pylint: disable=consider-using-with
-                )
-
+    # Proxy
+    async def listen_forkserver(self) -> None:
+        """Process messages from the forkserver"""
         while True:
-            _sig_b = await signal_reader.read(1)
-            sig = signal.Signals(int.from_bytes(_sig_b, 'little'))
-            logging.info('Received signal %s', sig)
-            if sig == signal.SIGCHLD:
-                self.check_deaths()
-            elif sig in (signal.SIGINT, signal.SIGTERM):
-                self.kill_all(sig)
-                break
-            else:
-                logging.debug('Ignoring signal %s', sig)
+            try:
+                message = await async_socket_recv_message(self.forkserver_socket)
+            except EOFError:
+                return
+            match message:
+                case Ok(_message):
+                    # Forward anything else to broker
+                    await self.broker_transport.send_message(_message)
+                case _:
+                    raise ValueError(f'Unexpected {message}')
 
-    def check_deaths(self):
-        """
-        Check for children deaths and send messages to broker
-        """
-        rpid = True
-        while self.pids and rpid:
-            rpid, rstatus = os.waitpid(-1, os.WNOHANG)
-            if rpid:
-                if rpid not in self.pids:
-                    logging.error('Ignoring exit of unknown child %s', rpid)
-                    continue
-                log_child_exit(rpid, rstatus, logging.ERROR)
-                socket_send_message(self.tmp_fk_sock, gm.Exited(peer=str(rpid)))
-                self.pids.remove(rpid)
-
-    def kill_all(self, sig=signal.SIGTERM):
-        """
-        Kill all children and wait for them
-        """
-        logging.info('Sending %s to all remaining %s children',
-                sig, len(self.pids))
-        for pid in self.pids:
-            logging.debug('Sending %s to %s', sig, pid)
-            os.kill(pid, sig)
-            logging.debug('Sent %s to %s', sig, pid)
-        for pid in self.pids:
-            logging.info('Waiting for %s', pid)
-            rpid = 0
-            while not rpid:
-                rpid, rexit = os.waitpid(pid, 0)
-                log_child_exit(rpid, rexit)
+# Child process management
+# ========================
 
 def log_child_exit(rpid, rstatus,
                    noerror_level=logging.INFO):
@@ -189,7 +115,7 @@ def log_child_exit(rpid, rstatus,
         logging.log(noerror_level, 'Worker %s exited with code %s',
                 rpid, rret)
 
-def on_socket_frames(frames, config, cpus, sock_server):
+def on_socket_frames(frames, config, cpus, sock_server, pids):
     """
     Handler for messages proxied to forkserver
     """
@@ -212,10 +138,11 @@ def on_socket_frames(frames, config, cpus, sock_server):
             else:
                 pid = galp.worker.fork(_config)
             socket_send_message(sock_server, gm.Ready(str(pid), b''))
+            pids.add(pid)
         case _:
             logging.error('Unexpected %s', msg)
 
-def register_socket_handler(selector, config, sock_server):
+def register_socket_handler(selector, config, sock_server, pids):
     """
     Initialize the handler for broker messages, which does the actual forking
     work
@@ -227,7 +154,8 @@ def register_socket_handler(selector, config, sock_server):
 
     # Set up protocol
     multipart_reader = galp.socket_transport.make_multipart_generator(
-            lambda frames: on_socket_frames(frames, config, cpus, sock_server)
+            lambda frames: on_socket_frames(frames, config, cpus, sock_server,
+                                            pids)
             )
     multipart_reader.send(None)
 
@@ -241,7 +169,58 @@ def register_socket_handler(selector, config, sock_server):
         return True
     selector.register(sock_server, selectors.EVENT_READ, _on_socket)
 
-def forkserver(sock_server, config) -> None:
+def check_deaths(pids: set[int], sock_server: socket.socket) -> None:
+    """
+    Check for children deaths and send messages to broker
+    """
+    rpid = -1
+    while pids and rpid:
+        rpid, rstatus = os.waitpid(-1, os.WNOHANG)
+        if rpid:
+            if rpid not in pids:
+                logging.error('Ignoring exit of unknown child %s', rpid)
+                continue
+            log_child_exit(rpid, rstatus, logging.ERROR)
+            socket_send_message(sock_server, gm.Exited(peer=str(rpid)))
+            pids.remove(rpid)
+
+def kill_all(pids: set[int], sig: signal.Signals = signal.SIGTERM) -> None:
+    """
+    Kill all children and wait for them
+    """
+    logging.info('Sending %s to all remaining %s children',
+            sig, len(pids))
+    for pid in pids:
+        logging.debug('Sending %s to %s', sig, pid)
+        os.kill(pid, sig)
+        logging.debug('Sent %s to %s', sig, pid)
+    for pid in pids:
+        logging.info('Waiting for %s', pid)
+        rpid = 0
+        while not rpid:
+            rpid, rexit = os.waitpid(pid, 0)
+            log_child_exit(rpid, rexit)
+
+def register_signal_handler(selector, pids: set[int], signal_read_fd,
+                            sock_server) -> None:
+    """
+    Set up signal handler to monitor worker deaths
+    """
+    def _on_signal():
+        sig_b = os.read(signal_read_fd, 1)
+        sig = signal.Signals(int.from_bytes(sig_b, 'little'))
+        logging.info('FK Received signal %s', sig)
+        if sig == signal.SIGCHLD:
+            check_deaths(pids, sock_server)
+        elif sig in (signal.SIGINT, signal.SIGTERM):
+            kill_all(pids, sig)
+            return True
+        else:
+            logging.debug('Ignoring signal %s', sig)
+        return False
+    selector.register(signal_read_fd, selectors.EVENT_READ, _on_signal)
+
+def forkserver(sock_server, signal_read_fd, config) -> None:
     """
     A dedicated loop to fork workers on demand and return the pids.
 
@@ -249,7 +228,9 @@ def forkserver(sock_server, config) -> None:
     loop or any state of the sort.
     """
     selector = selectors.DefaultSelector()
-    register_socket_handler(selector, config, sock_server)
+    pids : set[int] = set()
+    register_socket_handler(selector, config, sock_server, pids)
+    register_signal_handler(selector, pids, signal_read_fd, sock_server)
 
     leave = False
     while not leave:
@@ -261,13 +242,14 @@ def forkserver(sock_server, config) -> None:
     sock_server.close()
 
 @contextmanager
-def run_forkserver(config):
+def run_forkserver(config, signal_read_fd):
     """
     Async context handler to start a forkserver thread.
     """
     sock_server, sock_client = socket.socketpair()
 
-    thread = threading.Thread(target=forkserver, args=(sock_server, config))
+    thread = threading.Thread(target=forkserver, args=(sock_server,
+                                                       signal_read_fd, config))
     thread.start()
 
     try:
@@ -275,6 +257,9 @@ def run_forkserver(config):
     finally:
         sock_client.close() # Forkserver will detect connection closed
         thread.join()
+
+# Entry point
+# ============
 
 def main(config):
     """
@@ -294,10 +279,9 @@ def main(config):
     for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: None)
 
-    with run_forkserver(config) as (forkserver_socket, tmp_fk_sock):
-        pool = Pool(config['endpoint'], signal_read_fd, forkserver_socket,
-                tmp_fk_sock)
-        asyncio.run(pool.run())
+    with run_forkserver(config, signal_read_fd) as (forkserver_socket, _tmp_fk_sock):
+        proxy = Proxy(config['endpoint'], forkserver_socket)
+        asyncio.run(proxy.run())
         logging.info("Pool manager exiting")
 
     return 0
