@@ -7,9 +7,7 @@ import sys
 import asyncio
 import logging
 import signal
-import threading
 import selectors
-from contextlib import contextmanager
 import subprocess
 import socket
 
@@ -137,7 +135,7 @@ def register_signal_handler(selector, pids: set[int], signal_read_fd,
     def _on_signal():
         sig_b = os.read(signal_read_fd, 1)
         sig = signal.Signals(int.from_bytes(sig_b, 'little'))
-        logging.info('FK Received signal %s', sig)
+        logging.info('Received signal %s', sig)
         if sig == signal.SIGCHLD:
             check_deaths(pids, sock_server)
         elif sig in (signal.SIGINT, signal.SIGTERM):
@@ -151,7 +149,7 @@ def register_signal_handler(selector, pids: set[int], signal_read_fd,
 # Listen socket and start workers
 # ===============================
 
-def on_socket_frames(frames, config, cpus, sock_server, pids):
+def on_socket_frames(frames, config, cpus, pids):
     """
     Handler for messages proxied to forkserver
     """
@@ -189,8 +187,7 @@ def register_socket_handler(selector, config, sock_server, pids):
 
     # Set up protocol
     multipart_reader = galp.socket_transport.make_multipart_generator(
-            lambda frames: on_socket_frames(frames, config, cpus, sock_server,
-                                            pids)
+            lambda frames: on_socket_frames(frames, config, cpus, pids)
             )
     multipart_reader.send(None)
 
@@ -228,22 +225,6 @@ def forkserver(sock_server, signal_read_fd, config) -> None:
 
     sock_server.close()
 
-@contextmanager
-def run_forkserver(config, signal_read_fd):
-    """
-    Async context handler to start a forkserver thread.
-    """
-    sock_server, sock_client = socket.socketpair()
-
-    thread = threading.Thread(target=forkserver, args=(sock_server,
-                                                       signal_read_fd, config))
-    thread.start()
-
-    try:
-        yield sock_client, sock_server
-    finally:
-        sock_client.close() # Forkserver will detect connection closed
-        thread.join()
 
 # Entry point
 # ============
@@ -255,22 +236,29 @@ def main(config):
     galp.cli.setup(" pool ", config.get('log_level'))
     logging.info("Starting worker pool")
 
-    # Self-pipe to receive signals
-    # The write end is non-blocking, to make sure we get an error and not a
-    # deadlock in the case (which should never happen) of signals filling
-    # the pipe.
-    # TODO: we should probably close the pipe after forking
-    signal_read_fd, signal_write_fd = os.pipe()
-    os.set_blocking(signal_write_fd, False)
-    signal.set_wakeup_fd(signal_write_fd, warn_on_full_buffer=True)
-    for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, lambda *_: None)
+    # Socket pair forkserver <> proxy
+    sock_server, sock_client = socket.socketpair()
 
-    with run_forkserver(config, signal_read_fd) as (forkserver_socket, _tmp_fk_sock):
-        asyncio.run(proxy(config['endpoint'], forkserver_socket))
+    def _proxy_infork():
+        # Crucial so that we correctly detect when forkserver closes its end
+        sock_server.close()
+        asyncio.run(proxy(config['endpoint'], sock_client))
+    proxy_pid = galp.cli.run_in_fork(_proxy_infork)
+    try:
+        sock_client.close()
+
+        # Self-pipe to receive signals
+        signal_read_fd, signal_write_fd = os.pipe()
+        os.set_blocking(signal_write_fd, False)
+        signal.set_wakeup_fd(signal_write_fd, warn_on_full_buffer=True)
+        for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, lambda *_: None)
+
+        forkserver(sock_server, signal_read_fd, config)
+
         logging.info("Pool manager exiting")
-
-    return 0
+    finally:
+        os.waitpid(proxy_pid, 0)
 
 def make_cli(config):
     """

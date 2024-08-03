@@ -90,7 +90,7 @@ async def test_signals_busyloop(galp_set_one, sig):
     client = galp_set_one.client
     pool_handle = galp_set_one.pool
 
-    # This is only supposed to kill the pool and its one child
+    # This is only supposed to kill the pool and its two children (proxy, worker)
     handles = [pool_handle]
 
     task = gts.busy_loop()
@@ -102,7 +102,7 @@ async def test_signals_busyloop(galp_set_one, sig):
 
     # List all processes and children
     # Under the current implementation we should have started one pool manager
-    # and one worker
+    # its forked proxy and one worker
     processes = [
         psutil.Process(handle.pid)
         for handle in handles
@@ -111,7 +111,7 @@ async def test_signals_busyloop(galp_set_one, sig):
     for process in processes:
         assert process.status() != psutil.STATUS_ZOMBIE
         children.extend(process.children(recursive=True))
-    assert len(processes + children) == 2
+    assert len(processes + children) == 3
 
     # Send signal to the pool manager
     for handle in handles:
