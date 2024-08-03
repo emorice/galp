@@ -19,8 +19,8 @@ import zmq
 import galp.worker
 import galp.net.core.types as gm
 import galp.socket_transport
-from galp.result import Result, Ok, Error
-from galp.zmq_async_transport import ZmqAsyncTransport, TransportMessage
+from galp.result import Result, Ok
+from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.protocol import make_stack
 from galp.net.core.dump import dump_message
 from galp.net.core.load import parse_core_message
@@ -29,7 +29,7 @@ from galp.async_utils import background
 # Communication utils
 # ===================
 
-def socket_send_message(sock: socket.socket, message: gm.Message):
+def socket_send_message(sock: socket.socket, message: gm.Message) -> None:
     """Serialize and send galp message over sock"""
     return galp.socket_transport.send_multipart(sock, dump_message(message))
 
@@ -40,58 +40,40 @@ async def async_socket_recv_message(sock: socket.socket) -> Result[gm.Message]:
 # Proxying
 # ========
 
-class Proxy:
+async def proxy(broker_endpoint, forkserver_socket):
     """
     Proxy between unix socket and zmq
     """
-    def __init__(self, broker_endpoint: str, forkserver_socket: socket.socket):
-        def on_message(_write, msg: gm.Message
-                       ) -> list[TransportMessage] | Error:
-            match msg:
-                case gm.Fork():
-                    socket_send_message(self.forkserver_socket, msg)
-                    return []
-                case _:
-                    return Error(f'Unexpected {msg}')
-        stack = make_stack(on_message, name='BK')
-        self.broker_transport = ZmqAsyncTransport(stack,
-            broker_endpoint, zmq.DEALER # pylint: disable=no-member
-            )
+    def on_message(_write, message):
+        socket_send_message(forkserver_socket, message)
+        return []
+    stack = make_stack(on_message, name='BK')
+    broker_transport = ZmqAsyncTransport(stack,
+        broker_endpoint, zmq.DEALER # pylint: disable=no-member
+        )
 
-        forkserver_socket.setblocking(False)
-        self.forkserver_socket = forkserver_socket
+    async with background(
+        broker_transport.listen_reply_loop()
+        ):
+        await listen_forkserver(forkserver_socket, broker_transport)
 
-    # Main
-    async def run(self):
-        """
-        Start one task to create and monitor each worker, along with the
-        listening loop
-        """
-        cpus = list(psutil.Process().cpu_affinity())
-        await self.broker_transport.send_message(gm.PoolReady(cpus=cpus))
+async def listen_forkserver(forkserver_socket, broker_transport) -> None:
+    """Process messages from the forkserver"""
+    forkserver_socket.setblocking(False)
+    while True:
+        try:
+            message = await async_socket_recv_message(forkserver_socket)
+        except EOFError:
+            return
+        match message:
+            case Ok(_message):
+                # Forward anything else to broker
+                await broker_transport.send_message(_message)
+            case _:
+                raise ValueError(f'Unexpected {message}')
 
-        async with background(
-            self.broker_transport.listen_reply_loop()
-            ):
-            await self.listen_forkserver()
-
-    # Proxy
-    async def listen_forkserver(self) -> None:
-        """Process messages from the forkserver"""
-        while True:
-            try:
-                message = await async_socket_recv_message(self.forkserver_socket)
-            except EOFError:
-                return
-            match message:
-                case Ok(_message):
-                    # Forward anything else to broker
-                    await self.broker_transport.send_message(_message)
-                case _:
-                    raise ValueError(f'Unexpected {message}')
-
-# Child process management
-# ========================
+# Listen signals and monitor deaths
+# =================================
 
 def log_child_exit(rpid, rstatus,
                    noerror_level=logging.INFO):
@@ -114,60 +96,6 @@ def log_child_exit(rpid, rstatus,
     else:
         logging.log(noerror_level, 'Worker %s exited with code %s',
                 rpid, rret)
-
-def on_socket_frames(frames, config, cpus, sock_server, pids):
-    """
-    Handler for messages proxied to forkserver
-    """
-    msg = parse_core_message(frames)
-    match msg:
-        case Ok(gm.Fork() as fork):
-            _config = dict(config, mission=fork.mission,
-                           cpus_per_task=fork.resources.cpus)
-            if _config.get('pin_workers'):
-                # We always pin to the first n cpus. This does not mean that
-                # we will actually execute on these ; cpu pins should be
-                # reset in the worker based on information from the broker
-                # at each task. Rather, it is a matter of having the right
-                # number of bits in the cpu mask when modules that inspect
-                # the mask are loaded, possibly even before the first task
-                # is run.
-                _cpus = cpus[:fork.resources.cpus]
-                logging.info('Pinning new worker to cpus %s', _cpus)
-                pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
-            else:
-                pid = galp.worker.fork(_config)
-            socket_send_message(sock_server, gm.Ready(str(pid), b''))
-            pids.add(pid)
-        case _:
-            logging.error('Unexpected %s', msg)
-
-def register_socket_handler(selector, config, sock_server, pids):
-    """
-    Initialize the handler for broker messages, which does the actual forking
-    work
-    """
-    cpus = []
-    if config.get('pin_workers'):
-        cpus = psutil.Process().cpu_affinity()
-        assert cpus
-
-    # Set up protocol
-    multipart_reader = galp.socket_transport.make_multipart_generator(
-            lambda frames: on_socket_frames(frames, config, cpus, sock_server,
-                                            pids)
-            )
-    multipart_reader.send(None)
-
-    # Connect transport
-    def _on_socket():
-        buf = sock_server.recv(4096)
-        if buf:
-            multipart_reader.send(buf)
-            return False
-        # Disconnect
-        return True
-    selector.register(sock_server, selectors.EVENT_READ, _on_socket)
 
 def check_deaths(pids: set[int], sock_server: socket.socket) -> None:
     """
@@ -219,6 +147,65 @@ def register_signal_handler(selector, pids: set[int], signal_read_fd,
             logging.debug('Ignoring signal %s', sig)
         return False
     selector.register(signal_read_fd, selectors.EVENT_READ, _on_signal)
+
+# Listen socket and start workers
+# ===============================
+
+def on_socket_frames(frames, config, cpus, sock_server, pids):
+    """
+    Handler for messages proxied to forkserver
+    """
+    msg = parse_core_message(frames)
+    match msg:
+        case Ok(gm.Fork() as fork):
+            _config = dict(config, mission=fork.mission,
+                           cpus_per_task=fork.resources.cpus)
+            if _config.get('pin_workers'):
+                # We always pin to the first n cpus. This does not mean that
+                # we will actually execute on these ; cpu pins should be
+                # reset in the worker based on information from the broker
+                # at each task. Rather, it is a matter of having the right
+                # number of bits in the cpu mask when modules that inspect
+                # the mask are loaded, possibly even before the first task
+                # is run.
+                _cpus = cpus[:fork.resources.cpus]
+                logging.info('Pinning new worker to cpus %s', _cpus)
+                pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
+            else:
+                pid = galp.worker.fork(_config)
+            pids.add(pid)
+        case _:
+            logging.error('Unexpected %s', msg)
+
+def register_socket_handler(selector, config, sock_server, pids):
+    """
+    Initialize the handler for broker messages, which does the actual forking
+    work, and send the ready message
+    """
+    cpus = psutil.Process().cpu_affinity() or []
+    if config.get('pin_workers'):
+        assert cpus
+    socket_send_message(sock_server, gm.PoolReady(cpus=cpus))
+
+    # Set up protocol
+    multipart_reader = galp.socket_transport.make_multipart_generator(
+            lambda frames: on_socket_frames(frames, config, cpus, sock_server,
+                                            pids)
+            )
+    multipart_reader.send(None)
+
+    # Connect transport
+    def _on_socket():
+        buf = sock_server.recv(4096)
+        if buf:
+            multipart_reader.send(buf)
+            return False
+        # Disconnect
+        return True
+    selector.register(sock_server, selectors.EVENT_READ, _on_socket)
+
+# Forkserver IO loop
+# ==================
 
 def forkserver(sock_server, signal_read_fd, config) -> None:
     """
@@ -280,8 +267,7 @@ def main(config):
         signal.signal(sig, lambda *_: None)
 
     with run_forkserver(config, signal_read_fd) as (forkserver_socket, _tmp_fk_sock):
-        proxy = Proxy(config['endpoint'], forkserver_socket)
-        asyncio.run(proxy.run())
+        asyncio.run(proxy(config['endpoint'], forkserver_socket))
         logging.info("Pool manager exiting")
 
     return 0

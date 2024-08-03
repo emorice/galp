@@ -6,7 +6,7 @@ import asyncio
 
 from galp.writer import TransportMessage
 
-def send_frame(sock: socket.socket, frame: bytes, send_more: bool):
+def send_frame(sock: socket.socket, frame: bytes, send_more: bool) -> None:
     """
     Send a single frame over a stream socket
 
@@ -22,7 +22,7 @@ def send_frame(sock: socket.socket, frame: bytes, send_more: bool):
     sock.sendall(header)
     sock.sendall(frame)
 
-def send_multipart(sock: socket.socket, message: TransportMessage):
+def send_multipart(sock: socket.socket, message: TransportMessage) -> None:
     """
     Send a multipart message over a stream socket
     """
