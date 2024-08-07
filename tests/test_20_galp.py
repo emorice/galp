@@ -292,7 +292,7 @@ async def test_parallel_tasks(client_pool):
     # Run the actual batch and check that all ten run in not much more that the
     # time for one
     time2 = time.time()
-    ans = await asyncio.wait_for(client_pool.collect(*tasks), 5)
+    ans = await asyncio.wait_for(client_pool.collect(*tasks, verbose=True), 5)
     dtime2 = time.time() - time2
     assert set(ans) == set(range(10, 20))
 

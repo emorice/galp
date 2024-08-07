@@ -75,7 +75,8 @@ class Client:
             stack=self._stack, endpoint=endpoint, socket_type=zmq.DEALER
             )
 
-    async def gather(self, *tasks, return_exceptions: bool = False, dry_run: bool = False):
+    async def gather(self, *tasks, return_exceptions: bool = False,
+            dry_run: bool = False, verbose: bool = False):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
         and returns the actual results.
@@ -94,7 +95,7 @@ class Client:
         task_nodes = list(map(gtt.ensure_task_node, tasks))
 
         cmd_vals = await self._run_collection(task_nodes, cm.ExecOptions(
-                    keep_going=return_exceptions, dry=dry_run
+                    keep_going=return_exceptions, dry=dry_run, verbose=verbose
                     ))
 
         if isinstance(cmd_vals, Error):
@@ -124,12 +125,13 @@ class Client:
     # Old name of gather
     collect = gather
 
-    async def run(self, *tasks, return_exceptions=False, dry_run=False):
+    async def run(self, *tasks, return_exceptions=False, dry_run=False,
+            verbose=False):
         """
         Shorthand for gather with a more variadic style
         """
         results = await self.gather(*tasks, return_exceptions=return_exceptions,
-                dry_run=dry_run)
+                dry_run=dry_run, verbose=verbose)
 
         if results and len(results) == 1:
             return results[0]

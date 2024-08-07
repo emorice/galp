@@ -67,7 +67,11 @@ async def test_step_error_multiple(client):
     Test running a multiple task containing a bug
     """
     with pytest.raises(galp.TaskFailedError):
-        await asyncio.wait_for(client.collect(*gts.raises_error_multiple()), 3)
+        await asyncio.wait_for(
+                client.collect(
+                    *gts.raises_error_multiple(),
+                    verbose=True),
+                3)
 
 async def test_missing_step_error(client):
     """
@@ -174,13 +178,13 @@ async def test_remote_cache_corruption(poisoned_cache, client):
 
     with pytest.raises(galp.TaskFailedError):
         ans, = await asyncio.wait_for(
-            client.collect(task2),
+            client.collect(task2, verbose=True),
             3)
 
     # Test that the worker recovered
     task3 = gts.hello()
     ans, = await asyncio.wait_for(
-        client.collect(task3),
+        client.collect(task3, verbose=True),
         3)
 
     assert ans == gts.hello.function()

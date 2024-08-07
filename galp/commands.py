@@ -71,6 +71,7 @@ class ExecOptions:
     """
     dry: bool = False
     keep_going: bool = False
+    verbose: bool = False
 
 # Routines
 # --------
@@ -258,8 +259,36 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
 
     return (
             gather_deps
-            .then(lambda _: Send(gm.Submit(task_def)))
+            .then(lambda _: _start_submit(task_def, options))
             )
+
+def _end_submit(task_def: gtt.CoreTaskDef, submit_result: Result[gtt.ResultRef],
+        options: ExecOptions) -> Result[gtt.ResultRef]:
+    """
+    Hook to report end of task
+    """
+    if options.verbose:
+        status = 'unknown'
+        match submit_result:
+            case Ok():
+                status = 'Done'
+            case Error():
+                status = 'Failed'
+        print(task_def.name, task_def.step, status)
+    return submit_result
+
+def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
+        ) -> Command[gtt.ResultRef]:
+    """
+    Wrapper around sending submit that reports start of tasks and schedule
+    reporting end of task.
+    """
+    if options.verbose:
+        print(task_def.name, task_def.step, 'Started', flush=True)
+    return Send(gm.Submit(task_def)).eventually(
+            lambda sub_result: _end_submit(task_def, sub_result, options)
+            )
+
 
 def rsubmit(task: gtt.Task, options: ExecOptions
             ) -> Command[gtt.RecResultRef]:
