@@ -83,6 +83,13 @@ Result: TypeAlias = Ok[OkT] | Error
 
 ErrT = TypeVar('ErrT', bound=Error)
 
+@dataclass(frozen=True)
+class Progress:
+    """
+    Class used to carry information about a future Result
+    """
+    status: str
+
 def all_ok(inputs: Iterable[Ok[OkT] | ErrT]
            ) -> Ok[list[OkT]] | ErrT:
     """

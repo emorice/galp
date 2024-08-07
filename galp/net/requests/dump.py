@@ -4,11 +4,11 @@ ReplyValue serializers
 
 from functools import singledispatch
 
-from galp.result import Ok
+from galp.result import Ok, Progress
 from galp.serializer import dump_model
 from galp.task_types import FlatResultRef, Serialized
 
-from .types import ReplyValue, RemoteError, Progress
+from .types import ReplyValue, RemoteError
 
 @singledispatch
 def _dump_ok_reply_value_data(ok_value) -> list[bytes]:

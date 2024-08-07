@@ -268,7 +268,7 @@ def _end_submit(task_def: gtt.CoreTaskDef, submit_result: Result[gtt.ResultRef],
     Hook to report end of task
     """
     if options.verbose:
-        status = 'unknown'
+        status = 'Unknown'
         match submit_result:
             case Ok():
                 status = 'Done'
@@ -277,6 +277,11 @@ def _end_submit(task_def: gtt.CoreTaskDef, submit_result: Result[gtt.ResultRef],
         print(task_def.name, task_def.step, status)
     return submit_result
 
+def _progress_submit(task_def: gtt.CoreTaskDef, status: str, options:
+                     ExecOptions) -> None:
+    if options.verbose:
+        print(task_def.name, task_def.step, status)
+
 def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
         ) -> Command[gtt.ResultRef]:
     """
@@ -284,8 +289,10 @@ def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
     reporting end of task.
     """
     if options.verbose:
-        print(task_def.name, task_def.step, 'Started', flush=True)
-    return Send(gm.Submit(task_def)).eventually(
+        print(task_def.name, task_def.step, 'Submitted', flush=True)
+    return Send(gm.Submit(task_def)).on_progress(
+            lambda status: _progress_submit(task_def, status, options)
+            ).eventually(
             lambda sub_result: _end_submit(task_def, sub_result, options)
             )
 

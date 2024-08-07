@@ -26,7 +26,7 @@ import galp.net.core.types as gm
 import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
-from galp.result import Result, Ok, Error
+from galp.result import Result, Ok, Error, Progress
 
 from galp.config import load_config
 from galp.store import StoreReadError
@@ -195,9 +195,12 @@ class Worker:
                 logging.exception(err)
                 return [write_reply(gr.RemoteError(err))]
 
+        # Status message, mostly a test
+        replies = [write_reply(Progress('Starting'))]
+
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        return self._new_commands_to_replies(
+        return replies + self._new_commands_to_replies(
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
             self.schedule_task(write_reply, sub)

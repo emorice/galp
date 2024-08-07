@@ -13,9 +13,9 @@ from dataclasses import dataclass
 import galp.task_types as gtt
 import galp.net.requests.types as gr
 
-from galp.result import Ok
+from galp.result import Ok, Progress
 from galp.net.base.types import MessageType
-from galp.net.requests.types import RemoteError, Progress
+from galp.net.requests.types import RemoteError
 
 # Messages
 # ========

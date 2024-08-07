@@ -9,7 +9,7 @@ from typing import (TypeVar, Generic, Callable, Iterable, TypeAlias,
 from collections.abc import Hashable
 from dataclasses import dataclass, field
 from functools import wraps
-from galp.result import Ok, Error, Result, all_ok as result_all_ok
+from galp.result import Ok, Error, Result, Progress, all_ok as result_all_ok
 
 # Extension of Result with a "pending" state
 # ==========================================
@@ -272,6 +272,9 @@ class Primitive(Command[OkT]):
 
     Fully defined and identified by a task name
     """
+    def __init__(self):
+        self._progress_callbacks = []
+
     @property
     def key(self) -> Hashable:
         """
@@ -279,6 +282,19 @@ class Primitive(Command[OkT]):
         """
         raise NotImplementedError
 
+    def on_progress(self, callback):
+        """
+        Register a progress hook
+        """
+        self._progress_callbacks.append(callback)
+        return self
+
+    def progress(self, status):
+        """
+        Call progress hooks
+        """
+        for callback in self._progress_callbacks:
+            callback(status)
 
 @dataclass
 class Pending(Generic[OkT]):
@@ -328,7 +344,7 @@ class Script:
             return self.slots[command].get_value()
         return None
 
-    def done(self, key: Hashable, result: Result) -> list[Primitive]:
+    def done(self, key: Hashable, result: Result | Progress) -> list[Primitive]:
         """
         Mark a command as done, and return new primitives.
 
@@ -337,6 +353,15 @@ class Script:
         """
         if key not in self.leaves:
             logging.error('Received unexpected result to command %s', key)
+            return []
+        if isinstance(result, Progress):
+            # Call progress callback
+            for slot in self.leaves[key]:
+                _prim = slot.state
+                if isinstance(_prim, Primitive):
+                    _prim.progress(result.status)
+                # Else, the slot is settled, we discard the status assuming a
+                # race condition.
             return []
         # Propagate to all current instances and clear them
         prims = self.leaves.pop(key)

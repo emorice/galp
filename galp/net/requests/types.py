@@ -48,13 +48,6 @@ class StatDone(ReplyValue, key='statdone'):
 
 StatReplyValue = Found | NotFound | StatDone
 
-@dataclass(frozen=True)
-class Progress(ReplyValue, key='progress'):
-    """
-    Value giving a progress report
-    """
-    status: str
-
 # All-purpose error
 # =================
 

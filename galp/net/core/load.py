@@ -2,14 +2,14 @@
 Specific parsing logic for core layer
 """
 
-from galp.result import Result, Ok
+from galp.result import Result, Ok, Progress
 from galp.serialize import LoadError
 from galp.serializer import load_model
 from galp.net.base.load import LoaderDict, default_loader, UnionLoader
 from galp.net.requests.load import Serialized, load_serialized
 from galp.task_types import FlatResultRef, TaskDef
 
-from .types import Message, Reply, RequestId, RemoteError, Upload, Progress
+from .types import Message, Reply, RequestId, RemoteError, Upload
 
 def _get_reply_value_type(request_id: RequestId) -> type:
     """
