@@ -9,7 +9,7 @@ from galp.net.base.load import LoaderDict, default_loader, UnionLoader
 from galp.net.requests.load import Serialized, load_serialized
 from galp.task_types import FlatResultRef, TaskDef
 
-from .types import Message, Reply, RequestId, RemoteError, Upload
+from .types import Message, Reply, RequestId, RemoteError, Upload, Progress
 
 def _get_reply_value_type(request_id: RequestId) -> type:
     """
@@ -20,11 +20,17 @@ def _get_reply_value_type(request_id: RequestId) -> type:
     req_type = MessageLoader.get_type(request_id.verb)
     return req_type.reply_type # type: ignore
 
-def _remote_error_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | LoadError:
+def _remote_error_loader(ok_frame: bytes, request_id: RequestId, frames: list[bytes]
+                         ) -> Ok[Reply] | LoadError:
+    if ok_frame not in (b'error', b'progress'):
+        return LoadError('Bad value type')
     match frames:
         case [frame]:
             return load_model(str, frame).then(
-                    lambda text: Ok(Reply(request_id, RemoteError(text)))
+                    lambda text: Ok(Reply(
+                        request_id,
+                        RemoteError(text) if ok_frame == b'error' else Progress(text)
+                        ))
                     )
         case _:
             return LoadError('Wrong number of frames')
@@ -47,11 +53,10 @@ def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | 
 def _reply_value_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | LoadError:
     match frames:
         case [ok_frame, *value_frames]:
-            return load_model(bool, ok_frame).then(
-                    lambda is_ok: (
-                        _ok_value_loader(request_id, value_frames)
-                        if is_ok else _remote_error_loader(request_id, value_frames)
-                        )
+            return (
+                    _ok_value_loader(request_id, value_frames)
+                    if ok_frame == b'ok'
+                    else _remote_error_loader(ok_frame, request_id, value_frames)
                     )
         case _:
             return LoadError('Wrong number of frames')

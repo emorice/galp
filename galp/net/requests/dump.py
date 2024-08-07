@@ -8,7 +8,7 @@ from galp.result import Ok
 from galp.serializer import dump_model
 from galp.task_types import FlatResultRef, Serialized
 
-from .types import ReplyValue, RemoteError
+from .types import ReplyValue, RemoteError, Progress
 
 @singledispatch
 def _dump_ok_reply_value_data(ok_value) -> list[bytes]:
@@ -28,7 +28,7 @@ def _(value: Serialized) -> list[bytes]:
 def _(value: FlatResultRef) -> list[bytes]:
     return [dump_model(value)]
 
-def dump_reply_value(value: Ok[ReplyValue] | RemoteError) -> list[bytes]:
+def dump_reply_value(value: Ok[ReplyValue] | Progress | RemoteError) -> list[bytes]:
     """
     Serializes a reply value.
 
@@ -36,6 +36,8 @@ def dump_reply_value(value: Ok[ReplyValue] | RemoteError) -> list[bytes]:
     """
     match value:
         case Ok(ok_value):
-            return [dump_model(True), *_dump_ok_reply_value_data(ok_value)]
+            return [b'ok', *_dump_ok_reply_value_data(ok_value)]
         case RemoteError() as err:
-            return [dump_model(False), dump_model(err.error)]
+            return [b'error', dump_model(err.error)]
+        case Progress() as prog:
+            return [b'progress', dump_model(prog.status)]
