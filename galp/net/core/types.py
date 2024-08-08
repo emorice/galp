@@ -166,6 +166,17 @@ class RequestId:
         """
         return self.verb + f':{self.name.hex()}'.encode('ascii')
 
+    @classmethod
+    def from_word(cls, word: bytes):
+        """
+        Parse from a byte string
+        """
+        verb, _, hexname = word.partition(b':')
+        return cls(
+                verb,
+                gtt.TaskName.fromhex(hexname.decode('ascii'))
+                )
+
 def get_request_id(req: BaseRequest) -> RequestId:
     """
     Make request id from Request

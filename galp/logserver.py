@@ -7,23 +7,39 @@ import socket
 import selectors
 from contextlib import contextmanager
 
+import galp.socket_transport
+from galp.net.core.types import RequestId, Reply, Progress
+from galp.net.core.dump import dump_message
+
 @contextmanager
-def logserver_connect(request_id, sock_logclient):
+def logserver_connect(request_id: RequestId, sock_logclient: socket.socket |
+        None):
     """
-    Create new pipe and send end to log server
+    Create new pipe, redirect stderr and stdout to it, and send end to log server
     """
     if sock_logclient is None:
         yield
+        return
     read_fd, write_fd = os.pipe()
 
     # Send read end to logserver and close it
     # Wrap the send end
-    socket.send_fds(sock_logclient, [str(request_id).encode('utf8')], [read_fd])
+    socket.send_fds(sock_logclient, [request_id.as_word()], [read_fd])
     os.close(read_fd)
 
-    # Write in pipe and close it
-    with open(write_fd, 'w', encoding='utf8') as write_stm:
-        yield write_stm
+    # Redirect to write fd
+    sys.stdout.flush()
+    sys.stderr.flush()
+    orig_stds = os.dup(1), os.dup(2)
+    os.dup2(write_fd, 0)
+    os.dup2(write_fd, 1)
+    try:
+        yield
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(orig_stds[0], 1)
+        os.dup2(orig_stds[1], 2)
 
 def sanitize(buffer: bytes) -> str:
     """
@@ -59,30 +75,37 @@ def sanitize(buffer: bytes) -> str:
     # Truncate to 80 chars
     return printable[:80]
 
-def logserver_register(sel: selectors.DefaultSelector, sock_logserver):
+def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
+        socket.socket, sock_proxy: socket.socket):
     """
     Listen for new pipes on log server
 
     The selector data is a callback to be called with no arguments.
     """
-    def on_stream_msg(request_id, filed):
+    def on_stream_msg(request_id: RequestId, filed: int):
         item = os.read(filed, 4096)
         if item:
-            print(f'[{request_id}]', sanitize(item), file=sys.stderr, flush=True)
+            try:
+                item_s = item.decode('utf8')
+            except UnicodeDecodeError:
+                item_s = f'<failed utf-8 decoding of {len(item)} bytes>'
+            galp.socket_transport.send_multipart(
+                    sock_proxy,
+                    dump_message(Reply(request_id, Progress(item_s)))
+                    )
         else:
-            print(f'[{request_id}]', '<closed>', file=sys.stderr, flush=True)
             os.close(filed)
             sel.unregister(filed)
 
     def on_new_fd():
         # Receive one fd and read its content
         data, fds, _flgs, _addr = socket.recv_fds(sock_logserver, 4096, 16)
-        client_id = data.decode('utf8')
+        request_id = RequestId.from_word(data)
         for filed in fds:
             # Make any new fd non "fork-heritable"
             os.register_at_fork(after_in_child=lambda filed=filed: os.close(filed))
             sel.register(filed, selectors.EVENT_READ,
-                    lambda filed=filed: on_stream_msg(client_id, filed)
+                    lambda filed=filed: on_stream_msg(request_id, filed)
                     )
 
     sel.register(sock_logserver, selectors.EVENT_READ, on_new_fd)

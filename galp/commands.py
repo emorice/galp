@@ -280,7 +280,9 @@ def _end_submit(task_def: gtt.CoreTaskDef, submit_result: Result[gtt.ResultRef],
 def _progress_submit(task_def: gtt.CoreTaskDef, status: str, options:
                      ExecOptions) -> None:
     if options.verbose:
-        print(task_def.name, task_def.step, status)
+        print(task_def.name, task_def.step, status, end='')
+    else: # Default "pass-through" mode
+        print(status, end='')
 
 def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
         ) -> Command[gtt.ResultRef]:

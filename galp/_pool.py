@@ -216,7 +216,7 @@ def forkserver(sock_server, sock_logserver, signal_read_fd, config) -> None:
     pids : set[int] = set()
     register_socket_handler(selector, config, sock_server, pids)
     register_signal_handler(selector, pids, signal_read_fd, sock_server)
-    galp.logserver.logserver_register(selector, sock_logserver)
+    galp.logserver.logserver_register(selector, sock_logserver, sock_server)
 
     leave = False
     while not leave:

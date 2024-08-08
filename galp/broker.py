@@ -327,22 +327,32 @@ class CommonProtocol:
         logging.debug('Forwarding %s', msg.__class__.__name__)
         return replies + [sessions.dest.reply_from(sessions.origin)(msg)]
 
+    def on_reply(self, reply: gm.Reply):
+        """
+        Forward reply (typically a Progress update) based on request id
+        """
+        alloc = self.alloc_from_task.get(reply.request.as_word())
+        if alloc:
+            return [alloc.client.reply_from(None)(reply)]
+        return []
+
     @on_message.register
     def _(self, session: ReplyFromSession, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles local messages received by the broker
         """
-        # Record joining peers and forward pre allocated requests
-        if isinstance(msg, gm.Ready):
-            return self.on_ready(session, msg)
-
-        if isinstance(msg, gm.PoolReady):
-            return self.on_pool_ready(session, msg)
-
-        # Similarly, record dead peers and forward failures
-        if isinstance(msg, gm.Exited):
-            return self.on_exited(msg)
+        match msg:
+            # Record joining peers and forward pre allocated requests
+            case gm.Ready():
+                return self.on_ready(session, msg)
+            case gm.PoolReady():
+                return self.on_pool_ready(session, msg)
+            # Similarly, record dead peers and forward failures
+            case gm.Exited():
+                return self.on_exited(msg)
+            case gm.Reply():
+                return self.on_reply(msg)
 
         # Else, we may have to forward or queue the message. We decide based on
         # the verb whether this should be ultimately sent to a worker

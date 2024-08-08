@@ -36,7 +36,7 @@ from galp.query import collect_task_inputs
 from galp.graph import load_step_by_key, NoSuchStep
 from galp.task_types import TaskRef
 from galp.net_store import handle_get, handle_stat, handle_upload
-from galp.net.core.dump import add_request_id, Writer
+from galp.net.core.dump import add_request_id, Writer, get_request_id
 from galp.asyn import filter_commands
 from galp.context import set_path
 from galp.logserver import logserver_connect
@@ -197,12 +197,9 @@ class Worker:
                 logging.exception(err)
                 return [write_reply(gr.RemoteError(err))]
 
-        # Status message, mostly a test
-        replies = [write_reply(Progress('Starting'))]
-
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
-        return replies + self._new_commands_to_replies(
+        return self._new_commands_to_replies(
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
             self.schedule_task(write_reply, sub)
@@ -312,8 +309,8 @@ class Worker:
             # This may block for a long time, by design
             try:
                 with set_path(self.store.dirpath, name.hex()):
-                    with logserver_connect(name, self.sock_logclient) as log_fd:
-                        print('Starting', file=log_fd, flush=True)
+                    with logserver_connect(get_request_id(job.submit),
+                            self.sock_logclient):
                         result = step.function(*args, **kwargs)
             except Exception as exc:
                 logging.exception('Submitted task step failed: %s [%s]',

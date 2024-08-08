@@ -134,7 +134,9 @@ def sleeps(secs, some_arg):
     """
     Sleeps for the given time and return the argument unchanged
     """
+    print(f'Sleeping for {secs}s', flush=True)
     time.sleep(secs)
+    print(f'Slept for {secs}s', flush=True)
     return some_arg
 
 @step
