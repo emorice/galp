@@ -80,7 +80,7 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver):
         client_id = data.decode('utf8')
         for filed in fds:
             # Make any new fd non "fork-heritable"
-            os.register_at_fork(after_in_child=lambda: os.close(filed))
+            os.register_at_fork(after_in_child=lambda filed=filed: os.close(filed))
             sel.register(filed, selectors.EVENT_READ,
                     lambda filed=filed: on_stream_msg(client_id, filed)
                     )
