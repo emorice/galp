@@ -39,6 +39,7 @@ from galp.net_store import handle_get, handle_stat, handle_upload
 from galp.net.core.dump import add_request_id, Writer
 from galp.asyn import filter_commands
 from galp.context import set_path
+from galp.logserver import logserver_connect
 
 class NonFatalTaskError(RuntimeError):
     """
@@ -158,6 +159,7 @@ class Worker:
         self.mission = setup.get('mission', b'')
         self.store = setup['store']
         self.script = cm.Script()
+        self.sock_logclient = setup.get('sock_logclient')
 
         # Submitted jobs
         self.pending_jobs: dict[gtt.TaskName, cm.Command] = {}
@@ -310,7 +312,9 @@ class Worker:
             # This may block for a long time, by design
             try:
                 with set_path(self.store.dirpath, name.hex()):
-                    result = step.function(*args, **kwargs)
+                    with logserver_connect(name, self.sock_logclient) as log_fd:
+                        print('Starting', file=log_fd, flush=True)
+                        result = step.function(*args, **kwargs)
             except Exception as exc:
                 logging.exception('Submitted task step failed: %s [%s]',
                 step_name, name)

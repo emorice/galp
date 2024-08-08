@@ -17,6 +17,7 @@ import zmq
 import galp.worker
 import galp.net.core.types as gm
 import galp.socket_transport
+import galp.logserver
 from galp.result import Result, Ok
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.protocol import make_stack
@@ -204,7 +205,7 @@ def register_socket_handler(selector, config, sock_server, pids):
 # Forkserver IO loop
 # ==================
 
-def forkserver(sock_server, signal_read_fd, config) -> None:
+def forkserver(sock_server, sock_logserver, signal_read_fd, config) -> None:
     """
     A dedicated loop to fork workers on demand and return the pids.
 
@@ -215,6 +216,7 @@ def forkserver(sock_server, signal_read_fd, config) -> None:
     pids : set[int] = set()
     register_socket_handler(selector, config, sock_server, pids)
     register_signal_handler(selector, pids, signal_read_fd, sock_server)
+    galp.logserver.logserver_register(selector, sock_logserver)
 
     leave = False
     while not leave:
@@ -239,11 +241,25 @@ def main(config):
     # Socket pair forkserver <> proxy
     sock_server, sock_client = socket.socketpair()
 
+    # Remember to close other socket ends
+    # We don't use fork handlers as we're going to make many other unrelated
+    # forks
     def _proxy_infork():
-        # Crucial so that we correctly detect when forkserver closes its end
         sock_server.close()
         asyncio.run(proxy(config['endpoint'], sock_client))
     proxy_pid = galp.cli.run_in_fork(_proxy_infork)
+    sock_client.close()
+
+    # Socket pair forkserver <> workers
+    sock_logserver, sock_logclient = socket.socketpair(
+            socket.AF_UNIX, socket.SOCK_DGRAM
+            )
+    # Now we can put handlers for each new worker fork
+    # The parent never closes, as it may need to fork again
+    os.register_at_fork(after_in_child=sock_server.close)
+    os.register_at_fork(after_in_child=sock_logserver.close)
+    config['sock_logclient'] = sock_logclient
+
     try:
         sock_client.close()
 
@@ -254,7 +270,7 @@ def main(config):
         for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: None)
 
-        forkserver(sock_server, signal_read_fd, config)
+        forkserver(sock_server, sock_logserver, signal_read_fd, config)
 
         logging.info("Pool manager exiting")
     finally:
