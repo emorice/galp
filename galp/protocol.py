@@ -65,7 +65,7 @@ def _log_message(routed: Routed, proto_name: str) -> Routed:
 
     pattern = '<- %s' #if is_incoming else '-> %s'
 
-    logging.info(pattern, msg_log_str)
+    logging.debug(pattern, msg_log_str)
 
     return routed
 

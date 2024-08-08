@@ -111,7 +111,7 @@ def make_worker_init(config):
 
     os.makedirs(os.path.join(setup['store'].dirpath, 'galp'), exist_ok=True)
 
-    logging.info("Worker connecting to %s", setup['endpoint'])
+    logging.info("Worker starting, connecting to %s", setup['endpoint'])
 
     def _make_worker():
         return Worker(setup)

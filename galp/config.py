@@ -27,7 +27,7 @@ def load_config(config=None, mandatory=None):
         if not setup.get(key):
             raise ConfigError(f'Missing "{key}"')
 
-    logging.info("Storing in %s", setup['store'])
+    logging.debug("Storing in %s", setup['store'])
     setup['store'] = Store(setup.get('store'), TaskSerializer)
 
     return setup

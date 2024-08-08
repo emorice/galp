@@ -75,7 +75,7 @@ async def listen_forkserver(forkserver_socket, broker_transport) -> None:
 # =================================
 
 def log_child_exit(rpid, rstatus,
-                   noerror_level=logging.INFO):
+                   noerror_level=logging.DEBUG):
     """
     Parse and log exit status
     """
@@ -115,14 +115,14 @@ def kill_all(pids: set[int], sig: signal.Signals = signal.SIGTERM) -> None:
     """
     Kill all children and wait for them
     """
-    logging.info('Sending %s to all remaining %s children',
+    logging.debug('Sending %s to all remaining %s children',
             sig, len(pids))
     for pid in pids:
         logging.debug('Sending %s to %s', sig, pid)
         os.kill(pid, sig)
         logging.debug('Sent %s to %s', sig, pid)
     for pid in pids:
-        logging.info('Waiting for %s', pid)
+        logging.debug('Waiting for %s', pid)
         rpid = 0
         while not rpid:
             rpid, rexit = os.waitpid(pid, 0)
@@ -136,7 +136,7 @@ def register_signal_handler(selector, pids: set[int], signal_read_fd,
     def _on_signal():
         sig_b = os.read(signal_read_fd, 1)
         sig = signal.Signals(int.from_bytes(sig_b, 'little'))
-        logging.info('Received signal %s', sig)
+        logging.debug('Received signal %s', sig)
         if sig == signal.SIGCHLD:
             check_deaths(pids, sock_server)
         elif sig in (signal.SIGINT, signal.SIGTERM):
