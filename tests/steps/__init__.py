@@ -251,3 +251,16 @@ def meta_error():
 def echo(to_stdout: str, to_stderr: str):
     print(to_stdout, file=sys.stdout)
     print(to_stderr, file=sys.stderr)
+
+
+def double_upload():
+    """
+    Diamond pattern to a non-trivial literal with different leg branches.
+
+    Reproduction of a wild bug that exposed a problem with the double upload
+    logic.
+    """
+    task_a = hello()
+    task_b = identity([task_a])
+
+    return task_b, identity(task_b)

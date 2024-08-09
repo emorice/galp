@@ -60,6 +60,13 @@ def test_resume_meta(run):
 
 async def test_index_anything(assert_task_equal):
     """
-    Subscript a task that was declared as itemizable
+    Subscript a task that was not declared as itemizable
     """
     await assert_task_equal(gts.arange(3)[2], 2)
+
+async def test_double_upload(assert_task_equal):
+    """
+    Shortcut a second upload.
+    """
+    hello = gts.hello.function()
+    await assert_task_equal(gts.double_upload(), ((hello,), (hello,)))

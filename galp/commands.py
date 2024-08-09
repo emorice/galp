@@ -190,45 +190,58 @@ def ssubmit(task: gtt.Task, options: ExecOptions = ExecOptions()
     """
     return safe_stat(task).then(lambda statr: _ssubmit(task, statr, options))
 
+def _upload(task: gtt.Task, stat_result: gr.Found | gr.StatDone
+        ) -> CommandLike[gtt.ResultRef]:
+    """
+    Upload logic, which is the substitute for submit for literals
+    """
+    task_def = stat_result.task_def
+    assert isinstance(task_def, gtt.LiteralTaskDef)
+
+    match task:
+        case gtt.TaskRef():
+            # Reference to something that turned out to be a literal. This means
+            # a remote literal, stat_result must be Done, and we can safely hand
+            # out the result ref which may contain further valid task refs.
+            assert isinstance(stat_result, gr.StatDone)
+            return Ok(stat_result.result)
+        case gtt.LiteralTaskNode():
+            # Local literal. We still return a full ref, not a flat ref,
+            # because we do have the child tasks available locally,
+            # but maybe not remotely yet, and we want to keep local information.
+            result_ref = gtt.ResultRef(task.name, task.dependencies)
+            match stat_result:
+                case gr.StatDone():
+                    # Someone already did the upload. We can cut to returning
+                    # the ref.
+                    return Ok(result_ref)
+                case gr.Found():
+                    # We hit a NotFound, that was upgraded. Do the upload, but
+                    # discard and upgrade the FlatRef
+                    return Send(
+                                gm.Upload(task_def, task.serialized)
+                            ).then(
+                                lambda _flat_ref: Ok(result_ref)
+                            )
+                case _:
+                    assert False, 'Bad stat result type'
+        case _:
+            assert False, 'Bad task type'
+
 def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
              options: ExecOptions) -> CommandLike[gtt.ResultRef]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
+    task_def = stat_result.task_def
+
+    # Specialization for literals
+    if isinstance(task_def, gtt.LiteralTaskDef):
+        return _upload(task, stat_result)
+
     # Short circuit for tasks already processed
     if isinstance(stat_result, gr.StatDone):
         return Ok(stat_result.result)
-
-    # gm.Found()
-    task_def = stat_result.task_def
-
-    # Short circuit for literals
-    if isinstance(task_def, gtt.LiteralTaskDef):
-        # Issue #78: at this point we should be making sure children are saved
-        # before handing back references to them
-        match task:
-            case gtt.TaskRef():
-                # If we have a reference to a literal, we assume the children
-                # definitions have been saved and we can refer to them
-                return Ok(gtt.ResultRef(task.name,
-                        list(map(gtt.TaskRef, task_def.children))
-                        ))
-            case gtt.LiteralTaskNode():
-                # Else, we have a literal that wasn't found on the remote,
-                # upload it.
-                # We still return a full ref, not a flat ref,
-                # because we do have the child tasks available locally,
-                # but maybe not remotely yet
-                return (
-                        Send(gm.Upload(task_def, task.serialized))
-                        .then(
-                            lambda _flat_ref: Ok(gtt.ResultRef(
-                                task.name, task.dependencies
-                                ))
-                            )
-                        )
-            case _:
-                assert False, 'Bad task type'
 
     # Query, should never have reached this layer as queries have custom run
     # mechanics
