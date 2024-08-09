@@ -6,6 +6,7 @@ import sys
 import socket
 import selectors
 from contextlib import contextmanager
+from typing import BinaryIO
 
 import galp.socket_transport
 from galp.net.core.types import RequestId, Reply, Progress
@@ -20,19 +21,22 @@ def logserver_connect(request_id: RequestId, sock_logclient: socket.socket |
     if sock_logclient is None:
         yield
         return
-    read_fd, write_fd = os.pipe()
+    read_fd_out, write_fd_out = os.pipe()
+    read_fd_err, write_fd_err = os.pipe()
 
     # Send read end to logserver and close it
     # Wrap the send end
-    socket.send_fds(sock_logclient, [request_id.as_word()], [read_fd])
-    os.close(read_fd)
+    socket.send_fds(sock_logclient, [request_id.as_word()],
+            [read_fd_out, read_fd_err])
+    os.close(read_fd_out)
+    os.close(read_fd_err)
 
     # Redirect to write fd
     sys.stdout.flush()
     sys.stderr.flush()
     orig_stds = os.dup(1), os.dup(2)
-    os.dup2(write_fd, 0)
-    os.dup2(write_fd, 1)
+    os.dup2(write_fd_out, 1)
+    os.dup2(write_fd_err, 2)
     try:
         yield
     finally:
@@ -76,15 +80,20 @@ def sanitize(buffer: bytes) -> str:
     return printable[:80]
 
 def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
-        socket.socket, sock_proxy: socket.socket):
+        socket.socket, sock_proxy: socket.socket, log_dir: str):
     """
     Listen for new pipes on log server
 
     The selector data is a callback to be called with no arguments.
+    Reply/Progress messages are send on sock_proxy.
+    All data is tee'd to files in log_dir.
     """
-    def on_stream_msg(request_id: RequestId, filed: int):
+    def on_stream_msg(request_id: RequestId, filed: int,
+            tee_file: BinaryIO | None):
         item = os.read(filed, 4096)
         if item:
+            if tee_file:
+                tee_file.write(item)
             try:
                 item_s = item.decode('utf8')
             except UnicodeDecodeError:
@@ -94,6 +103,8 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
                     dump_message(Reply(request_id, Progress(item_s)))
                     )
         else:
+            if tee_file:
+                tee_file.close()
             os.close(filed)
             sel.unregister(filed)
 
@@ -101,11 +112,19 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
         # Receive one fd and read its content
         data, fds, _flgs, _addr = socket.recv_fds(sock_logserver, 4096, 16)
         request_id = RequestId.from_word(data)
-        for filed in fds:
+        for i, filed in enumerate(fds):
+            tee_file = None
+            if request_id.verb == b'submit':
+                ext = 'out' if i == 0 else ('err' if i == 1 else str(i))
+                tee_file = open( #pylint: disable=consider-using-with # Async
+                        os.path.join(log_dir, f'{request_id.name.hex()}.{ext}'),
+                        'wb', buffering=0)
             # Make any new fd non "fork-heritable"
             os.register_at_fork(after_in_child=lambda filed=filed: os.close(filed))
             sel.register(filed, selectors.EVENT_READ,
-                    lambda filed=filed: on_stream_msg(request_id, filed)
+                    lambda filed=filed, tee_file=tee_file: on_stream_msg(
+                        request_id, filed, tee_file
+                        )
                     )
 
     sel.register(sock_logserver, selectors.EVENT_READ, on_new_fd)

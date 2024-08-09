@@ -2,6 +2,7 @@
 Handle various common runtime failures nicely
 """
 
+import os
 import asyncio
 import signal
 import cProfile
@@ -289,3 +290,26 @@ async def test_rerun_profile(client, tmp_path):
 
     run_it = galp.prepare_task(task.name, store_path=str(tmp_path))
     cProfile.runctx('run()', globals(), {'run': run_it})
+
+async def test_logfiles(tmp_path, client):
+    """
+    Log files are created per task for forensics
+    """
+    task = gts.echo(
+            to_stdout='This goes to stdout',
+            to_stderr='And that goes to stderr'
+            )
+
+    async with timeout(3):
+        ret, = await client.collect(task)
+        assert ret is None
+
+    with open(os.path.join(
+        tmp_path, 'logs', f'{task.name.hex()}.out'
+        ), 'r', encoding='utf8') as log_out:
+        assert log_out.read() == 'This goes to stdout\n'
+
+    with open(os.path.join(
+        tmp_path, 'logs', f'{task.name.hex()}.err'
+        ), 'r', encoding='utf8') as log_err:
+        assert log_err.read() == 'And that goes to stderr\n'

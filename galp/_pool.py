@@ -41,7 +41,9 @@ async def async_socket_recv_message(sock: socket.socket) -> Result[gm.Message]:
 
 async def proxy(broker_endpoint, forkserver_socket):
     """
-    Proxy between unix socket and zmq
+    Proxy between unix socket and zmq.
+
+    The proxy stops when the forkserver side closes the socket.
     """
     def on_message(_write, message):
         socket_send_message(forkserver_socket, message)
@@ -216,7 +218,13 @@ def forkserver(sock_server, sock_logserver, signal_read_fd, config) -> None:
     pids : set[int] = set()
     register_socket_handler(selector, config, sock_server, pids)
     register_signal_handler(selector, pids, signal_read_fd, sock_server)
-    galp.logserver.logserver_register(selector, sock_logserver, sock_server)
+
+    log_dir = os.path.join(config['store'], 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    galp.logserver.logserver_register(
+            selector,
+            sock_logserver, sock_server,
+            log_dir)
 
     leave = False
     while not leave:
@@ -224,8 +232,6 @@ def forkserver(sock_server, sock_logserver, signal_read_fd, config) -> None:
         for key, _mask in events:
             callback = key.data
             leave = callback()
-
-    sock_server.close()
 
 
 # Entry point
@@ -248,20 +254,18 @@ def main(config):
         sock_server.close()
         asyncio.run(proxy(config['endpoint'], sock_client))
     proxy_pid = galp.cli.run_in_fork(_proxy_infork)
-    sock_client.close()
-
-    # Socket pair forkserver <> workers
-    sock_logserver, sock_logclient = socket.socketpair(
-            socket.AF_UNIX, socket.SOCK_DGRAM
-            )
-    # Now we can put handlers for each new worker fork
-    # The parent never closes, as it may need to fork again
-    os.register_at_fork(after_in_child=sock_server.close)
-    os.register_at_fork(after_in_child=sock_logserver.close)
-    config['sock_logclient'] = sock_logclient
-
     try:
         sock_client.close()
+
+        # Socket pair forkserver <> workers
+        sock_logserver, sock_logclient = socket.socketpair(
+                socket.AF_UNIX, socket.SOCK_DGRAM
+                )
+        # Now we can put handlers for each new worker fork
+        # The parent never closes, as it may need to fork again
+        os.register_at_fork(after_in_child=sock_server.close)
+        os.register_at_fork(after_in_child=sock_logserver.close)
+        config['sock_logclient'] = sock_logclient
 
         # Self-pipe to receive signals
         signal_read_fd, signal_write_fd = os.pipe()
@@ -274,6 +278,7 @@ def main(config):
 
         logging.info("Pool manager exiting")
     finally:
+        sock_server.close()
         os.waitpid(proxy_pid, 0)
 
 def make_cli(config):

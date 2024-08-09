@@ -1,9 +1,10 @@
 """
 Steps only used for testing, and loaded through the plugin system.
 """
-import logging
 import os
+import sys
 import time
+import logging
 import signal
 
 import psutil
@@ -244,3 +245,8 @@ def meta_error():
     A valid meta step returning a task which itself fails
     """
     return raises_error
+
+@step
+def echo(to_stdout: str, to_stderr: str):
+    print(to_stdout, file=sys.stdout)
+    print(to_stderr, file=sys.stderr)
