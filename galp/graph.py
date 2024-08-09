@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 import galp.task_types as gtt
 from galp.default_resources import get_resources
-from galp.task_types import (StepType, TaskNode, CoreTaskDef, QueryTaskDef)
+from galp.task_types import TaskNode, CoreTaskDef, QueryTaskDef
 
 MODULE_SEPARATOR: str = '::'
 
@@ -64,7 +64,7 @@ def make_core_task(stp: 'Step', args: list[Any], kwargs: dict[str, Any],
 
     return TaskNode(task_def=ndef, dependencies=nodes)
 
-class Step(StepType):
+class Step:
     """Object wrapping a function that can be called as a pipeline step
 
     'Step' refer to the function itself, 'Task' to the function with its
@@ -100,13 +100,6 @@ class Step(StepType):
         """
         return make_core_task(self, args, kwargs, get_resources(), **self.task_options)
 
-    def __getitem__(self, index):
-        """
-        Return a new step representing the eventual result of injecting then
-        subscripting this step
-        """
-        return SubStep(self, index)
-
     def __get__(self, obj, objtype=None):
         """
         Normally, a function wrapper can be transparently applied to methods too
@@ -118,26 +111,6 @@ class Step(StepType):
         """
 
         raise NotImplementedError('Cannot only wrap functions, not methods')
-
-class SubStep(StepType):
-    """
-    Step representing the indexation of the result of an other step
-    """
-    def __init__(self, parent, index):
-        self.parent = parent
-        self.index = index
-
-    def __call__(self, *args, **kwargs):
-        """
-        Inject and call the parent step, then index the resulting task
-        """
-        return self.parent(*args, **kwargs)[self.index]
-
-    def make_task(self, args, kwargs):
-        """
-        Create parent task and subscript it.
-        """
-        return self.parent.make_task(args, kwargs)[self.index]
 
 class NoSuchStep(ValueError):
     """

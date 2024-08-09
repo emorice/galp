@@ -319,8 +319,6 @@ def ensure_task_node(obj: Any) -> 'TaskNode':
     """
     if isinstance(obj, TaskNode):
         return obj
-    if isinstance(obj, StepType):
-        return obj()
     return make_literal_task(obj)
 
 def ensure_task_input(obj: Any) -> tuple[TaskInput, Task]:
@@ -359,18 +357,6 @@ def make_task_def(cls: type[T], attrs, extra=None) -> T:
 # Literal and child tasks
 # ------------------------
 
-# pylint: disable=too-few-public-methods
-# This is a forward declaration of graph.Step
-# Issue #82
-class StepType(ABC):
-    """
-    Root of step type hierarchy
-    """
-
-    @abstractmethod
-    def __call__(self, *args, **kwargs) -> TaskNode:
-        raise NotImplementedError
-
 class Serialized(GenSerialized[TaskRef]):
     """
     A serialized task result
@@ -385,8 +371,6 @@ class TaskSerializer(Serializer[Task, TaskRef]):
     @classmethod
     def as_nat(cls, obj: Any) -> Task | None:
         match obj:
-            case StepType():
-                return obj()
             case TaskNode() | TaskRef():
                 return obj
             case _:

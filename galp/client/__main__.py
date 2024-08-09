@@ -36,7 +36,7 @@ args = parser.parse_args()
 galp.cli.setup('client', args.log_level)
 
 module = import_module(args.module)
-_target = getattr(module, args.target)
+_target = getattr(module, args.target)()
 
 async def run(target):
     """

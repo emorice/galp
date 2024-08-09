@@ -245,7 +245,7 @@ async def test_missing_argument(client):
         # This must raise with a TypeError at graph construction time and not a
         # TaskFailedError at runtime.
         with pytest.raises(TypeError) as err:
-            await client.run(gts.arange, dry_run=True)
+            await client.run(gts.arange(), dry_run=True)
         print(err)
 
 async def test_rerun_local(client, tmp_path):

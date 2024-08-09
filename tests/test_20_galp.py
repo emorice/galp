@@ -366,34 +366,10 @@ async def test_gather_structured(client):
     assert ans['t1'] == 3
     assert ans['t2'] == 4
 
-async def test_auto_call(client):
-    """
-    When steps are given to the client, call them to make them into tasks
-    """
-    step = gts.hello # not hello()
-
-    async with timeout(3):
-        ans = await client.run(step)
-
-    assert ans == step.function()
-
 async def test_collect_empty(client):
     """
     Handle it gracefully if we collect a constant structure
     """
     async with timeout(3):
-        ans = await client.run(gts.empty)
+        ans = await client.run(gts.empty())
     assert len(ans) == 0
-
-async def test_structured_autocalls(client):
-    """
-    Run a structure with some members being Steps to convert
-    """
-    step = gts.hello # not hello()
-
-    struct = {'msg': step}
-
-    async with timeout(3):
-        ans = await client.run(struct)
-
-    assert ans['msg'] == step.function()

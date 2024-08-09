@@ -217,8 +217,9 @@ def sum_dict(some_dict):
         tot += some_dict[key]
     return tot
 
-# Trivial empty target for CLI galp.client
-empty: list = []
+def empty() -> list:
+    """Trivial empty target for CLI galp.client """
+    return []
 
 @step
 def meta(values):
@@ -244,7 +245,7 @@ def meta_error():
     """
     A valid meta step returning a task which itself fails
     """
-    return raises_error
+    return raises_error()
 
 @step
 def echo(to_stdout: str, to_stderr: str):

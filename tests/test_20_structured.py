@@ -50,7 +50,7 @@ def test_resume_meta(run):
     """
     Run a meta-task with a failing child twice to force resumed collection
     """
-    meta_fail = gts.meta_error
+    meta_fail = gts.meta_error()
 
     with pytest.raises(galp.TaskFailedError):
         run(meta_fail)
