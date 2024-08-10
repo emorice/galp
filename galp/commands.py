@@ -183,12 +183,28 @@ def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found]:
 # once galp.query gets re-written more flexibly
 
 def ssubmit(task: gtt.Task, options: ExecOptions = ExecOptions()
+            ) -> CommandLike[gtt.ResultRef]:
+    """
+    Caching wrapper around _inner_submit, to handle correctly diamond
+    dependencies
+    """
+    def _inner(next_task: gtt.Task,
+               next_ssubmit: Callable[[gtt.Task], CommandLike[gtt.ResultRef]]
+               ) -> CommandLike[gtt.ResultRef]:
+        return _inner_ssubmit(next_task, options, next_ssubmit)
+    caching_ssubmit = recursive_async_cache(_inner)
+    return caching_ssubmit(task)
+
+def _inner_ssubmit(task: gtt.Task, options: ExecOptions,
+                  next_ssubmit: Callable[[gtt.Task], CommandLike[gtt.ResultRef]]
             ) -> Command[gtt.ResultRef]:
     """
     A non-recursive ("simple") task submission: executes dependencies, but not
     children. Return said children as result on success.
     """
-    return safe_stat(task).then(lambda statr: _ssubmit(task, statr, options))
+    return safe_stat(task).then(
+            lambda statr: _ssubmit(task, statr, options, next_ssubmit)
+            )
 
 def _upload(task: gtt.Task, stat_result: gr.Found | gr.StatDone
         ) -> CommandLike[gtt.ResultRef]:
@@ -229,7 +245,9 @@ def _upload(task: gtt.Task, stat_result: gr.Found | gr.StatDone
             assert False, 'Bad task type'
 
 def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
-             options: ExecOptions) -> CommandLike[gtt.ResultRef]:
+             options: ExecOptions,
+             next_ssubmit: Callable[[gtt.Task], CommandLike[gtt.ResultRef]]
+             ) -> CommandLike[gtt.ResultRef]:
     """
     Core ssubmit logic, recurse on dependencies and skip done tasks
     """
@@ -263,7 +281,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
     # Issue 79: optimize type of command based on type of link
     # Always doing a RSUB will work, but it will run things more eagerly that
     # needed or propagate failures too aggressively.
-    gather_deps = collect([rsubmit(dep, options) for dep in deps],
+    gather_deps = collect([rsubmit(dep, options, next_ssubmit) for dep in deps],
                          options.keep_going)
 
     # Issue final command
@@ -312,8 +330,9 @@ def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
             )
 
 
-def rsubmit(task: gtt.Task, options: ExecOptions
-            ) -> Command[gtt.RecResultRef]:
+def rsubmit(task: gtt.Task, options: ExecOptions,
+            ssubmit_function: Callable[[gtt.Task], CommandLike[gtt.ResultRef]] | None
+            = None) -> CommandLike[gtt.RecResultRef]:
     """
     Recursive submit, with children, i.e a ssubmit plus a rsubmit per child
 
@@ -330,10 +349,17 @@ def rsubmit(task: gtt.Task, options: ExecOptions
     This is the intended behavior, it reflects the inherent limit of a dry-run:
     part of the task graph is unknown before we actually start executing it.
     """
+    if ssubmit_function is None:
+        def _inner(next_task: gtt.Task,
+                   next_ssubmit: Callable[[gtt.Task], CommandLike[gtt.ResultRef]]
+                   ) -> CommandLike[gtt.ResultRef]:
+            return _inner_ssubmit(next_task, options, next_ssubmit)
+        ssubmit_function = recursive_async_cache(_inner)
+
     return (
-            ssubmit(task, options)
+            ssubmit_function(task)
             .then(lambda res: collect(
-                [rsubmit(c, options) for c in res.children],
+                [rsubmit(c, options, ssubmit_function) for c in res.children],
                 options.keep_going)
                   .then(lambda child_results: Ok(
                       gtt.RecResultRef(res, child_results)
@@ -341,7 +367,7 @@ def rsubmit(task: gtt.Task, options: ExecOptions
                   )
             )
 
-def run(task: gtt.Task, options: ExecOptions) -> Command[object]:
+def run(task: gtt.Task, options: ExecOptions) -> CommandLike[object]:
     """
     Combined rsubmit + rget
 
@@ -355,7 +381,7 @@ def run(task: gtt.Task, options: ExecOptions) -> Command[object]:
 # once galp.query gets re-written more flexibly
 
 def srun(task: gtt.Task, options: ExecOptions = ExecOptions()
-         ) -> Command[object]:
+         ) -> CommandLike[object]:
     """
     Shallow run: combined ssubmit + sget, fetches the raw result of a task but
     not its children

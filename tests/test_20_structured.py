@@ -25,7 +25,7 @@ def assert_task_equal(client):
     """
     async def _assert_task_equal(task, result):
         async with timeout(5):
-            assert result == await client.run(task)
+            assert result == await client.run(task, verbose=True)
     return _assert_task_equal
 
 async def test_meta_step(assert_task_equal):
