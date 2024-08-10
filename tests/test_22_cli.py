@@ -66,10 +66,10 @@ async def test_cli_jobs(tmpdir):
     """
     Start a pool from cli
     """
-    out = await run(f'python3 -m galp.client -s {tmpdir} -j 2 galp.steps galp_hello '
+    out = await run(f'python3 -m galp.client -s {tmpdir} -j 2 tests.steps hello '
         '--log-level=info --pin-workers')
 
-    assert out == str(galp.steps.galp_hello.function())
+    assert out == str(gts.hello.function())
 
 async def test_cli_keep_going(tmpdir):
     """

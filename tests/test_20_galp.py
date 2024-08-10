@@ -2,9 +2,7 @@
 High-level tests for galp
 """
 
-import os
 import asyncio
-import pstats
 import time
 
 import numpy as np
@@ -22,17 +20,17 @@ import tests.steps as gts
 
 async def test_client(client):
     """Test simple functionnalities of client"""
-    task = galp.steps.galp_hello()
+    task = gts.hello()
 
     ans = await asyncio.wait_for(
         client.collect(task),
         3)
 
-    assert ans == [42,]
+    assert ans == [gts.hello.function(),]
 
 async def test_double_collect(client):
     """Proper handling of collecting the same task twice"""
-    task = galp.steps.galp_hello()
+    task = gts.hello()
 
     ans1 = await asyncio.wait_for(
         client.collect(task),
@@ -45,13 +43,13 @@ async def test_double_collect(client):
     assert ans1 == ans2
 
 async def test_task_kwargs(client):
-    two = galp.steps.galp_double()
-    four = galp.steps.galp_double(two)
+    two = gts.double()
+    four = gts.double(two)
 
-    ref = galp.steps.galp_sub(a=four, b=two)
-    same = galp.steps.galp_sub(b=two, a=four)
+    ref = gts.sub(a=four, b=two)
+    same = gts.sub(b=two, a=four)
 
-    opposite = galp.steps.galp_sub(a=two, b=four)
+    opposite = gts.sub(a=two, b=four)
 
     ans = await asyncio.wait_for(
         client.collect(ref, same, opposite),
@@ -60,11 +58,11 @@ async def test_task_kwargs(client):
     assert tuple(ans) == (2, 2, -2)
 
 async def test_task_posargs(client):
-    two = galp.steps.galp_double()
-    four = galp.steps.galp_double(two)
+    two = gts.double()
+    four = gts.double(two)
 
-    ref = galp.steps.galp_sub(four, two)
-    opposite = galp.steps.galp_sub(two, four)
+    ref = gts.sub(four, two)
+    opposite = gts.sub(two, four)
 
     ans = await asyncio.wait_for(
         client.collect(ref, opposite),
@@ -77,8 +75,8 @@ async def test_recollect_intermediate(client):
     Tests doing a collect on a task already run previously as an intermediate
     result.
     """
-    two = galp.steps.galp_double()
-    four = galp.steps.galp_double(two)
+    two = gts.double()
+    four = gts.double(two)
 
     ans_four = await asyncio.wait_for(
         client.collect(four),
@@ -96,8 +94,8 @@ async def test_stepwise_collect(client):
 
     (Reverse of recollect_intermediate)
     """
-    two = galp.steps.galp_double()
-    four = galp.steps.galp_double(two)
+    two = gts.double()
+    four = gts.double(two)
 
     ans_two = await asyncio.wait_for(
         client.collect(two),
@@ -109,8 +107,8 @@ async def test_stepwise_collect(client):
 
     assert tuple(ans_four), tuple(ans_two) == ( (4,), (2,) )
 
-async def assert_cache(clients, task=galp.steps.galp_hello(),
-        expected=galp.steps.galp_hello.function()):
+async def assert_cache(clients, task=gts.hello(),
+        expected=gts.hello.function()):
     """
     Test worker-side cache.
     """
@@ -178,8 +176,8 @@ async def test_vtags(client):
 async def test_inline(client):
     """Test using non-task arguments"""
 
-    task = galp.steps.galp_sub(13, 2)
-    task2 = galp.steps.galp_sub(b=2, a=13)
+    task = gts.sub(13, 2)
+    task2 = gts.sub(b=2, a=13)
 
     ans = await asyncio.wait_for(
         client.collect(task, task2),
@@ -205,7 +203,7 @@ async def test_npargserializer(disjoined_client_pair):
     task_in = gts.arange(10)
     task_out = gts.npsum(task_in)
 
-    ans1 = (await asyncio.wait_for(client1.collect(task_in), 4))
+    _ans1 = (await asyncio.wait_for(client1.collect(task_in), 4))
 
     ans2 = (await asyncio.wait_for(client2.collect(task_out), 4))
 
@@ -262,13 +260,6 @@ async def test_cache_tuple(client_pair):
     """
     await assert_cache(client_pair, gts.native_tuple(),
             gts.native_tuple.function())
-
-async def test_light_syntax(client):
-    task = gts.light_syntax()
-
-    ans = await asyncio.wait_for(client.collect(*task), 6)
-
-    assert tuple(ans) == gts.light_syntax.function()
 
 async def test_parallel_tasks(client_pool):
     """

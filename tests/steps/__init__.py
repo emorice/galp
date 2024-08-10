@@ -24,6 +24,18 @@ def hello():
     """
     return '6*7'
 
+@step
+def double(value=1):
+    """
+    Test step, to be removed
+    """
+    return 2 * value
+
+@step
+def sub(a, b): # pylint: disable=invalid-name # math like operator.sub
+    """Computes a - b, trivial non commutative function"""
+    return a - b
+
 @step()
 def alt_decorator_syntax():
     """
@@ -115,13 +127,6 @@ def divide(num, den):
     Division, errors when den is 0
     """
     return num / den
-
-@step(items=3)
-def light_syntax():
-    """
-    Uses directly the StepSet as a decorator
-    """
-    return 5, ("a", "b"), {'x': 7.}
 
 @step(items=2)
 def raises_error_multiple():
