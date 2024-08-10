@@ -154,7 +154,7 @@ def dump_model(model: Any) -> bytes:
         dump = model.model_dump()
     else:
         dump = (
-                RootModel[type(model)] # type: ignore[misc] # pydantic magic
+                RootModel[type(model)] # type: ignore[operator, misc] # pydantic magic
                 (model).model_dump()
                 )
     return msgpack.dumps(dump)

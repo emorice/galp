@@ -26,7 +26,7 @@ import galp.net.core.types as gm
 import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
-from galp.result import Result, Ok, Error, Progress
+from galp.result import Result, Ok, Error
 
 from galp.config import load_config
 from galp.store import StoreReadError

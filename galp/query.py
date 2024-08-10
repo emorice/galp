@@ -15,7 +15,7 @@ from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .asyn import as_command, collect, collect_dict
 
 def run_task(task: TaskNode, options: cm.ExecOptions
-             ) -> cm.Command[object]:
+             ) -> cm.CommandLike[object]:
     """
     Creates command appropriate to type of task (query or non-query)
     """
@@ -88,7 +88,7 @@ class Operator:
         self._required = None
 
     @staticmethod
-    def requires(task: gtt.Task) -> cm.Command:
+    def requires(task: gtt.Task) -> cm.CommandLike:
         """
         Pre-req
         """
