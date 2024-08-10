@@ -8,8 +8,6 @@ import time
 import numpy as np
 from async_timeout import timeout
 
-import galp.steps
-import galp.client
 import tests.steps as gts
 
 # pylint: disable=redefined-outer-name
@@ -43,6 +41,7 @@ async def test_double_collect(client):
     assert ans1 == ans2
 
 async def test_task_kwargs(client):
+    """Make tasks with keyword arguments"""
     two = gts.double()
     four = gts.double(two)
 
@@ -58,6 +57,7 @@ async def test_task_kwargs(client):
     assert tuple(ans) == (2, 2, -2)
 
 async def test_task_posargs(client):
+    """Make tasks with positional arguments"""
     two = gts.double()
     four = gts.double(two)
 

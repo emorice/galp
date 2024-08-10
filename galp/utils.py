@@ -9,8 +9,8 @@ import galp.asyn as ga
 from galp.result import Result, Ok
 from galp.net.core.types import Get
 from galp.store import Store
-from galp.task_types import TaskName, TaskRef, Task, CoreTaskDef, TaskSerializer
-from galp.graph import load_step_by_key
+from galp.task_types import (TaskName, TaskRef, Task, CoreTaskDef,
+    TaskSerializer, load_step_by_key)
 from galp.query import collect_task_inputs
 
 def prepare_task(task_name: TaskName, store_path: str) -> partial:

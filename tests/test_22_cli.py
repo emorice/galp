@@ -10,7 +10,6 @@ from async_timeout import timeout
 
 import pytest
 
-import galp
 import tests.steps as gts
 
 async def run(command):

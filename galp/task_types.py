@@ -2,183 +2,25 @@
 Abstract task types definitions
 """
 
-from dataclasses import dataclass
-from enum import Enum
+import inspect
+import functools
+import logging
 import hashlib
-from typing import (Any, Literal, Union, Annotated, TypeAlias, TypeVar,
-        Iterable, Sequence, Callable)
+from importlib import import_module
+from typing import Any, TypeAlias, TypeVar, Iterable, Sequence, Callable
+from dataclasses import dataclass
 
 import msgpack # type: ignore[import] # Issue #85
-from pydantic_core import CoreSchema, core_schema
-from pydantic import (GetCoreSchemaHandler, BaseModel, Field, PlainSerializer,
-        model_validator)
+from pydantic import BaseModel, model_validator
 
+from galp.task_defs import (TaskName, TaskDef, LiteralTaskDef, TaskInput,
+                            ResourceClaim, TaskOp, BaseTaskDef, CoreTaskDef,
+                            ChildTaskDef, QueryTaskDef)
+from galp.default_resources import get_resources
 from galp.serializer import Serializer, GenSerialized, dump_model
-import galp.steps
 
 # Core task type definitions
 # ==========================
-
-# Task defs: flat objects describing tasks
-# ----------------------------------------
-
-class TaskName(bytes):
-    """
-    Simpler wrapper around bytes with a shortened, more readable repr
-    """
-    SIZE = 32
-    def __new__(cls, content):
-        bts = super().__new__(cls, content)
-        if len(bts) != cls.SIZE:
-            raise TypeError(f'TaskName must be {cls.SIZE} bytes long')
-        return bts
-
-    def __repr__(self):
-        return self.__str__()
-
-    def __str__(self):
-        _hex = self.hex()
-        return _hex[:7]
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls, source_type: Any, handler: GetCoreSchemaHandler
-    ) -> CoreSchema:
-        """
-        Pydantic magic straight out of the docs to validate as bytes
-        """
-        _ = source_type
-        return core_schema.no_info_after_validator_function(cls, handler(bytes))
-
-class TaskOp(str, Enum):
-    """
-    Modifiers to apply to a Task reference
-    """
-    SUB = '$sub'
-    BASE = '$base'
-
-    def __repr__(self):
-        return self.value
-
-class TaskInput(BaseModel):
-    """
-    An object that describes how a task depends on an other task.
-
-    For now, the only allowed formats are:
-     * '$sub', task : means that the task should be run recursively and the final
-        result passed as input to the downstream task. In some places '$sub' is
-        omitted for backward compatibility.
-     * '$base', task : means that the task should be run non-recursively and the
-        immediate result passed as input to the downstream task
-    """
-    op: Annotated[TaskOp, PlainSerializer(lambda op: op.value)]
-    name: TaskName
-
-class BaseTaskDef(BaseModel):
-    """
-    Base class for task def objects
-
-    Attributes:
-        scatter: number of child tasks statically allowed
-    """
-    name: TaskName
-    scatter: int | None = None
-
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
-        """
-        Dependencies referenced inside this definition.
-
-        If mode is '$base', this returns only tasks that are upstream of this
-        task, that is, task whose successful completion is required before this
-        task can run.
-
-        If mode is '$sub', this returns also the children tasks, that is, the
-        tasks whose execution is independent from this task, but are referenced
-        by this task and whose value would eventually be needed to construct the
-        full result of this task.
-
-        Note that since this is only from the definition, only statically known
-        children tasks can be returned. Running the task may generate further
-        dynamic child tasks.
-        """
-        raise NotImplementedError
-
-@dataclass(frozen=True)
-class ResourceClaim:
-    """
-    Resources claimed by a task
-    """
-    cpus: int = Field(ge=0)
-
-# False positive https://github.com/pydantic/pydantic/issues/3125
-class CoreTaskDef(BaseTaskDef): # type: ignore[no-redef]
-    """
-    Information defining a core Task, i.e. bound to the remote execution of a
-    function
-    """
-    task_type: Literal['core'] = Field('core', repr=False)
-
-    step: str
-    args: list[TaskInput]
-    kwargs: dict[str, TaskInput]
-    vtags: list[str] # ideally ascii
-    resources: ResourceClaim
-
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
-        # Only base deps
-        return [*self.args, *self.kwargs.values()]
-
-class ChildTaskDef(BaseTaskDef):
-    """
-    Information defining a child Task, i.e. one item of Task returning a tuple.
-    """
-    task_type: Literal['child'] = Field('child', repr=False)
-
-    parent: TaskName
-    index: int
-
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
-        # SubTask, the (base) dependency is the parent task
-        return [ TaskInput(op=TaskOp.BASE, name=self.parent) ]
-
-class LiteralTaskDef(BaseTaskDef):
-    """
-    Information defining a literal Task, i.e. a constant.
-    """
-    task_type: Literal['literal'] = Field('literal', repr=False)
-
-    children: list[TaskName]
-
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
-        match mode:
-            case TaskOp.BASE:
-                return []
-            case TaskOp.SUB:
-                return [TaskInput(op=TaskOp.SUB, name=child) for child in
-                        self.children]
-
-class QueryTaskDef(BaseTaskDef):
-    """
-    Information defining a query Task, i.e. a task with a modifier.
-
-    There is some overlap with a TaskInput, in that TaskInputs are essentially a
-    subset of queries that are legal to use as inputs to an other task. Ideally
-    any query should be usable and both types could be merged back.
-
-    Also, child tasks could eventually be implemented as queries too.
-    """
-    task_type: Literal['query'] = Field('query', repr=False)
-
-    subject: TaskName
-    query: Any # Query type is not well specified yet
-
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
-        raise NotImplementedError
-
-TaskDef = Annotated[
-        Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef],
-        Field(discriminator='task_type')
-        ]
 
 # Tasks: possibly recursive objects representing graphs of tasks
 # --------------------------------------------------------------
@@ -249,7 +91,7 @@ class TaskNode:
             assert index <= self.scatter, 'Indexing past declared scatter'
             return make_child_task(self, index)
         # Hard getitem, we actually insert an extra task
-        return galp.steps.getitem(self, index)
+        return getitem(self, index)
 
     def __eq__(self, other: object) -> bool:
         match other:
@@ -517,3 +359,190 @@ class Resources:
         Return allocated resources
         """
         return Resources(self.cpus + resources.cpus)
+
+# Steps, i.e. Core Task makers
+# ============================
+
+MODULE_SEPARATOR: str = '::'
+
+def raise_if_bad_signature(stp: 'Step', args, kwargs) -> None:
+    """
+    Check arguments number and names so that we can fail when creating a step
+    and not only when we run it
+    """
+    try:
+        inspect.signature(stp.function).bind(*args, **kwargs)
+    except TypeError as exc:
+        raise TypeError(
+                f'{stp.function.__qualname__}() {str(exc)}'
+                ) from exc
+
+def make_core_task(stp: 'Step', args: tuple, kwargs: dict[str, Any],
+                   resources: ResourceClaim,
+                   vtag: str | None = None, items: int | None = None,
+                   ) -> TaskNode:
+    """
+    Build a core task from a function call
+    """
+    # Before anything else, type check the call. This ensures we don't wait
+    # until actually trying to run the task to realize we're missing
+    # arguments.
+    raise_if_bad_signature(stp, args, kwargs)
+
+    # Collect all arguments as nodes
+    arg_inputs = []
+    kwarg_inputs = {}
+    nodes = []
+    for arg in args:
+        tin, node = ensure_task_input(arg)
+        arg_inputs.append(tin)
+        nodes.append(node)
+    for key, arg in kwargs.items():
+        tin, node = ensure_task_input(arg)
+        kwarg_inputs[key] = tin
+        nodes.append(node)
+
+    tdef = {
+            'args': arg_inputs,
+            'kwargs': kwarg_inputs,
+            'step': stp.key,
+            'vtags': ([ascii(vtag) ] if vtag is not None else []),
+            'scatter':items,
+            'resources': resources
+            }
+
+    ndef = make_task_def(CoreTaskDef, tdef)
+
+    return TaskNode(task_def=ndef, dependencies=nodes)
+
+class Step:
+    """Object wrapping a function that can be called as a pipeline step
+
+    'Step' refer to the function itself, 'Task' to the function with its
+    arguments: 'add' is a step, 'add(3, 4)' a task. You can run a step twice,
+    with different arguments, but that would be two different tasks, and a task
+    is only ever run once.
+
+    Args:
+        items: int, signal this task eventually returns a collection of items
+            objects, and allows to index or iterate over the task to generate
+            handle pointing to the individual items.
+    """
+
+    def __init__(self, function: Callable, is_view: bool = False, **task_options):
+        self.function = function
+        self.key = function.__module__ + MODULE_SEPARATOR + function.__qualname__
+        self.task_options = task_options
+        self.is_view = is_view
+        functools.update_wrapper(self, self.function)
+
+    def __call__(self, *args, **kwargs) -> TaskNode:
+        """
+        Symbolically call the function wrapped by this step, returning a Task
+        object representing the eventual result.
+        """
+        return make_core_task(self, args, kwargs, get_resources(), **self.task_options)
+
+    def __get__(self, obj, objtype=None):
+        """
+        Normally, a function wrapper can be transparently applied to methods too
+        through the descriptor protocol, but it's not clear what galp should do
+        in that case, so we explicitly error out.
+
+        The special function is defined anyway because code may rely on it to
+        detect that the Step object is a function wrapper.
+        """
+
+        raise NotImplementedError('Cannot only wrap functions, not methods')
+
+class NoSuchStep(ValueError):
+    """
+    No step with the given name has been registered
+    """
+
+def step(*decorated, **options):
+    """Decorator to make a function a step.
+
+    This has two effects:
+        * it makes the function a delayed function, so that calling it will
+          return an object pointing to the actual function, not actually
+          execute it. This object is the Task.
+        * it register the function and information about it in a event
+          namespace, so that it can be called from a key.
+
+    For convenience, the decorator can be applied in two fashions:
+    ```
+    @step
+    def foo():
+        pass
+    ```
+    or
+    ```
+    @step(param=value, ...)
+    def foo():
+        pass
+    ```
+    This is allowed because the decorator checks whether it was applied
+    directly to the function, or called with named arguments. In the second
+    case, note that arguments must be given by name for the call to be
+    unambiguous.
+
+    See Task for the possible options.
+    """
+    def _step_maker(function):
+        return Step(function, **options)
+
+    if decorated:
+        return _step_maker(*decorated)
+    return _step_maker
+
+def view(*decorated, **options):
+    """
+    Shortcut to register a view step
+    """
+    options['is_view'] = True
+    return step(*decorated, **options)
+
+def query(subject: Any, query_doc: Any) -> TaskNode:
+    """
+    Build a Query task node
+    """
+    subj_node = ensure_task_node(subject)
+    tdef = {'query': query_doc, 'subject': subj_node.name}
+    return TaskNode(
+            task_def=make_task_def(
+                QueryTaskDef, tdef
+                ),
+            dependencies=[subj_node]
+            )
+
+def load_step_by_key(key: str) -> Step:
+    """
+    Try to import the module containing a step and access such step
+
+    Raises:
+        NoSuchStep: if loading the module or accessing the step fails
+    """
+    module_name, step_name = key.split(MODULE_SEPARATOR)
+
+    try:
+        module = import_module(module_name)
+    except ModuleNotFoundError as exc:
+        logging.error('Error while loading step %s: could not import module %s',
+                key, module_name)
+        raise NoSuchStep(key) from exc
+
+    try:
+        return getattr(module, step_name)
+    except AttributeError as exc:
+        logging.error(
+        'Error while loading step %s: could not import find step %s in %s',
+                key, step_name, module_name)
+        raise NoSuchStep(key) from exc
+
+@step
+def getitem(obj, index):
+    """
+    Task representing obj[index]
+    """
+    return obj[index]

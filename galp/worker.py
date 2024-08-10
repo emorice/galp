@@ -20,7 +20,6 @@ import psutil
 import zmq
 import zmq.asyncio
 
-import galp.steps # FIXME: this avoids a circular import but that's clearly bad
 import galp.cli
 import galp.net.core.types as gm
 import galp.net.requests.types as gr
@@ -33,8 +32,7 @@ from galp.store import StoreReadError
 from galp.protocol import make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import collect_task_inputs
-from galp.graph import load_step_by_key, NoSuchStep
-from galp.task_types import TaskRef
+from galp.task_types import TaskRef, load_step_by_key, NoSuchStep
 from galp.net_store import handle_get, handle_stat, handle_upload
 from galp.net.core.dump import add_request_id, Writer, get_request_id
 from galp.asyn import filter_commands

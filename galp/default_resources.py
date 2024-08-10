@@ -6,7 +6,7 @@ from contextvars import ContextVar, Token
 from contextlib import contextmanager
 from dataclasses import asdict
 
-from galp.task_types import ResourceClaim
+from galp.task_defs import ResourceClaim
 
 
 _resources: ContextVar[ResourceClaim] = ContextVar(

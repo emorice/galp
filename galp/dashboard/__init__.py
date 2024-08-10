@@ -13,8 +13,7 @@ import galp.commands as cm
 import galp.asyn as ga
 from galp.net.core.types import Get
 from galp.task_types import (TaskSerializer, TaskNode, CoreTaskDef, Serialized,
-    TaskRef)
-from galp.graph import load_step_by_key
+    TaskRef, load_step_by_key)
 from galp.store import Store
 from galp.result import Result, Ok
 from galp.utils import collect_args
