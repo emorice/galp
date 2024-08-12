@@ -7,7 +7,7 @@ from typing import Union, Any, Annotated, Literal
 from dataclasses import dataclass
 
 from pydantic_core import CoreSchema, core_schema
-from pydantic import GetCoreSchemaHandler, BaseModel, Field, PlainSerializer
+from pydantic import GetCoreSchemaHandler, BaseModel, Field
 
 class TaskName(bytes):
     """
@@ -47,7 +47,8 @@ class TaskOp(str, Enum):
     def __repr__(self):
         return self.value
 
-class TaskInput(BaseModel):
+@dataclass
+class TaskInput:
     """
     An object that describes how a task depends on an other task.
 
@@ -58,7 +59,7 @@ class TaskInput(BaseModel):
      * '$base', task : means that the task should be run non-recursively and the
         immediate result passed as input to the downstream task
     """
-    op: Annotated[TaskOp, PlainSerializer(lambda op: op.value)]
+    op: TaskOp
     name: TaskName
 
 class BaseTaskDef(BaseModel):

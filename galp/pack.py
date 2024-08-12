@@ -60,9 +60,10 @@ def load_list(cls: type[L], doc: list, stream: list[bytes]
     return obj, stream
 
 def check_payload(cls):
-    """Parse and strip paylaod annotation"""
-    if _IsPayload in getattr(cls, '__metadata__', []):
-        return get_args(cls)[0], True
+    """Parse and strip paylaod and other annotations"""
+    if get_origin(cls) is Annotated:
+        orig_cls, *annotations = get_args(cls)
+        return orig_cls, _IsPayload in annotations
     return cls, False
 
 _FIELDS_CACHE: dict[object, list[tuple[str, bool, TypeMap | None, Any]]] = {}
@@ -105,9 +106,9 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
                 raise TypeError('list expected')
             # mypy doesn't like the narrowing of cls
             return load_list(cls, doc, stream) # type: ignore[type-var]
-        if not isinstance(doc, cls):
-            raise TypeError
-        return doc, stream # type: ignore[return-value]
+        # For all basic types, we assume they can be coerced by calling the
+        # constructor.
+        return cls(doc), stream # type: ignore[call-arg]
 
     if not isinstance(doc, dict):
         raise TypeError
@@ -190,6 +191,7 @@ def dump_part(obj: object) -> tuple[object, list[bytes]]:
             obj_dict[name] = attr_doc
         docstream.extend(extras)
 
+    print(obj_dict)
     return obj_dict, docstream
 
 def dump(obj: object) -> list[bytes]:
