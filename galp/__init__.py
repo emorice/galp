@@ -9,7 +9,7 @@ from .client import Client, TaskFailedError
 from .task_types import step, view, query
 from .default_resources import resources
 from .context import new_path
-from .utils import prepare_task
+from .utils import prepare_task, download
 
 def run(*tasks, **options):
     """

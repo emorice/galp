@@ -1,8 +1,11 @@
 """
-Shared utils for dashboard and debugging
+Pipeline-writer utils: dashboard, debugging, downloading
 """
 
 from functools import partial
+
+from urllib.request import urlretrieve
+from tqdm.auto import tqdm
 
 import galp.commands as cm
 import galp.asyn as ga
@@ -10,8 +13,10 @@ from galp.result import Result, Ok
 from galp.net.core.types import Get
 from galp.store import Store
 from galp.task_types import (TaskName, TaskRef, Task, CoreTaskDef,
-    TaskSerializer, load_step_by_key)
+    TaskSerializer, load_step_by_key, step)
 from galp.query import collect_task_inputs
+from galp.context import new_path
+
 
 def prepare_task(task_name: TaskName, store_path: str) -> partial:
     """
@@ -48,3 +53,29 @@ def collect_args(store: Store, task: Task, task_def: CoreTaskDef) -> tuple[list,
             _exec).unwrap()
 
     return args, kwargs
+
+def _download_hook(pbar):
+    def update(_iter, inc, total):
+        if not pbar.total:
+            pbar.reset(total)
+        pbar.update(inc)
+    return update
+
+@step
+def download(url: str, progress=True) -> str:
+    """
+    Retrieve file from url
+    """
+    path = new_path()
+    if progress:
+        pbar = tqdm(unit='B', unit_scale=True, delay=0.1, smoothing=0.02,
+                    mininterval=.5)
+        hook = _download_hook(pbar)
+    else:
+        hook = None
+    try:
+        urlretrieve(url, path, reporthook=hook)
+    finally:
+        if progress:
+            pbar.close()
+    return path

@@ -9,6 +9,7 @@ import numpy as np
 from async_timeout import timeout
 
 import tests.steps as gts
+import galp
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member
@@ -364,3 +365,13 @@ async def test_collect_empty(client):
     async with timeout(3):
         ans = await client.run(gts.empty())
     assert len(ans) == 0
+
+async def test_download(client):
+    """
+    Download a file with built in step
+    """
+    async with timeout(3):
+        path = await client.run(galp.download('https://github.com'))
+    with open(path, 'r', encoding='utf8') as stream:
+        txt = stream.read()
+    assert 'DOCTYPE html' in txt
