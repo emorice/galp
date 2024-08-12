@@ -5,9 +5,10 @@ Generalize asdict to handle unions, out-of-band data, and loading of list of
 dataclass instances
 """
 
-from dataclasses import field, fields, is_dataclass
+from dataclasses import fields, is_dataclass
 from functools import singledispatch
 from typing import TypeVar, get_args, get_origin, Any, Annotated
+from types import UnionType
 
 import msgpack # type:ignore[import-untyped]
 
@@ -64,6 +65,31 @@ def check_payload(cls):
         return get_args(cls)[0], True
     return cls, False
 
+_FIELDS_CACHE: dict[object, list[tuple[str, bool, TypeMap | None, Any]]] = {}
+
+def parse_fields(cls):
+    """
+    Extract relevant metadata from dataclass fields
+    """
+    field_list = []
+
+    for f in fields(cls):
+        orig_cls, is_payload = check_payload(f.type)
+        # Generate a type map for unions
+        if isinstance(orig_cls, UnionType):
+            typemap = TypeMap(dict(enumerate(get_args(orig_cls))))
+        else:
+            typemap = None
+
+        field_list.append((
+            f.name,
+            is_payload,
+            typemap,
+            orig_cls))
+
+    _FIELDS_CACHE[cls] = field_list
+    return field_list
+
 T = TypeVar('T')
 def load_part(cls: type[T], doc: object, stream: list[bytes]
               ) -> tuple[T, list[bytes]]:
@@ -86,26 +112,30 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
     if not isinstance(doc, dict):
         raise TypeError
     obj_dict = dict(doc)
-    for f in fields(cls):
-        item_cls, is_payload = check_payload(f.type)
+    try:
+        field_list = _FIELDS_CACHE[cls]
+    except KeyError:
+        field_list = parse_fields(cls)
+
+    for name, is_payload, typemap, item_cls in field_list:
         if is_payload:
             # Get data for this attribute from the rest of the stream
             attr_doc_buf, *stream = stream
             # Deserialize it, but shortcut bytes object
             if item_cls is bytes:
-                attr_doc = attr_doc_buf
+                attr_doc: Any = attr_doc_buf
             else:
                 attr_doc = msgpack.loads(attr_doc_buf)
         else:
             # Get data from the main dict
-            attr_doc = obj_dict[f.name]
+            attr_doc = obj_dict[name]
 
         # Then apply the corresponding loader
         # The loader can consume further stream items
-        if tmap := f.metadata.get('typemap'):
-            obj_dict[f.name], stream = tmap.load_part(attr_doc, stream)
+        if typemap:
+            obj_dict[name], stream = typemap.load_part(attr_doc, stream)
         else:
-            obj_dict[f.name], stream = load_part(item_cls, attr_doc, stream)
+            obj_dict[name], stream = load_part(item_cls, attr_doc, stream)
     return cls(**obj_dict), stream # type: ignore[return-value] # what
 
 def dump_list(obj: list) -> tuple[list, list[bytes]]:
@@ -131,27 +161,33 @@ def dump_part(obj: object) -> tuple[object, list[bytes]]:
     # Extract original attributes
     orig_obj_dict = vars(obj)
     obj_dict = {}
-    docstream = []
+    docstream: list[bytes] = []
 
-    for f in fields(obj):
+    try:
+        field_list = _FIELDS_CACHE[type(obj)]
+    except KeyError:
+        field_list = parse_fields(type(obj))
+
+    for name, is_payload, typemap, item_cls in field_list:
         # Apply the dumper for this attribute
         # The dumper can produce further stream items
-        if tmap := f.metadata.get('typemap'):
-            attr_doc, extras = tmap.dump_part(orig_obj_dict[f.name])
+        if typemap:
+            attr_doc, extras = typemap.dump_part(orig_obj_dict[name])
         else:
-            attr_doc, extras = dump_part(orig_obj_dict[f.name])
+            attr_doc, extras = dump_part(orig_obj_dict[name])
 
-        item_cls, is_payload = check_payload(f.type)
         if is_payload:
             # Put data for this attribute in the rest of the stream
             if item_cls is bytes:
+                if not isinstance(attr_doc, bytes):
+                    raise TypeError
                 attr_doc_buf = attr_doc
             else:
                 attr_doc_buf = msgpack.dumps(attr_doc)
             docstream.append(attr_doc_buf)
         else:
             # Put data in the main dict
-            obj_dict[f.name] = attr_doc
+            obj_dict[name] = attr_doc
         docstream.extend(extras)
 
     return obj_dict, docstream
@@ -165,10 +201,3 @@ def load(cls, msg: list[bytes]):
     """Load object from finalized root doc"""
     root_buf, *extras = msg
     return load_part(cls, msgpack.loads(root_buf), extras)
-
-# The two functions below return Fields, but type checker get confused if it
-# knows that
-def union(types):
-    """Mark a union field and the associated keys"""
-    # pylint: disable=invalid-field-call # We're defining a field
-    return field(metadata={'typemap': TypeMap(types)})

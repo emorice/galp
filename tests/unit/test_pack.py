@@ -4,7 +4,7 @@ Tests for pack
 from dataclasses import dataclass
 import pytest
 
-from galp.pack import union, dump, load, Payload
+from galp.pack import dump, load, Payload
 
 @dataclass(frozen=True)
 class A:
@@ -43,12 +43,12 @@ class E:
 @dataclass(frozen=True)
 class F:
     """member union"""
-    mem: A | B = union({'one': A, 'two': B})
+    mem: A | B
 
 @dataclass(frozen=True)
 class G:
     """payload member union with a payload"""
-    mem: Payload[A | D] = union({'one': A, 'two': D})
+    mem: Payload[A | D]
     l: list
 
 @dataclass(frozen=True)
