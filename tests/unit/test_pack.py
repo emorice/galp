@@ -6,33 +6,33 @@ import pytest
 
 from galp.pack import union, dump, load, Payload
 
-@dataclass
+@dataclass(frozen=True)
 class A:
     """simple dataclass"""
     x: int
 
-@dataclass
+@dataclass(frozen=True)
 class B:
     """nested dataclass"""
     x: float
     a: A
     z: str
 
-@dataclass
+@dataclass(frozen=True)
 class C:
     """basic type payload"""
     x: int
     y: Payload[bytes]
     z: float
 
-@dataclass
+@dataclass(frozen=True)
 class D:
     """dataclass payload"""
     x: int
     y: Payload[A]
     z: float
 
-@dataclass
+@dataclass(frozen=True)
 class E:
     """members with payload"""
     x: C # inline member with a payload
@@ -40,18 +40,18 @@ class E:
     z: Payload[C] # payload member with a payload
     a: str
 
-@dataclass
+@dataclass(frozen=True)
 class F:
     """member union"""
     mem: A | B = union({'one': A, 'two': B})
 
-@dataclass
+@dataclass(frozen=True)
 class G:
     """payload member union with a payload"""
     mem: Payload[A | D] = union({'one': A, 'two': D})
     l: list
 
-@dataclass
+@dataclass(frozen=True)
 class H:
     """list of dataclasses member"""
     l: list[list[C]]
