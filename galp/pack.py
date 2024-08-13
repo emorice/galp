@@ -7,7 +7,7 @@ dataclass instances
 
 from dataclasses import fields, is_dataclass
 from functools import singledispatch
-from typing import TypeVar, get_args, get_origin, Any, Annotated
+from typing import TypeVar, get_args, get_origin, Any, Annotated, Literal
 from types import UnionType
 
 import msgpack # type:ignore[import-untyped]
@@ -113,15 +113,20 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
     # Trivial guard for basic types
     if not is_dataclass(cls):
         orig = get_origin(cls)
-        if orig and issubclass(orig, list):
+        if orig is list:
             if not isinstance(doc, list):
                 raise TypeError('list expected')
             # mypy doesn't like the narrowing of cls
             return load_list(cls, doc, stream) # type: ignore[type-var]
-        if orig and issubclass(orig, dict):
+        if orig is dict:
             if not isinstance(doc, dict):
                 raise TypeError('dict expected')
             return load_dict(cls, doc, stream) # type: ignore[type-var]
+        if orig is Literal:
+            value, = get_args(cls)
+            if doc != value:
+                raise TypeError(f'{value} expected')
+            return value, stream # type: ignore[call-arg]
         # For all basic types, we assume they can be coerced by calling the
         # constructor.
         return cls(doc), stream # type: ignore[call-arg]

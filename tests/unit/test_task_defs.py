@@ -10,6 +10,7 @@ from galp.task_defs import (
         TaskInput,
         TaskOp,
         TaskName,
+        ResourceClaim,
         CoreTaskDef,
         ChildTaskDef,
         )
@@ -19,6 +20,15 @@ from galp.pack import dump, load
     TaskInput(
         op=TaskOp.BASE,
         name=TaskName(b'a'*32)
+        ),
+    CoreTaskDef(
+        name=TaskName(b'a'*32),
+        scatter=3,
+        step='some_function',
+        args=[TaskInput(TaskOp.SUB, TaskName(b'b'*32))],
+        kwargs={'opt': TaskInput(TaskOp.BASE, TaskName(b'c'*32))},
+        vtags=['0.1: test'],
+        resources=ResourceClaim(4),
         ),
     ])
 def test_pack_unpack(case):
