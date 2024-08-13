@@ -4,10 +4,10 @@ Task defs: flat objects describing tasks
 
 from enum import Enum
 from typing import Union, Any, Annotated, Literal
-from dataclasses import dataclass
+from dataclasses import dataclass, field, KW_ONLY
 
 from pydantic_core import CoreSchema, core_schema
-from pydantic import GetCoreSchemaHandler, BaseModel, Field
+from pydantic import GetCoreSchemaHandler, Field
 
 class TaskName(bytes):
     """
@@ -62,13 +62,15 @@ class TaskInput:
     op: TaskOp
     name: TaskName
 
-class BaseTaskDef(BaseModel):
+@dataclass
+class BaseTaskDef:
     """
     Base class for task def objects
 
     Attributes:
         scatter: number of child tasks statically allowed
     """
+    _: KW_ONLY
     name: TaskName
     scatter: int | None = None
 
@@ -98,44 +100,50 @@ class ResourceClaim:
     """
     cpus: int = Field(ge=0)
 
-# False positive https://github.com/pydantic/pydantic/issues/3125
-class CoreTaskDef(BaseTaskDef): # type: ignore[no-redef]
+@dataclass
+class CoreTaskDef(BaseTaskDef):
     """
     Information defining a core Task, i.e. bound to the remote execution of a
     function
     """
-    task_type: Literal['core'] = Field('core', repr=False)
-
+    _: KW_ONLY
     step: str
     args: list[TaskInput]
     kwargs: dict[str, TaskInput]
     vtags: list[str] # ideally ascii
     resources: ResourceClaim
 
+    task_type: Literal['core'] = field(default='core', repr=False)
+
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         # Only base deps
         return [*self.args, *self.kwargs.values()]
 
+@dataclass
 class ChildTaskDef(BaseTaskDef):
     """
     Information defining a child Task, i.e. one item of Task returning a tuple.
     """
-    task_type: Literal['child'] = Field('child', repr=False)
 
+    _: KW_ONLY
     parent: TaskName
     index: int
+
+    task_type: Literal['child'] = field(default='child', repr=False)
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         # SubTask, the (base) dependency is the parent task
         return [ TaskInput(op=TaskOp.BASE, name=self.parent) ]
 
+@dataclass
 class LiteralTaskDef(BaseTaskDef):
     """
     Information defining a literal Task, i.e. a constant.
     """
-    task_type: Literal['literal'] = Field('literal', repr=False)
-
+    _: KW_ONLY
     children: list[TaskName]
+
+    task_type: Literal['literal'] = field(default='literal', repr=False)
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         match mode:
@@ -145,6 +153,7 @@ class LiteralTaskDef(BaseTaskDef):
                 return [TaskInput(op=TaskOp.SUB, name=child) for child in
                         self.children]
 
+@dataclass
 class QueryTaskDef(BaseTaskDef):
     """
     Information defining a query Task, i.e. a task with a modifier.
@@ -155,10 +164,11 @@ class QueryTaskDef(BaseTaskDef):
 
     Also, child tasks could eventually be implemented as queries too.
     """
-    task_type: Literal['query'] = Field('query', repr=False)
-
+    _: KW_ONLY
     subject: TaskName
     query: Any # Query type is not well specified yet
+
+    task_type: Literal['query'] = field(default='query', repr=False)
 
     def dependencies(self, mode: TaskOp) -> list[TaskInput]:
         raise NotImplementedError
