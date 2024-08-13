@@ -13,6 +13,7 @@ from galp.task_defs import (
         ResourceClaim,
         CoreTaskDef,
         ChildTaskDef,
+        LiteralTaskDef,
         )
 from galp.pack import dump, load
 
@@ -30,6 +31,16 @@ from galp.pack import dump, load
         vtags=['0.1: test'],
         resources=ResourceClaim(4),
         ),
+    ChildTaskDef(
+        name=TaskName(b'a'*32),
+        parent=TaskName(b'b'*32),
+        index=3,
+        ),
+    LiteralTaskDef(
+        name=TaskName(b'a'*32),
+        children=[TaskName(b'b'*32), TaskName(b'c'*32)],
+        ),
+    # We're missing query, but these can't be serialized yet
     ])
 def test_pack_unpack(case):
     """

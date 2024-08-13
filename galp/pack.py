@@ -8,7 +8,7 @@ dataclass instances
 from dataclasses import fields, is_dataclass
 from functools import singledispatch
 from typing import TypeVar, get_args, get_origin, Any, Annotated, Literal
-from types import UnionType
+from types import UnionType, NoneType
 
 import msgpack # type:ignore[import-untyped]
 
@@ -109,6 +109,30 @@ def parse_fields(cls):
     return field_list
 
 T = TypeVar('T')
+def load_builtin(cls: type[T], doc: object, stream: list[bytes]
+              ) -> tuple[T, list[bytes]]:
+    """
+    Load basic (non-dataclass) types
+    """
+    orig = get_origin(cls)
+    if orig in (list, tuple):
+        # mypy doesn't like this way of narrowing cls
+        return load_list(cls, doc, stream) # type: ignore[type-var]
+    if orig is dict:
+        return load_dict(cls, doc, stream) # type: ignore[type-var]
+    if orig is Literal:
+        value, = get_args(cls)
+        if doc != value:
+            raise TypeError(f'{value} expected')
+        return value, stream # type: ignore[call-arg]
+    if cls is NoneType:
+        if doc is not None:
+            raise TypeError('None expected')
+        return None, stream # type: ignore[return-value]
+    # For all remaining basic types, we assume they can be coerced by calling
+    # the constructor: int, float, bool, str, bytes
+    return cls(doc), stream # type: ignore[call-arg]
+
 def load_part(cls: type[T], doc: object, stream: list[bytes]
               ) -> tuple[T, list[bytes]]:
     """
@@ -117,20 +141,7 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
     """
     # Trivial guard for basic types
     if not is_dataclass(cls):
-        orig = get_origin(cls)
-        if orig in (list, tuple):
-            # mypy doesn't like this way of narrowing cls
-            return load_list(cls, doc, stream) # type: ignore[type-var]
-        if orig is dict:
-            return load_dict(cls, doc, stream) # type: ignore[type-var]
-        if orig is Literal:
-            value, = get_args(cls)
-            if doc != value:
-                raise TypeError(f'{value} expected')
-            return value, stream # type: ignore[call-arg]
-        # For all basic types, we assume they can be coerced by calling the
-        # constructor.
-        return cls(doc), stream # type: ignore[call-arg]
+        return load_builtin(cls, doc, stream)
 
     if not isinstance(doc, dict):
         raise TypeError
@@ -189,9 +200,7 @@ def dump_part(obj: object) -> tuple[object, list[bytes]]:
     """
     # Trivial guard for basic types
     if not is_dataclass(obj):
-        if isinstance(obj, list):
-            return dump_list(obj)
-        if isinstance(obj, tuple):
+        if isinstance(obj, list | tuple):
             return dump_list(obj)
         if isinstance(obj, dict):
             return dump_dict(obj)

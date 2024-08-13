@@ -106,7 +106,6 @@ class CoreTaskDef(BaseTaskDef):
     Information defining a core Task, i.e. bound to the remote execution of a
     function
     """
-    _: KW_ONLY
     step: str
     args: list[TaskInput]
     kwargs: dict[str, TaskInput]
@@ -124,8 +123,6 @@ class ChildTaskDef(BaseTaskDef):
     """
     Information defining a child Task, i.e. one item of Task returning a tuple.
     """
-
-    _: KW_ONLY
     parent: TaskName
     index: int
 
@@ -140,7 +137,6 @@ class LiteralTaskDef(BaseTaskDef):
     """
     Information defining a literal Task, i.e. a constant.
     """
-    _: KW_ONLY
     children: list[TaskName]
 
     task_type: Literal['literal'] = field(default='literal', repr=False)
@@ -164,7 +160,6 @@ class QueryTaskDef(BaseTaskDef):
 
     Also, child tasks could eventually be implemented as queries too.
     """
-    _: KW_ONLY
     subject: TaskName
     query: Any # Query type is not well specified yet
 
