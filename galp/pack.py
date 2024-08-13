@@ -48,21 +48,26 @@ class TypeMap:
         return load_part(self.from_key[key], value_doc, stream)
 
 
-L = TypeVar('L', bound=list)
-def load_list(cls: type[L], doc: list, stream: list[bytes]
+L = TypeVar('L', list, tuple)
+def load_list(cls: type[L], doc: object, stream: list[bytes]
              ) -> tuple[L, list[bytes]]:
-    """Load a list"""
-    obj = cls()
-    type_var, = get_args(cls)
+    """Load a list or tuple"""
+    if not isinstance(doc, list):
+        raise TypeError('list expected')
+    obj = []
+    type_var, *_ellipsis = get_args(cls)
+    assert _ellipsis in ([], [...]), 'not supported yet'
     for item_doc in doc:
         item, stream = load_part(type_var, item_doc, stream)
         obj.append(item)
-    return obj, stream
+    return cls(obj), stream
 
 D = TypeVar('D', bound=dict)
-def load_dict(cls: type[D], doc: dict, stream: list[bytes]
+def load_dict(cls: type[D], doc: object, stream: list[bytes]
              ) -> tuple[D, list[bytes]]:
     """Load a dict"""
+    if not isinstance(doc, dict):
+        raise TypeError('dict expected')
     obj = cls()
     key_type_var, value_type_var = get_args(cls)
     for key_item_doc, value_item_doc in doc.items():
@@ -113,14 +118,10 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
     # Trivial guard for basic types
     if not is_dataclass(cls):
         orig = get_origin(cls)
-        if orig is list:
-            if not isinstance(doc, list):
-                raise TypeError('list expected')
-            # mypy doesn't like the narrowing of cls
+        if orig in (list, tuple):
+            # mypy doesn't like this way of narrowing cls
             return load_list(cls, doc, stream) # type: ignore[type-var]
         if orig is dict:
-            if not isinstance(doc, dict):
-                raise TypeError('dict expected')
             return load_dict(cls, doc, stream) # type: ignore[type-var]
         if orig is Literal:
             value, = get_args(cls)
@@ -160,8 +161,8 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
             obj_dict[name], stream = load_part(item_cls, attr_doc, stream)
     return cls(**obj_dict), stream # type: ignore[return-value] # what
 
-def dump_list(obj: list) -> tuple[list, list[bytes]]:
-    """Dump a list"""
+def dump_list(obj: list | tuple) -> tuple[list, list[bytes]]:
+    """Dump a list or tuple"""
     doc = []
     extras: list[bytes] = []
     for item in obj:
@@ -189,6 +190,8 @@ def dump_part(obj: object) -> tuple[object, list[bytes]]:
     # Trivial guard for basic types
     if not is_dataclass(obj):
         if isinstance(obj, list):
+            return dump_list(obj)
+        if isinstance(obj, tuple):
             return dump_list(obj)
         if isinstance(obj, dict):
             return dump_dict(obj)

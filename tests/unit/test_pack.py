@@ -53,8 +53,9 @@ class G:
 
 @dataclass(frozen=True)
 class H:
-    """list of dataclasses member"""
+    """list and tuple of dataclasses member"""
     l: list[list[C]]
+    t: tuple[C, ...]
 
 @dataclass(frozen=True)
 class I:
@@ -69,7 +70,10 @@ class I:
     (E(C(1, b'blorbo', 2.5), b'foo', C(2, b'bar', 3.3), 'wow'), 5),
     (F(A(2)), 1),
     (G(D(1, A(3), 2.5), [2]), 3),
-    (H([[C(1, b'blorbo', 2.5), C(2, b'blirbi', 3.4)]]), 3),
+    (H(
+        [[C(1, b'blorbo', 2.5), C(2, b'blirbi', 3.4)]],
+        (C(3, b'blurbu', 4.5), C(4, b'blarba', 6.4)),
+        ), 5),
     (I({'key': C(1, b'blorbo', 2.5), 'cokey': C(2, b'blirbi', 3.4)}), 3)
     ])
 def test_pack_unpack(case):
