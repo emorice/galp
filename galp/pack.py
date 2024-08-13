@@ -59,6 +59,18 @@ def load_list(cls: type[L], doc: list, stream: list[bytes]
         obj.append(item)
     return obj, stream
 
+D = TypeVar('D', bound=dict)
+def load_dict(cls: type[D], doc: dict, stream: list[bytes]
+             ) -> tuple[D, list[bytes]]:
+    """Load a dict"""
+    obj = cls()
+    key_type_var, value_type_var = get_args(cls)
+    for key_item_doc, value_item_doc in doc.items():
+        key_item, stream = load_part(key_type_var, key_item_doc, stream)
+        value_item, stream = load_part(value_type_var, value_item_doc, stream)
+        obj[key_item] = value_item
+    return obj, stream
+
 def check_payload(cls):
     """Parse and strip paylaod and other annotations"""
     if get_origin(cls) is Annotated:
@@ -106,6 +118,10 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
                 raise TypeError('list expected')
             # mypy doesn't like the narrowing of cls
             return load_list(cls, doc, stream) # type: ignore[type-var]
+        if orig and issubclass(orig, dict):
+            if not isinstance(doc, dict):
+                raise TypeError('dict expected')
+            return load_dict(cls, doc, stream) # type: ignore[type-var]
         # For all basic types, we assume they can be coerced by calling the
         # constructor.
         return cls(doc), stream # type: ignore[call-arg]
@@ -149,6 +165,18 @@ def dump_list(obj: list) -> tuple[list, list[bytes]]:
         extras.extend(item_extras)
     return doc, extras
 
+def dump_dict(obj: dict) -> tuple[dict, list[bytes]]:
+    """Dump a dict"""
+    doc = {}
+    extras: list[bytes] = []
+    for key, value in obj.items():
+        key_doc, key_extras = dump_part(key)
+        extras.extend(key_extras)
+        value_doc, value_extras = dump_part(value)
+        extras.extend(value_extras)
+        doc[key_doc] = value_doc
+    return doc, extras
+
 def dump_part(obj: object) -> tuple[object, list[bytes]]:
     """
     Dump an arbitrary object
@@ -157,6 +185,8 @@ def dump_part(obj: object) -> tuple[object, list[bytes]]:
     if not is_dataclass(obj):
         if isinstance(obj, list):
             return dump_list(obj)
+        if isinstance(obj, dict):
+            return dump_dict(obj)
         return obj, []
 
     # Extract original attributes
@@ -191,7 +221,6 @@ def dump_part(obj: object) -> tuple[object, list[bytes]]:
             obj_dict[name] = attr_doc
         docstream.extend(extras)
 
-    print(obj_dict)
     return obj_dict, docstream
 
 def dump(obj: object) -> list[bytes]:

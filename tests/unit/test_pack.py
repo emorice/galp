@@ -56,6 +56,11 @@ class H:
     """list of dataclasses member"""
     l: list[list[C]]
 
+@dataclass(frozen=True)
+class I:
+    """dict of dataclasses member"""
+    d: dict[str, C]
+
 @pytest.mark.parametrize('case', [
     (A(1), 1),
     (B(1.5, A(1), 'bar'), 1),
@@ -64,7 +69,8 @@ class H:
     (E(C(1, b'blorbo', 2.5), b'foo', C(2, b'bar', 3.3), 'wow'), 5),
     (F(A(2)), 1),
     (G(D(1, A(3), 2.5), [2]), 3),
-    (H([[C(1, b'blorbo', 2.5), C(2, b'blirbi', 3.4)]]), 3)
+    (H([[C(1, b'blorbo', 2.5), C(2, b'blirbi', 3.4)]]), 3),
+    (I({'key': C(1, b'blorbo', 2.5), 'cokey': C(2, b'blirbi', 3.4)}), 3)
     ])
 def test_pack_unpack(case):
     """
