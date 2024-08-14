@@ -84,6 +84,5 @@ def test_pack_unpack(case):
     msg = dump(obj)
     assert all(isinstance(f, bytes) for f in msg)
     assert len(msg) == n_frames
-    objback, extras = load(type(obj), msg)
-    assert not extras, extras
+    objback = load(type(obj), msg).unwrap()
     assert obj == objback

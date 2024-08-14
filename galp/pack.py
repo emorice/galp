@@ -5,12 +5,21 @@ Generalize asdict to handle unions, out-of-band data, and loading of list of
 dataclass instances
 """
 
+import logging
 from dataclasses import fields, is_dataclass
 from functools import singledispatch
 from typing import TypeVar, get_args, get_origin, Any, Annotated, Literal
 from types import UnionType, NoneType
 
 import msgpack # type:ignore[import-untyped]
+
+from galp.result import Ok, Result
+from galp.serialize import LoadError
+
+class ValidationError(TypeError):
+    """
+    Error raised on failed validation
+    """
 
 _IsPayload = object()
 
@@ -25,7 +34,7 @@ class TypeMap:
         self.from_key = {}
         @singledispatch
         def _get_key(obj):
-            raise TypeError(obj)
+            raise ValidationError(obj)
         self.get_key = _get_key
         for key, cls in types.items():
             self.from_key[key] = cls
@@ -36,19 +45,35 @@ class TypeMap:
         obj_doc, extras = dump_part(obj)
         return (self.get_key(obj), obj_doc), extras
 
+    def dump(self, obj: object) -> list[bytes]:
+        """Dump object and member key and finalize root doc"""
+        root, extras = self.dump_part(obj)
+        return [msgpack.dumps(root), *extras]
+
     def load_part(self, doc: tuple[str, object], stream: list[bytes]
                   ) -> tuple[object, list[bytes]]:
         """Load a union member according to key"""
         key, value_doc = doc
         return load_part(self.from_key[key], value_doc, stream)
 
+    def load(self, msg: list[bytes]) -> Result:
+        """Load union member from finalized root doc"""
+        root_buf, *extras = msg
+        try:
+            obj, extras = self.load_part(msgpack.loads(root_buf), extras)
+        except ValidationError:
+            logging.exception('Validation failed')
+            return LoadError('Validation failed')
+        if extras:
+            return LoadError('Extra data at end of input')
+        return Ok(obj)
 
 L = TypeVar('L', list, tuple)
 def load_list(cls: type[L], doc: object, stream: list[bytes]
              ) -> tuple[L, list[bytes]]:
     """Load a list or tuple"""
     if not isinstance(doc, list):
-        raise TypeError('list expected')
+        raise ValidationError('list expected')
     obj = []
     type_var, *_ellipsis = get_args(cls)
     assert _ellipsis in ([], [...]), 'not supported yet'
@@ -62,7 +87,7 @@ def load_dict(cls: type[D], doc: object, stream: list[bytes]
              ) -> tuple[D, list[bytes]]:
     """Load a dict"""
     if not isinstance(doc, dict):
-        raise TypeError('dict expected')
+        raise ValidationError('dict expected')
     obj = cls()
     key_type_var, value_type_var = get_args(cls)
     for key_item_doc, value_item_doc in doc.items():
@@ -118,11 +143,11 @@ def load_builtin(cls: type[T], doc: object, stream: list[bytes]
     if orig is Literal:
         value, = get_args(cls)
         if doc != value:
-            raise TypeError(f'{value} expected')
+            raise ValidationError(f'{value} expected')
         return value, stream # type: ignore[call-arg]
     if cls is NoneType:
         if doc is not None:
-            raise TypeError('None expected')
+            raise ValidationError('None expected')
         return None, stream # type: ignore[return-value]
     # For all remaining basic types, we assume they can be coerced by calling
     # the constructor: int, float, bool, str, bytes
@@ -139,7 +164,7 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
         return load_builtin(cls, doc, stream)
 
     if not isinstance(doc, dict):
-        raise TypeError
+        raise ValidationError
     obj_dict = dict(doc)
     try:
         field_list = _FIELDS_CACHE[cls]
@@ -223,7 +248,7 @@ def dump_part(obj: object) -> tuple[object, list[bytes]]:
             # Put data for this attribute in the rest of the stream
             if item_cls is bytes:
                 if not isinstance(attr_doc, bytes):
-                    raise TypeError
+                    raise ValidationError
                 attr_doc_buf = attr_doc
             else:
                 attr_doc_buf = msgpack.dumps(attr_doc)
@@ -240,7 +265,14 @@ def dump(obj: object) -> list[bytes]:
     root, extras = dump_part(obj)
     return [msgpack.dumps(root), *extras]
 
-def load(cls, msg: list[bytes]):
+def load(cls: type[T], msg: list[bytes]) -> Result[T]:
     """Load object from finalized root doc"""
     root_buf, *extras = msg
-    return load_part(cls, msgpack.loads(root_buf), extras)
+    try:
+        obj, extras = load_part(cls, msgpack.loads(root_buf), extras)
+    except ValidationError:
+        logging.exception('Validation failed')
+        return LoadError('Validation failed')
+    if extras:
+        return LoadError('Extra data at end of input')
+    return Ok(obj)
