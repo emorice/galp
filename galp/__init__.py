@@ -26,13 +26,12 @@ async def async_run(*tasks, timeout: int | float | None = None, **options):
     """
     Async version of `run`
     """
-    run_options = {
-        k: opt
-        for k, opt in options.items()
-        if k in ('return_exceptions', 'dry_run')
-        }
-    for k in run_options:
-        del options[k]
+    run_options = {}
+    for key in ('return_exceptions', 'dry_run', 'verbose'):
+        try:
+            run_options[key] = options.pop(key)
+        except KeyError:
+            pass
 
     async with local_system(**options) as client:
         return await asyncio.wait_for(
