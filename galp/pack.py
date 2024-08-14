@@ -12,12 +12,7 @@ from types import UnionType, NoneType
 
 import msgpack # type:ignore[import-untyped]
 
-class _Annotation: # pylint: disable=too-few-public-methods
-    """
-    Type for private type annotations
-    """
-
-_IsPayload = _Annotation()
+_IsPayload = object()
 
 U = TypeVar('U')
 Payload = Annotated[U, _IsPayload]
