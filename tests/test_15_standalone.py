@@ -71,6 +71,13 @@ def test_oneshot(run):
     """
     assert run(gts.identity(1234)) == 1234
 
+def test_oneshot_missing_store():
+    """
+    Get a helpful message if you forget the store
+    """
+    with pytest.raises(TypeError):
+        galp.run(gts.identity(1234))
+
 def test_oneshot_timeout(run):
     """
     Raise if the task never completes

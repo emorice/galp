@@ -286,6 +286,9 @@ def make_cli(config):
     Generate a command line to spawn a pool
     """
     args = []
+    missing = [key for key in ('endpoint', 'store') if key not in config]
+    if missing:
+        raise TypeError(f'Pool config missing required arguments: {missing}')
     for key, val in config.items():
         match key:
             case 'pin_workers':
