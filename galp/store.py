@@ -119,7 +119,7 @@ class Store():
             data = self.serialcache[name + b'.data']
         except KeyError:
             data = None
-        return Serialized(data, children_ref.children, self.serializer.loads)
+        return Serialized(data, children_ref.children)
 
     def put_native(self, name: TaskName, obj: Any, scatter: int | None = None
                    ) -> gtt.FlatResultRef:
@@ -156,8 +156,7 @@ class Store():
             assert _len == scatter
 
             payload = msgpack.packb(struct)
-            self.put_serial(name, Serialized(payload, child_refs,
-                                             TaskSerializer.loads))
+            self.put_serial(name, Serialized(payload, tuple(child_refs)))
             return gtt.FlatResultRef(name, children=tuple())
 
         serialized = self.serializer.dumps(obj, self.put_task)

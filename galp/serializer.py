@@ -34,7 +34,7 @@ class Serializer(BaseSerializer[Nat, Ref]):
     """
     serialized_cls: type[GenSerialized[Ref]] = GenSerialized[Ref]
     """
-    Override this if you need a custom Serialized subclass
+    Override this with the custom Serialized subclass to use.
     """
 
     @classmethod
@@ -76,7 +76,7 @@ class Serializer(BaseSerializer[Nat, Ref]):
         children : list[Ref] = []
         # Modifies children in place
         payload = msgpack.packb(obj, default=cls._default(children, save), use_bin_type=True)
-        return cls.serialized_cls(payload, children, cls.loads)
+        return cls.serialized_cls(payload, tuple(children))
 
     @classmethod
     def as_nat(cls, obj: Any) -> Nat | None:

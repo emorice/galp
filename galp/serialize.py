@@ -29,15 +29,14 @@ class GenSerialized(Generic[Ref_co]):
             serialized data
     """
     data: bytes
-    children: Sequence[Ref_co]
-    _loads: Callable[[bytes, Sequence[object]], Ok[object] | LoadError]
+    children: tuple[Ref_co, ...]
 
     def deserialize(self, children: Sequence[object]) -> Ok[object] | LoadError:
         """
         Given the native objects that children are references to, deserialize
         this resource by injecting the corresponding objects into it.
         """
-        return self._loads(self.data, children)
+        raise NotImplementedError
 
 class Serializer(Generic[Nat, Ref]):
     """

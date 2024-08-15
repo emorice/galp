@@ -7,17 +7,18 @@ import functools
 import logging
 import hashlib
 from importlib import import_module
-from typing import Any, TypeAlias, TypeVar, Iterable, Callable
+from typing import Any, TypeAlias, TypeVar, Iterable, Callable, Sequence
 from dataclasses import dataclass
 
 import msgpack # type: ignore[import] # Issue #85
 from pydantic import BaseModel, model_validator
 
+from galp.result import Ok
 from galp.task_defs import (TaskName, TaskDef, LiteralTaskDef, TaskInput,
                             ResourceClaim, TaskOp, BaseTaskDef, CoreTaskDef,
                             ChildTaskDef, QueryTaskDef)
 from galp.default_resources import get_resources
-from galp.serializer import Serializer, GenSerialized, dump_model
+from galp.serializer import Serializer, GenSerialized, dump_model, LoadError
 
 # Core task type definitions
 # ==========================
@@ -202,6 +203,12 @@ class Serialized(GenSerialized[TaskRef]):
     """
     A serialized task result
     """
+    def deserialize(self, children: Sequence[object]) -> Ok[object] | LoadError:
+        """
+        Given the native objects that children are references to, deserialize
+        this resource by injecting the corresponding objects into it.
+        """
+        return TaskSerializer.loads(self.data, children)
 
 class TaskSerializer(Serializer[Task, TaskRef]):
     """
