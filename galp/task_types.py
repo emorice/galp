@@ -40,12 +40,13 @@ class TaskRef:
     """
     name: TaskName
 
-    def tree_print(self, indent: int = 0) -> str:
+    def tree_print(self, indent: int = 0, seen=None) -> str:
         """
         Debug-friendly printing
         """
-        _ = indent
-        return repr(self)
+        pad = ' ' * 2 * indent
+        _ = seen
+        return f'{pad} Ref {self.name}\n'
 
 @dataclass(frozen=True)
 class TaskNode:
@@ -104,19 +105,33 @@ class TaskNode:
     def __hash__(self):
         return hash(self.name)
 
-    def tree_print(self, indent: int = 0) -> str:
+    def tree_print(self, indent: int = 0, seen=None) -> str:
         """
         Debug-friendly printing
         """
-        pad = '    ' * indent
-        if not self.dependencies:
-            return pad + repr(self)
-        string = f'{pad}TaskNode(task_def={repr(self.task_def)},'
-        string += ' dependencies=[\n'
+        if seen is None:
+            seen = set()
+
+        pad = ' ' * 2 * indent
+
+        if self.name in seen:
+            return f'{pad} {self.name} (see above)\n'
+        seen.add(self.name)
+
+        tdef = self.task_def
+        match tdef:
+            case CoreTaskDef():
+                def_str = f'Step {tdef.step}'
+            case ChildTaskDef():
+                def_str = f'Index {tdef.index} of:'
+            case LiteralTaskDef():
+                def_str = 'Literal'
+            case QueryTaskDef():
+                def_str = 'Query'
+
+        string = f'{pad} {self.name} {def_str}\n'
         for dep in self.dependencies:
-            string += dep.tree_print(indent + 1)
-            string += '\n'
-        string += pad + '])'
+            string += dep.tree_print(indent + 1, seen)
         return string
 
 @dataclass(frozen=True, eq=False) # Use TaskNode eq/hash
