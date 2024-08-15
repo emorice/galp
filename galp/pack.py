@@ -265,7 +265,7 @@ def dump(obj: object) -> list[bytes]:
     root, extras = dump_part(obj)
     return [msgpack.dumps(root), *extras]
 
-def load(cls: type[T], msg: list[bytes]) -> Result[T]:
+def load(cls: type[T], msg: list[bytes]) -> Ok[T] | LoadError:
     """Load object from finalized root doc"""
     root_buf, *extras = msg
     try:

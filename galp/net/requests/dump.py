@@ -7,6 +7,7 @@ from functools import singledispatch
 from galp.result import Ok, Progress
 from galp.serializer import dump_model
 from galp.task_types import FlatResultRef, Serialized
+import galp.pack
 
 from .types import ReplyValue, RemoteError
 
@@ -26,7 +27,7 @@ def _(value: Serialized) -> list[bytes]:
 
 @_dump_ok_reply_value_data.register
 def _(value: FlatResultRef) -> list[bytes]:
-    return [dump_model(value)]
+    return galp.pack.dump(value)
 
 def dump_reply_value(value: Ok[ReplyValue] | Progress | RemoteError) -> list[bytes]:
     """

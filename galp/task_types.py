@@ -7,7 +7,7 @@ import functools
 import logging
 import hashlib
 from importlib import import_module
-from typing import Any, TypeAlias, TypeVar, Iterable, Sequence, Callable
+from typing import Any, TypeAlias, TypeVar, Iterable, Callable
 from dataclasses import dataclass
 
 import msgpack # type: ignore[import] # Issue #85
@@ -280,7 +280,7 @@ class ResultRef:
     not run yet but are somewhere defined.
     """
     name: TaskName
-    children: Sequence[Task]
+    children: tuple[Task, ...]
 
 @dataclass
 class FlatResultRef(ResultRef):
@@ -291,7 +291,7 @@ class FlatResultRef(ResultRef):
     not run yet but are remotely defined.
     """
     name: TaskName
-    children: Sequence[TaskRef]
+    children: tuple[TaskRef, ...]
 
 @dataclass
 class RecResultRef(ResultRef):

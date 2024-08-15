@@ -91,12 +91,12 @@ class Store():
         corresponding task definition is guaranteed to be in the store as well.
         """
         try:
-            children = [
+            children = tuple(
                 gtt.TaskRef(gtt.TaskName(child_name))
                 for child_name in msgpack.unpackb(
                     self.serialcache[name + b'.children']
                     )
-                ]
+                )
         except KeyError:
             raise
         except Exception as exc:
@@ -158,7 +158,7 @@ class Store():
             payload = msgpack.packb(struct)
             self.put_serial(name, Serialized(payload, child_refs,
                                              TaskSerializer.loads))
-            return gtt.FlatResultRef(name, children=[])
+            return gtt.FlatResultRef(name, children=tuple())
 
         serialized = self.serializer.dumps(obj, self.put_task)
 
@@ -177,7 +177,7 @@ class Store():
                 [c.name for c in serialized.children]
                 )
 
-        return gtt.FlatResultRef(name, serialized.children)
+        return gtt.FlatResultRef(name, tuple(serialized.children))
 
     def put_task_def(self, task_def: TaskDef) -> None:
         """

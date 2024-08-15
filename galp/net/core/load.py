@@ -8,6 +8,7 @@ from galp.serializer import load_model
 from galp.net.base.load import LoaderDict, default_loader, UnionLoader
 from galp.net.requests.load import Serialized, load_serialized
 from galp.task_types import FlatResultRef, TaskDef
+import galp.pack
 
 from .types import Message, Reply, RequestId, RemoteError, Upload
 
@@ -41,11 +42,7 @@ def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | 
     if rep_type is Serialized:
         loaded = load_serialized(frames)
     elif rep_type is FlatResultRef:
-        match frames:
-            case [frame]:
-                loaded = load_model(FlatResultRef, frame)
-            case _:
-                loaded = LoadError('Wrong number of frames')
+        loaded = galp.pack.load(FlatResultRef, frames)
     else:
         loaded = UnionLoader[rep_type].load(frames) # type: ignore
     return loaded.then(lambda value: Ok(Reply(request_id, Ok(value))))

@@ -225,7 +225,7 @@ def _upload(task: gtt.Task, stat_result: gr.Found | gr.StatDone
             # Local literal. We still return a full ref, not a flat ref,
             # because we do have the child tasks available locally,
             # but maybe not remotely yet, and we want to keep local information.
-            result_ref = gtt.ResultRef(task.name, task.dependencies)
+            result_ref = gtt.ResultRef(task.name, tuple(task.dependencies))
             match stat_result:
                 case gr.StatDone():
                     # Someone already did the upload. We can cut to returning
@@ -286,7 +286,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
 
     # Issue final command
     if options.dry or isinstance(task_def, gtt.ChildTaskDef):
-        return gather_deps.then(lambda _: Ok(gtt.ResultRef(task.name, [])))
+        return gather_deps.then(lambda _: Ok(gtt.ResultRef(task.name, tuple())))
 
     return (
             gather_deps
