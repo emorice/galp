@@ -26,9 +26,9 @@ def prepare_task(task_name: TaskName, store_path: str) -> partial:
     task_def = store.get_task_def(task_name)
     if not isinstance(task_def, CoreTaskDef):
         raise TypeError('Must be a Core task')
-    step = load_step_by_key(task_def.step)
+    step_obj = load_step_by_key(task_def.step)
     args, kwargs = collect_args(store, TaskRef(task_name), task_def)
-    return partial(step.function, *args, **kwargs)
+    return partial(step_obj.function, *args, **kwargs)
 
 def collect_args(store: Store, task: Task, task_def: CoreTaskDef) -> tuple[list, dict]:
     """
