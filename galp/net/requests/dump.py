@@ -16,7 +16,12 @@ def _dump_ok_reply_value_data(ok_value) -> list[bytes]:
     return [ok_value.message_get_key(), dump_model(ok_value)]
 
 @_dump_ok_reply_value_data.register
-def _(value: Serialized | FlatResultRef) -> list[bytes]:
+def _(value: Serialized) -> list[bytes]:
+    return dump(value)
+
+# Must be kept separate as unions are >= 3.11
+@_dump_ok_reply_value_data.register
+def _(value: FlatResultRef) -> list[bytes]:
     return dump(value)
 
 def dump_reply_value(value: Ok[ReplyValue] | Progress | RemoteError) -> list[bytes]:
