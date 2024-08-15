@@ -186,7 +186,7 @@ def ssubmit(task: gtt.Task, options: ExecOptions = ExecOptions()
             ) -> CommandLike[gtt.ResultRef]:
     """
     Caching wrapper around _inner_submit, to handle correctly diamond
-    dependencies
+    inputs and children
     """
     def _inner(next_task: gtt.Task,
                next_ssubmit: Callable[[gtt.Task], CommandLike[gtt.ResultRef]]
@@ -199,8 +199,8 @@ def _inner_ssubmit(task: gtt.Task, options: ExecOptions,
                   next_ssubmit: Callable[[gtt.Task], CommandLike[gtt.ResultRef]]
             ) -> Command[gtt.ResultRef]:
     """
-    A non-recursive ("simple") task submission: executes dependencies, but not
-    children. Return said children as result on success.
+    A half-recursive ("simple") task submission: recursively submits inputs, but
+    not children. Return said children as result on success.
     """
     return safe_stat(task).then(
             lambda statr: _ssubmit(task, statr, options, next_ssubmit)
@@ -225,7 +225,7 @@ def _upload(task: gtt.Task, stat_result: gr.Found | gr.StatDone
             # Local literal. We still return a full ref, not a flat ref,
             # because we do have the child tasks available locally,
             # but maybe not remotely yet, and we want to keep local information.
-            result_ref = gtt.ResultRef(task.name, tuple(task.dependencies))
+            result_ref = gtt.ResultRef(task.name, tuple(task.children))
             match stat_result:
                 case gr.StatDone():
                     # Someone already did the upload. We can cut to returning
@@ -249,7 +249,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
              next_ssubmit: Callable[[gtt.Task], CommandLike[gtt.ResultRef]]
              ) -> CommandLike[gtt.ResultRef]:
     """
-    Core ssubmit logic, recurse on dependencies and skip done tasks
+    Core ssubmit logic, recurse on inputs and skip done tasks
     """
     task_def = stat_result.task_def
 
@@ -266,9 +266,9 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
     if isinstance(task_def, gtt.QueryTaskDef):
         raise NotImplementedError
 
-    # Finally, Core or Child, process dependencies/parent first
+    # Finally, Core or Child, process inputs/parent first
 
-    # Collect dependencies
+    # Collect inputs
     deps: list[gtt.Task]
     if isinstance(task, gtt.TaskRef):
         # If a reference, by design the dep defs have been checked in
@@ -276,7 +276,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
                 for tin in task_def.inputs]
     else:
         # If a node, we have the defs and pass them directly
-        deps = task.dependencies
+        deps = task.inputs
 
     # Issue 79: optimize type of command based on type of link
     # Always doing a RSUB will work, but it will run things more eagerly that

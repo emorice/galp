@@ -3,7 +3,7 @@ Implementation of complex queries within the command asynchronous system
 """
 
 import logging
-from typing import Type
+from typing import Type, Iterable
 
 from galp.result import Ok, Error
 import galp.net.requests.types as gr
@@ -23,7 +23,7 @@ def run_task(task: TaskNode, options: cm.ExecOptions
     if isinstance(task_def, QueryTaskDef):
         if options.dry:
             raise NotImplementedError('Cannot dry-run queries yet')
-        subject, = task.dependencies
+        subject, = task.inputs
         # Issue #81 unsafe reference
         return as_command(query(subject, task_def.query))
 
@@ -297,14 +297,14 @@ class Args(Operator):
 
 def get_task_dependency(task: gtt.Task, dep_name: gtt.TaskName) -> gtt.Task:
     """
-    From the name of a task dependency, obtain a task or a task ref
+    From the name of a task input, obtain a task or a task ref
     """
     match task:
         case gtt.TaskNode():
-            for dep in task.dependencies:
+            for dep in task.inputs:
                 if dep.name == dep_name:
                     return dep
-            raise ValueError(f'{dep_name} is not a dependencies')
+            raise ValueError(f'{dep_name} is not an input of {task}')
         case gtt.TaskRef():
             return gtt.TaskRef(dep_name)
 
@@ -428,7 +428,7 @@ class Iterate(Operator, named=False):
     """
     requires = staticmethod(cm.srun)
 
-    def _recurse(self, srun_result):
+    def _recurse(self, srun_result: object):
         """
         Extract raw result and build subqueries
         """
@@ -437,20 +437,21 @@ class Iterate(Operator, named=False):
         sub_query = self.sub_query
         sub_query_commands = []
 
-        # Try to extract the subtask definitions from the node object if
-        # possible
-        if isinstance(self.subject, gtt.TaskNode):
-            task_nodes = {t.name: t for t in self.subject.dependencies}
+        if isinstance(self.subject, gtt.LiteralTaskNode):
+            task_nodes = {t.name: t for t in self.subject.children}
         else:
             task_nodes = {}
 
-        for task in shallow_obj:
-            if not isinstance(task, gtt.Task):
+        if not isinstance(shallow_obj, Iterable):
+            raise TypeError('Object is not a collection of tasks, cannot'
+                + ' use a "*" query here')
+        for task_ref in shallow_obj:
+            if not isinstance(task_ref, gtt.Task):
                 raise TypeError('Object is not a collection of tasks, cannot'
                     + ' use a "*" query here')
             # Issue # 81
             sub_query_commands.append(
-                    query(task_nodes.get(task.name, task),
+                    query(task_nodes.get(task_ref.name, task_ref),
                         sub_query)
                     )
 

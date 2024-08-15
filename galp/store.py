@@ -216,11 +216,13 @@ class Store():
 
         self.put_task_def(task.task_def)
 
-        for child in task.dependencies:
-            self.put_task(child)
+        for tin in task.inputs:
+            self.put_task(tin)
 
         if isinstance(task, LiteralTaskNode):
             self.put_serial(task.name, task.serialized)
+            for child in task.children:
+                self.put_task(child)
 
         return TaskRef(task.name)
 

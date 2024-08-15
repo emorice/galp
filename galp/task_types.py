@@ -11,7 +11,6 @@ from typing import Any, TypeAlias, TypeVar, Iterable, Callable, Sequence
 from dataclasses import dataclass
 
 import msgpack # type: ignore[import] # Issue #85
-from pydantic import BaseModel, model_validator
 
 from galp.result import Ok
 from galp.task_defs import (TaskName, TaskDef, LiteralTaskDef, TaskInput,
@@ -40,30 +39,28 @@ class TaskRef:
     """
     name: TaskName
 
-    def tree_print(self, indent: int = 0, seen=None) -> str:
+    def tree_print(self, prefix: str = '', seen=None) -> str:
         """
         Debug-friendly printing
         """
-        pad = ' ' * 2 * indent
         _ = seen
-        return f'{pad} Ref {self.name}\n'
+        return f'{prefix}Ref {self.name}\n'
 
 @dataclass(frozen=True)
 class TaskNode:
     """
-    A task, with links to all its dependencies
+    A task, with links to all its inputs or children
 
-    Dependencies here means $sub-dep, including children. TaskNodes compare
-    equal and hash based on the identity of the task being described.
+    TaskNodes compare equal and hash based on the identity of the task being
+    described.
 
     Attributes:
         task_def: the name and definition of the task
-        dependencies: list of either task nodes or task references required to
+        inputs: list of either task nodes or task references required to
             reconstruct this tasks' result
-        data: constant value of the task, for Literal tasks
     """
     task_def: TaskDef
-    dependencies: 'list[Task]'
+    inputs: 'list[Task]'
 
     @property
     def name(self) -> TaskName:
@@ -105,17 +102,15 @@ class TaskNode:
     def __hash__(self):
         return hash(self.name)
 
-    def tree_print(self, indent: int = 0, seen=None) -> str:
+    def tree_print(self, prefix: str = '', seen=None) -> str:
         """
         Debug-friendly printing
         """
         if seen is None:
             seen = set()
 
-        pad = ' ' * 2 * indent
-
         if self.name in seen:
-            return f'{pad} {self.name} (see above)\n'
+            return f'{prefix}{self.name} (see above)\n'
         seen.add(self.name)
 
         tdef = self.task_def
@@ -129,9 +124,9 @@ class TaskNode:
             case QueryTaskDef():
                 def_str = 'Query'
 
-        string = f'{pad} {self.name} {def_str}\n'
-        for dep in self.dependencies:
-            string += dep.tree_print(indent + 1, seen)
+        string = f'{prefix}{self.name} {def_str}\n'
+        for dep in self.inputs:
+            string += dep.tree_print(prefix + '  ', seen)
         return string
 
 @dataclass(frozen=True, eq=False) # Use TaskNode eq/hash
@@ -140,7 +135,24 @@ class LiteralTaskNode(TaskNode):
     TaskNode for a literal task, includes the serialized literal object
     """
     task_def: LiteralTaskDef
+    children: 'list[Task]'
     serialized: 'Serialized'
+
+    def tree_print(self, prefix: str = '', seen=None) -> str:
+        """
+        Debug-friendly printing
+        """
+        if seen is None:
+            seen = set()
+
+        if self.name in seen:
+            return f'{prefix}{self.name} Literal (see above)\n'
+        seen.add(self.name)
+
+        string = f'{prefix}{self.name} Literal\n'
+        for dep in self.children:
+            string += dep.tree_print(prefix + '  ', seen)
+        return string
 
 Task: TypeAlias = TaskNode | TaskRef
 
@@ -187,7 +199,7 @@ def ensure_task_input(obj: Any) -> tuple[TaskInput, Task]:
     """
     if isinstance(obj, TaskNode) and isinstance(obj.task_def, QueryTaskDef):
         # Only allowed query for now, will be extended in the future
-        dep, = obj.dependencies
+        dep, = obj.inputs
         if obj.task_def.query in ['$base']:
             return (
                     TaskInput(op=TaskOp.BASE, name=obj.task_def.subject),
@@ -257,22 +269,23 @@ def make_literal_task(obj: Any) -> LiteralTaskNode:
     """
     Build a Literal TaskNode out of an arbitrary python object
     """
-    dependencies = []
+    children = []
     def save(task):
-        dependencies.append(task)
+        children.append(task)
         return TaskRef(task.name)
     # Nice to have: more robust hashing, but this is enough for most case where
     # literal resources are a good fit (more complex objects would tend to be
     # actual step outputs)
     serialized = TaskSerializer.dumps(obj, save)
 
-    tdef = {'children': [dep.name for dep in dependencies]}
+    tdef = {'children': [child.name for child in children]}
     # Literals are an exception to naming: they are named by value, so the
     # name is *not* derived purely from the definition object
 
     return LiteralTaskNode(
             task_def=make_task_def(LiteralTaskDef, tdef, serialized.data),
-            dependencies=dependencies,
+            inputs=[],
+            children=children,
             serialized=serialized,
             )
 
@@ -295,7 +308,7 @@ def make_child_task(parent: TaskNode, index: int) -> TaskNode:
 
     return TaskNode(
             task_def=make_child_task_def(parent.name, index),
-            dependencies=[parent]
+            inputs=[parent]
             )
 
 @dataclass
@@ -420,7 +433,7 @@ def make_core_task(stp: 'Step', args: tuple, kwargs: dict[str, Any],
 
     ndef = make_task_def(CoreTaskDef, tdef)
 
-    return TaskNode(task_def=ndef, dependencies=nodes)
+    return TaskNode(task_def=ndef, inputs=nodes)
 
 class Step:
     """Object wrapping a function that can be called as a pipeline step
@@ -520,7 +533,7 @@ def query(subject: Any, query_doc: Any) -> TaskNode:
             task_def=make_task_def(
                 QueryTaskDef, tdef
                 ),
-            dependencies=[subj_node]
+            inputs=[subj_node]
             )
 
 def load_step_by_key(key: str) -> Step:
