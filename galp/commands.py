@@ -273,7 +273,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
     if isinstance(task, gtt.TaskRef):
         # If a reference, by design the dep defs have been checked in
         deps = [gtt.TaskRef(tin.name)
-                for tin in task_def.dependencies(gtt.TaskOp.BASE)]
+                for tin in task_def.dependencies]
     else:
         # If a node, we have the defs and pass them directly
         deps = task.dependencies

@@ -74,22 +74,10 @@ class BaseTaskDef:
     name: TaskName
     scatter: int | None = None
 
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
+    @property
+    def dependencies(self) -> list[TaskInput]:
         """
-        Dependencies referenced inside this definition.
-
-        If mode is '$base', this returns only tasks that are upstream of this
-        task, that is, task whose successful completion is required before this
-        task can run.
-
-        If mode is '$sub', this returns also the children tasks, that is, the
-        tasks whose execution is independent from this task, but are referenced
-        by this task and whose value would eventually be needed to construct the
-        full result of this task.
-
-        Note that since this is only from the definition, only statically known
-        children tasks can be returned. Running the task may generate further
-        dynamic child tasks.
+        Dependencies (inputs) referenced inside this definition.
         """
         raise NotImplementedError
 
@@ -114,8 +102,8 @@ class CoreTaskDef(BaseTaskDef):
 
     task_type: Literal['core'] = field(default='core', repr=False)
 
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
-        # Only base deps
+    @property
+    def dependencies(self) -> list[TaskInput]:
         return [*self.args, *self.kwargs.values()]
 
 @dataclass
@@ -128,9 +116,10 @@ class ChildTaskDef(BaseTaskDef):
 
     task_type: Literal['child'] = field(default='child', repr=False)
 
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
-        # SubTask, the (base) dependency is the parent task
-        return [ TaskInput(op=TaskOp.BASE, name=self.parent) ]
+    @property
+    def dependencies(self) -> list[TaskInput]:
+        # SubTask, the one input is the parent task
+        return [TaskInput(op=TaskOp.BASE, name=self.parent)]
 
 @dataclass
 class LiteralTaskDef(BaseTaskDef):
@@ -141,13 +130,11 @@ class LiteralTaskDef(BaseTaskDef):
 
     task_type: Literal['literal'] = field(default='literal', repr=False)
 
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
-        match mode:
-            case TaskOp.BASE:
-                return []
-            case TaskOp.SUB:
-                return [TaskInput(op=TaskOp.SUB, name=child) for child in
-                        self.children]
+    @property
+    def dependencies(self) -> list[TaskInput]:
+        # Literals are like constant meta-steps, they have children but no
+        # inputs
+        return []
 
 @dataclass
 class QueryTaskDef(BaseTaskDef):
@@ -165,7 +152,8 @@ class QueryTaskDef(BaseTaskDef):
 
     task_type: Literal['query'] = field(default='query', repr=False)
 
-    def dependencies(self, mode: TaskOp) -> list[TaskInput]:
+    @property
+    def dependencies(self) -> list[TaskInput]:
         raise NotImplementedError
 
 TaskDef = Annotated[
