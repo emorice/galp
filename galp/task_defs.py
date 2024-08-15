@@ -75,7 +75,7 @@ class BaseTaskDef:
     scatter: int | None = None
 
     @property
-    def dependencies(self) -> list[TaskInput]:
+    def inputs(self) -> list[TaskInput]:
         """
         Dependencies (inputs) referenced inside this definition.
         """
@@ -103,7 +103,7 @@ class CoreTaskDef(BaseTaskDef):
     task_type: Literal['core'] = field(default='core', repr=False)
 
     @property
-    def dependencies(self) -> list[TaskInput]:
+    def inputs(self) -> list[TaskInput]:
         return [*self.args, *self.kwargs.values()]
 
 @dataclass
@@ -117,7 +117,7 @@ class ChildTaskDef(BaseTaskDef):
     task_type: Literal['child'] = field(default='child', repr=False)
 
     @property
-    def dependencies(self) -> list[TaskInput]:
+    def inputs(self) -> list[TaskInput]:
         # SubTask, the one input is the parent task
         return [TaskInput(op=TaskOp.BASE, name=self.parent)]
 
@@ -131,7 +131,7 @@ class LiteralTaskDef(BaseTaskDef):
     task_type: Literal['literal'] = field(default='literal', repr=False)
 
     @property
-    def dependencies(self) -> list[TaskInput]:
+    def inputs(self) -> list[TaskInput]:
         # Literals are like constant meta-steps, they have children but no
         # inputs
         return []
@@ -153,7 +153,7 @@ class QueryTaskDef(BaseTaskDef):
     task_type: Literal['query'] = field(default='query', repr=False)
 
     @property
-    def dependencies(self) -> list[TaskInput]:
+    def inputs(self) -> list[TaskInput]:
         raise NotImplementedError
 
 TaskDef = Annotated[

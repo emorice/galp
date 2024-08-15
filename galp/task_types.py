@@ -338,26 +338,6 @@ class RecResultRef(ResultRef):
                 f' expected {expected}, got {received}')
         super().__init__(result.name, result.children)
 
-class ReadyCoreTaskDef(BaseModel):
-    """
-    A core task def, along with a ResultRef for each input.
-
-    Typical of a task that is ready to be executed since all its dependencies are
-    fulfilled
-    """
-    task_def: CoreTaskDef
-    inputs: dict[TaskName, ResultRef]
-
-    @model_validator(mode='after')
-    def check_inputs(self) -> 'ReadyCoreTaskDef':
-        """
-        Checks that the provided inputs match the expected inputs
-        """
-        if ({tin.name for tin in self.task_def.dependencies(TaskOp.BASE)}
-                != self.inputs.keys):
-            raise ValueError('Wrong inputs')
-        return self
-
 @dataclass(frozen=True)
 class Resources:
     """
