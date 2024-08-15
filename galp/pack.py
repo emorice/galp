@@ -13,10 +13,12 @@ from types import UnionType, NoneType
 
 import msgpack # type:ignore[import-untyped]
 
-from galp.result import Ok, Result
-from galp.serialize import LoadError
+from galp.result import Ok, Result, Error
 
-class ValidationError(TypeError):
+class LoadError(Error[str]):
+    """Error value to be returned on failed deserialization"""
+
+class LoadException(TypeError):
     """
     Error raised on failed validation
     """
@@ -34,7 +36,7 @@ class TypeMap:
         self.from_key = {}
         @singledispatch
         def _get_key(obj):
-            raise ValidationError(obj)
+            raise LoadException(obj)
         self.get_key = _get_key
         for key, cls in types.items():
             self.from_key[key] = cls
@@ -61,7 +63,7 @@ class TypeMap:
         root_buf, *extras = msg
         try:
             obj, extras = self.load_part(msgpack.loads(root_buf), extras)
-        except ValidationError:
+        except LoadException:
             logging.exception('Validation failed')
             return LoadError('Validation failed')
         if extras:
@@ -73,7 +75,7 @@ def load_list(cls: type[L], doc: object, stream: list[bytes]
              ) -> tuple[L, list[bytes]]:
     """Load a list or tuple"""
     if not isinstance(doc, list):
-        raise ValidationError('list expected')
+        raise LoadException('list expected')
     obj = []
     type_var, *_ellipsis = get_args(cls)
     assert _ellipsis in ([], [...]), 'not supported yet'
@@ -87,7 +89,7 @@ def load_dict(cls: type[D], doc: object, stream: list[bytes]
              ) -> tuple[D, list[bytes]]:
     """Load a dict"""
     if not isinstance(doc, dict):
-        raise ValidationError('dict expected')
+        raise LoadException('dict expected')
     obj = cls()
     key_type_var, value_type_var = get_args(cls)
     for key_item_doc, value_item_doc in doc.items():
@@ -143,11 +145,11 @@ def load_builtin(cls: type[T], doc: object, stream: list[bytes]
     if orig is Literal:
         value, = get_args(cls)
         if doc != value:
-            raise ValidationError(f'{value} expected')
+            raise LoadException(f'{value} expected')
         return value, stream # type: ignore[call-arg]
     if cls is NoneType:
         if doc is not None:
-            raise ValidationError('None expected')
+            raise LoadException('None expected')
         return None, stream # type: ignore[return-value]
     # For all remaining basic types, we assume they can be coerced by calling
     # the constructor: int, float, bool, str, bytes
@@ -164,7 +166,7 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
         return load_builtin(cls, doc, stream)
 
     if not isinstance(doc, dict):
-        raise ValidationError
+        raise LoadException
     obj_dict = dict(doc)
     try:
         field_list = _FIELDS_CACHE[cls]
@@ -248,7 +250,7 @@ def dump_part(obj: object) -> tuple[object, list[bytes]]:
             # Put data for this attribute in the rest of the stream
             if item_cls is bytes:
                 if not isinstance(attr_doc, bytes):
-                    raise ValidationError
+                    raise LoadException
                 attr_doc_buf = attr_doc
             else:
                 attr_doc_buf = msgpack.dumps(attr_doc)
@@ -270,7 +272,7 @@ def load(cls: type[T], msg: list[bytes]) -> Ok[T] | LoadError:
     root_buf, *extras = msg
     try:
         obj, extras = load_part(cls, msgpack.loads(root_buf), extras)
-    except ValidationError:
+    except LoadException:
         logging.exception('Validation failed')
         return LoadError('Validation failed')
     if extras:

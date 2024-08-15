@@ -199,10 +199,15 @@ def make_task_def(cls: type[T], attrs, extra=None) -> T:
 # Literal and child tasks
 # ------------------------
 
+@dataclass(frozen=True)
 class Serialized(GenSerialized[TaskRef]):
     """
     A serialized task result
     """
+    # This attribute is already defined in the base class but we need to narrow
+    # it explictly for automatic deserialization
+    children: tuple[TaskRef, ...]
+
     def deserialize(self, children: Sequence[object]) -> Ok[object] | LoadError:
         """
         Given the native objects that children are references to, deserialize

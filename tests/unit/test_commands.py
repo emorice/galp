@@ -23,8 +23,12 @@ def test_rget() -> None:
 
     cmd = gac.rget(root)
 
+    class MockSerialized(Serialized):
+        def deserialize(self, _children):
+            return Ok(None)
+
     def _answer(_prim):
-        return Ok(Serialized(b'', [], lambda *_: Ok(None)))
+        return Ok(MockSerialized(b'', []))
 
     assert run_command(cmd, _answer) == Ok(None)
 
@@ -44,15 +48,18 @@ def test_rget_losange() -> None:
     count: defaultdict[TaskName, int] = defaultdict(int)
     des_count: defaultdict[TaskName, int] = defaultdict(int)
 
-    def _deserialize(tid):
-        def _inner(_data, children):
-            des_count[tid] += 1
+    class MockSerialized(Serialized):
+        def __init__(self, *args, tid, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.tid = tid
+        def deserialize(self, children):
+            des_count[self.tid] += 1
             return Ok(list(children)) if children else Ok(None)
-        return _inner
     def _node(name, children: list[int]):
-        return Ok(Serialized(b'',
-                    [TaskRef(_as_name(i)) for i in children],
-                    _deserialize(name)))
+        return Ok(MockSerialized(
+            b'',
+            tuple(TaskRef(_as_name(i)) for i in children),
+            tid=name))
 
     def _answer(_prim):
         name = _prim.request.name
@@ -86,15 +93,17 @@ def test_rget_multiple() -> None:
     cmd = gac.rget(root)
     des_count: defaultdict[TaskName, int] = defaultdict(int)
 
-    def _deserialize(tid):
-        def _inner(_data, children):
-            des_count[tid] += 1
+    class MockSerialized(Serialized):
+        def __init__(self, *args, tid, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.tid = tid
+        def deserialize(self, children):
+            des_count[self.tid] += 1
             return Ok(list(children)) if children else Ok(None)
-        return _inner
     def _node(name, children: list[int]):
-        return Ok(Serialized(b'',
+        return Ok(MockSerialized(b'',
                     [TaskRef(_as_name(i)) for i in children],
-                    _deserialize(name)))
+                    tid=name))
     def _answer(_prim):
         name = _prim.request.name
         if name == _as_name(0):

@@ -7,11 +7,8 @@ serializer but do not depend on what is the actual serialization strategy used.
 
 from typing import Any, TypeVar, Generic, Callable, Sequence
 from dataclasses import dataclass
-from galp.result import Ok, Error
-
-
-class LoadError(Error[str]):
-    """Error value to be returned on failed deserialization"""
+from galp.result import Ok
+from galp.pack import Payload, LoadError
 
 Nat = TypeVar('Nat')
 Ref = TypeVar('Ref')
@@ -28,7 +25,7 @@ class GenSerialized(Generic[Ref_co]):
         children: the subordinate object references that are linked from within the
             serialized data
     """
-    data: bytes
+    data: Payload[bytes]
     children: tuple[Ref_co, ...]
 
     def deserialize(self, children: Sequence[object]) -> Ok[object] | LoadError:
