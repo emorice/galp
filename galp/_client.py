@@ -24,6 +24,7 @@ from galp.protocol import (make_stack, TransportMessage, Writer,
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.control_queue import ControlQueue
 from galp.query import run_task
+from galp.printer import make_printer
 
 class TaskFailedError(RuntimeError):
     """
@@ -95,7 +96,8 @@ class Client:
         task_objs = list(map(gtt.ensure_task, tasks))
 
         cmd_vals = await self._run_collection(task_objs, cm.ExecOptions(
-                    keep_going=return_exceptions, dry=dry_run, verbose=verbose
+                    keep_going=return_exceptions, dry=dry_run,
+                    printer=make_printer(verbose)
                     ))
 
         if isinstance(cmd_vals, Error):

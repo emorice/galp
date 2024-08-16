@@ -3,3 +3,5 @@ __pycache__
 *.swp
 venv
 build/
+.ipynb_checkpoints
+*.ipynb

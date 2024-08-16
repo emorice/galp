@@ -13,6 +13,7 @@ import galp.asyn as ga
 
 from galp.result import Result, Ok, Error
 from galp.asyn import Command, collect, Primitive, CommandLike
+from galp.printer import Printer, PassTroughPrinter
 
 # Custom Script
 # -------------
@@ -71,7 +72,7 @@ class ExecOptions:
     """
     dry: bool = False
     keep_going: bool = False
-    verbose: bool = False
+    printer: Printer = PassTroughPrinter()
 
 # Routines
 # --------
@@ -299,22 +300,12 @@ def _end_submit(task_def: gtt.CoreTaskDef, submit_result: Result[gtt.ResultRef],
     """
     Hook to report end of task
     """
-    if options.verbose:
-        status = 'Unknown'
-        match submit_result:
-            case Ok():
-                status = 'Done'
-            case Error():
-                status = 'Failed'
-        print(task_def.name, task_def.step, status)
+    options.printer.update_task_status(task_def, isinstance(submit_result, Ok))
     return submit_result
 
 def _progress_submit(task_def: gtt.CoreTaskDef, status: str, options:
                      ExecOptions) -> None:
-    if options.verbose:
-        print(task_def.name, task_def.step, status, end='')
-    else: # Default "pass-through" mode
-        print(status, end='')
+    options.printer.update_task_output(task_def, status)
 
 def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
         ) -> Command[gtt.ResultRef]:
@@ -322,8 +313,7 @@ def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
     Wrapper around sending submit that reports start of tasks and schedule
     reporting end of task.
     """
-    if options.verbose:
-        print(task_def.name, task_def.step, 'Submitted', flush=True)
+    options.printer.update_task_status(task_def, None)
     return Send(gm.Submit(task_def)).on_progress(
             lambda status: _progress_submit(task_def, status, options)
             ).eventually(

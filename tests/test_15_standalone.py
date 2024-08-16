@@ -84,12 +84,12 @@ def test_oneshot_verbose(run, capsys):
     """
     assert run(gts.identity(1234)) == 1234
     out = capsys.readouterr().out
-    assert 'Done' not in out
+    assert 'OK' not in out
 
     # Need a different task as a cache hit is silent
     assert run(gts.identity(1235), verbose=True) == 1235
     out = capsys.readouterr().out
-    assert 'Done' in out
+    assert 'OK' in out
 
 def test_oneshot_timeout(run):
     """
