@@ -35,7 +35,7 @@ class PassTroughPrinter(Printer):
 
 CTRL_UP = '\033[A;'
 CTRL_RETKILL = '\r\033[K'
-CTRL_RED = '\033[3qm'
+CTRL_RED = '\033[31m'
 CTRL_GREEN = '\033[32m'
 CTRL_DEFCOL = '\033[39m'
 GREEN_OK = CTRL_GREEN + 'OK' + CTRL_DEFCOL

@@ -40,10 +40,18 @@ def logserver_connect(request_id: RequestId, sock_logclient: socket.socket |
     try:
         yield
     finally:
+        # Flush, restore std fds, and close saved fds and pipes
+        # We could maybe permanently save the orig fds instead
         sys.stdout.flush()
-        sys.stderr.flush()
         os.dup2(orig_stds[0], 1)
+        os.close(orig_stds[0])
+
+        sys.stderr.flush()
         os.dup2(orig_stds[1], 2)
+        os.close(orig_stds[1])
+
+        os.close(write_fd_out)
+        os.close(write_fd_err)
 
 def sanitize(buffer: bytes) -> str:
     """
@@ -88,6 +96,14 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
     Reply/Progress messages are send on sock_proxy.
     All data is tee'd to files in log_dir.
     """
+    # keep track of all received fds, because when we fork a new process the
+    # child has to close them all
+    all_fds: set[int] = set()
+    def _close_all():
+        for fd in all_fds:
+            os.close(fd)
+    os.register_at_fork(after_in_child=_close_all)
+
     def on_stream_msg(request_id: RequestId, filed: int,
             tee_file: BinaryIO | None):
         item = os.read(filed, 4096)
@@ -103,9 +119,13 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
                     dump_message(Reply(request_id, Progress(item_s)))
                     )
         else:
+            # Other end finished the task or died. Close the log file, our end
+            # of the pipe, and remove it from the list that children have to
+            # close
             if tee_file:
                 tee_file.close()
             os.close(filed)
+            all_fds.remove(filed)
             sel.unregister(filed)
 
     def on_new_fd():
@@ -119,8 +139,7 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
                 tee_file = open( #pylint: disable=consider-using-with # Async
                         os.path.join(log_dir, f'{request_id.name.hex()}.{ext}'),
                         'wb', buffering=0)
-            # Make any new fd non "fork-heritable"
-            os.register_at_fork(after_in_child=lambda filed=filed: os.close(filed))
+            all_fds.add(filed)
             sel.register(filed, selectors.EVENT_READ,
                     lambda filed=filed, tee_file=tee_file: on_stream_msg(
                         request_id, filed, tee_file
