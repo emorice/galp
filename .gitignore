@@ -5,3 +5,4 @@ venv
 build/
 .ipynb_checkpoints
 *.ipynb
+benchmarks
