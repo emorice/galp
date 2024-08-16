@@ -92,9 +92,9 @@ class Client:
                 required tasks are either done or failed.
         """
 
-        task_nodes = list(map(gtt.ensure_task_node, tasks))
+        task_objs = list(map(gtt.ensure_task, tasks))
 
-        cmd_vals = await self._run_collection(task_nodes, cm.ExecOptions(
+        cmd_vals = await self._run_collection(task_objs, cm.ExecOptions(
                     keep_going=return_exceptions, dry=dry_run, verbose=verbose
                     ))
 
@@ -137,7 +137,7 @@ class Client:
             return results[0]
         return results
 
-    async def _run_collection(self, tasks: list[gtt.TaskNode],
+    async def _run_collection(self, tasks: list[gtt.Task],
                               exec_options: cm.ExecOptions
                               ) -> Result[list[Result]]:
         """

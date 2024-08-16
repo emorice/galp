@@ -257,7 +257,6 @@ def echo(to_stdout: str, to_stderr: str):
     print(to_stdout, file=sys.stdout)
     print(to_stderr, file=sys.stderr)
 
-
 def double_upload():
     """
     Diamond pattern to a non-trivial literal with different leg branches.
@@ -269,3 +268,19 @@ def double_upload():
     task_b = identity([task_a])
 
     return task_b, identity(task_b)
+
+@step
+def trapped_meta():
+    """
+    A meta step returning an object with two tasks, one which will fail and one
+    not.
+    """
+    return {
+            'ok': identity(1),
+            'fail': raises_error()
+            }
+
+@step
+def meta_trapped_meta():
+    """A meta task trivially wrapping trapped_meta"""
+    return trapped_meta()

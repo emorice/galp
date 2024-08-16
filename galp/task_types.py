@@ -180,17 +180,18 @@ def obj_to_name(canon_rep: Any) -> TaskName:
     name = TaskName(hash_one(payload))
     return name
 
-def ensure_task_node(obj: Any) -> 'TaskNode':
+def ensure_task(obj: Any) -> 'Task':
     """Makes object into a task in some way.
 
-    If it's a step, try to call it to get a task.
-    Else, wrap into a Literal task
+    If not a task, wrap into a Literal task
     """
-    if isinstance(obj, TaskNode):
-        return obj
-    return make_literal_task(obj)
+    match obj:
+        case TaskNode() | TaskRef():
+            return obj
+        case _:
+            return make_literal_task(obj)
 
-def ensure_task_input(obj: Any) -> tuple[TaskInput, Task]:
+def make_task_input(obj: Any) -> tuple[TaskInput, Task]:
     """
     Makes object a task or a simple query
 
@@ -206,10 +207,10 @@ def ensure_task_input(obj: Any) -> tuple[TaskInput, Task]:
                     dep
                     )
     # Everything else is treated as task to be recursively run and loaded
-    node = ensure_task_node(obj)
+    task = ensure_task(obj)
     return (
-            TaskInput(op=TaskOp.SUB, name=node.name),
-            node
+            TaskInput(op=TaskOp.SUB, name=task.name),
+            task
             )
 
 T = TypeVar('T', bound=BaseTaskDef)
@@ -412,15 +413,15 @@ def make_core_task(stp: 'Step', args: tuple, kwargs: dict[str, Any],
     # Collect all arguments as nodes
     arg_inputs = []
     kwarg_inputs = {}
-    nodes = []
+    tasks = []
     for arg in args:
-        tin, node = ensure_task_input(arg)
+        tin, task = make_task_input(arg)
         arg_inputs.append(tin)
-        nodes.append(node)
+        tasks.append(task)
     for key, arg in kwargs.items():
-        tin, node = ensure_task_input(arg)
+        tin, task = make_task_input(arg)
         kwarg_inputs[key] = tin
-        nodes.append(node)
+        tasks.append(task)
 
     tdef = {
             'args': arg_inputs,
@@ -433,7 +434,7 @@ def make_core_task(stp: 'Step', args: tuple, kwargs: dict[str, Any],
 
     ndef = make_task_def(CoreTaskDef, tdef)
 
-    return TaskNode(task_def=ndef, inputs=nodes)
+    return TaskNode(task_def=ndef, inputs=tasks)
 
 class Step:
     """Object wrapping a function that can be called as a pipeline step
@@ -527,7 +528,7 @@ def query(subject: Any, query_doc: Any) -> TaskNode:
     """
     Build a Query task node
     """
-    subj_node = ensure_task_node(subject)
+    subj_node = ensure_task(subject)
     tdef = {'query': query_doc, 'subject': subj_node.name}
     return TaskNode(
             task_def=make_task_def(
@@ -560,9 +561,27 @@ def load_step_by_key(key: str) -> Step:
                 key, step_name, module_name)
         raise NoSuchStep(key) from exc
 
-@step
 def getitem(obj, index):
     """
-    Task representing obj[index]
+    Obtain a part of task
     """
-    return obj[index]
+    return _s_getitem(query(obj, '$base'), index)
+
+@step
+def _s_getitem(obj, index):
+    """
+    Task representing obj[index]
+
+    To optimize, we use this with a $base input, so that we can receive
+    containers of task refs and return task refs without running and fetching
+    the actual task items. But this means we could even receive a TaskRef to
+    the container itself, in which case we need to recurse and follow the chain
+    of task refs until we get to the actual container.
+    """
+    print(obj, flush=True)
+    match obj:
+        case TaskRef():
+            task = getitem(obj, index)
+            return task
+        case _:
+            return obj[index]

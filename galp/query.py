@@ -14,18 +14,19 @@ from . import task_types as gtt
 from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
 from .asyn import as_command, collect, collect_dict
 
-def run_task(task: TaskNode, options: cm.ExecOptions
+def run_task(task: gtt.Task, options: cm.ExecOptions
              ) -> cm.CommandLike[object]:
     """
     Creates command appropriate to type of task (query or non-query)
     """
-    task_def = task.task_def
-    if isinstance(task_def, QueryTaskDef):
-        if options.dry:
-            raise NotImplementedError('Cannot dry-run queries yet')
-        subject, = task.inputs
-        # Issue #81 unsafe reference
-        return as_command(query(subject, task_def.query))
+    if isinstance(task, TaskNode):
+        task_def = task.task_def
+        if isinstance(task_def, QueryTaskDef):
+            if options.dry:
+                raise NotImplementedError('Cannot dry-run queries yet')
+            subject, = task.inputs
+            # Issue #81 unsafe reference
+            return as_command(query(subject, task_def.query))
 
     return cm.run(task, options)
 

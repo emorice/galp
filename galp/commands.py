@@ -269,20 +269,21 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
     # Finally, Core or Child, process inputs/parent first
 
     # Collect inputs
-    deps: list[gtt.Task]
-    if isinstance(task, gtt.TaskRef):
-        # If a reference, by design the dep defs have been checked in
-        deps = [gtt.TaskRef(tin.name)
-                for tin in task_def.inputs]
+    if isinstance(task, gtt.TaskNode):
+        nodes = {t.name: t for t in task.inputs}
     else:
-        # If a node, we have the defs and pass them directly
-        deps = task.inputs
+        nodes = {}
+    inputs: list[tuple[gtt.TaskInput, gtt.Task]] = [
+            (tin, nodes.get(tin.name, gtt.TaskRef(tin.name)))
+            for tin in task_def.inputs
+            ]
 
-    # Issue 79: optimize type of command based on type of link
-    # Always doing a RSUB will work, but it will run things more eagerly that
-    # needed or propagate failures too aggressively.
-    gather_deps = collect([rsubmit(dep, options, next_ssubmit) for dep in deps],
-                         options.keep_going)
+    gather_deps = collect([
+        rsubmit(node, options, next_ssubmit)
+        if tin.op == gtt.TaskOp.SUB else
+        next_ssubmit(node)
+        for tin, node in inputs
+        ], options.keep_going)
 
     # Issue final command
     if options.dry or isinstance(task_def, gtt.ChildTaskDef):

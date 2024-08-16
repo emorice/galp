@@ -70,3 +70,28 @@ async def test_double_upload(assert_task_equal):
     """
     hello = gts.hello.function()
     await assert_task_equal(gts.double_upload(), ((hello,), (hello,)))
+
+async def test_index_uses_base(assert_task_equal):
+    """
+    Index does not require the task to be fully ran yet
+    """
+    t_dict = gts.trapped_meta()
+    t_ok = t_dict['ok']
+    t_bad = t_dict['fail']
+
+    await assert_task_equal(t_ok, 1)
+
+    with pytest.raises(galp.TaskFailedError):
+        await assert_task_equal(t_bad, None)
+
+    with pytest.raises(galp.TaskFailedError):
+        await assert_task_equal(t_dict, None)
+
+async def test_index_meta_meta(assert_task_equal):
+    """
+    Index follows when the indexed directly refer to an other task to index
+    """
+    task = gts.meta_trapped_meta()
+    t_ok = task['ok']
+
+    await assert_task_equal(t_ok, 1)
