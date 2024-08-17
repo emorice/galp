@@ -4,12 +4,10 @@ Specific parsing logic for core layer
 
 from galp.result import Ok, Progress
 from galp.serialize import LoadError
-from galp.serializer import load_model
-from galp.net.base.load import LoaderDict, default_loader, UnionLoader
-from galp.task_types import TaskDef, Serialized
+from galp.net.base.load import LoaderDict, UnionLoader
 from galp.pack import load
 
-from .types import Message, Reply, RequestId, RemoteError, Upload
+from .types import Message, Reply, RequestId, RemoteError
 
 def _get_reply_value_type(request_id: RequestId) -> type:
     """
@@ -24,16 +22,12 @@ def _remote_error_loader(ok_frame: bytes, request_id: RequestId, frames: list[by
                          ) -> Ok[Reply] | LoadError:
     if ok_frame not in (b'error', b'progress'):
         return LoadError('Bad value type')
-    match frames:
-        case [frame]:
-            return load_model(str, frame).then(
-                    lambda text: Ok(Reply(
-                        request_id,
-                        RemoteError(text) if ok_frame == b'error' else Progress(text)
-                        ))
-                    )
-        case _:
-            return LoadError('Wrong number of frames')
+    return load(str, frames).then(
+            lambda text: Ok(Reply(
+                request_id,
+                RemoteError(text) if ok_frame == b'error' else Progress(text)
+                ))
+            )
 
 def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | LoadError:
     rep_type = _get_reply_value_type(request_id)
@@ -55,26 +49,14 @@ def _reply_loader(frames: list[bytes]) -> Ok[Reply] | LoadError:
     """Constructs a Reply"""
     match frames:
         case [core_frame, *value_frames]:
-            return load_model(RequestId, core_frame).then(
+            return load(RequestId, [core_frame]).then(
                     lambda request_id: _reply_value_loader(request_id, value_frames)
                     )
         case _:
             return LoadError('Wrong number of frames')
 
-def _load_upload(frames: list[bytes]) -> Ok[Upload] | LoadError:
-    match frames:
-        case [task_def_frame, *ser_frames]:
-            return load_model(TaskDef, task_def_frame).then( # type: ignore[arg-type]
-                    lambda task_def: load(Serialized, ser_frames).then(
-                        lambda ser: Ok(Upload(task_def, ser))
-                        )
-                    )
-        case _:
-            return LoadError('Wrong number of frames')
-
-_message_loaders = LoaderDict(default_loader)
+_message_loaders = LoaderDict(lambda cls: (lambda frames: load(cls, frames)))
 _message_loaders[Reply] = _reply_loader
-_message_loaders[Upload] = _load_upload
 
 class MessageLoader(UnionLoader[Message]): # pylint: disable=too-few-public-methods
     """Loader for Message union"""

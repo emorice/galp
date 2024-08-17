@@ -6,24 +6,18 @@ from typing import TypeVar
 from functools import singledispatch
 
 from galp.result import Ok, Progress
-from galp.serializer import dump_model
 from galp.net.requests.dump import dump_reply_value
 from galp.net.base.dump import Writer
 from galp.pack import dump
-from .types import (Message, Reply, get_request_id, BaseRequest, RemoteError,
-    Upload)
+from .types import Message, Reply, get_request_id, BaseRequest, RemoteError
 
 @singledispatch
 def _dump_message_data(message: Message) -> list[bytes]:
-    return [dump_model(message)]
+    return dump(message)
 
 @_dump_message_data.register
 def _(message: Reply) -> list[bytes]:
-    return [dump_model(message.request), *dump_reply_value(message.value)]
-
-@_dump_message_data.register
-def _(message: Upload) -> list[bytes]:
-    return [dump_model(message.task_def), *dump(message.payload)]
+    return [*dump(message.request), *dump_reply_value(message.value)]
 
 def dump_message(message: Message) -> list[bytes]:
     """

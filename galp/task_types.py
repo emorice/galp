@@ -17,7 +17,8 @@ from galp.task_defs import (TaskName, TaskDef, LiteralTaskDef, TaskInput,
                             ResourceClaim, TaskOp, BaseTaskDef, CoreTaskDef,
                             ChildTaskDef, QueryTaskDef)
 from galp.default_resources import get_resources
-from galp.serializer import Serializer, GenSerialized, dump_model, LoadError
+from galp.serializer import Serializer, GenSerialized
+from galp.pack import dump, LoadError
 
 # Core task type definitions
 # ==========================
@@ -221,7 +222,7 @@ def make_task_def(cls: type[T], attrs, extra=None) -> T:
     wanted type
     """
     name = obj_to_name(msgpack.dumps((attrs, extra),
-        default=dump_model))
+        default=dump))
     return cls(name=name, **attrs)
 
 # Literal and child tasks

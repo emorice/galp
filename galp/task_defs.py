@@ -6,9 +6,6 @@ from enum import Enum
 from typing import Union, Any, TypeAlias
 from dataclasses import dataclass, KW_ONLY
 
-from pydantic_core import CoreSchema, core_schema
-from pydantic import GetCoreSchemaHandler, Field
-
 class TaskName(bytes):
     """
     Simpler wrapper around bytes with a shortened, more readable repr
@@ -26,16 +23,6 @@ class TaskName(bytes):
     def __str__(self):
         _hex = self.hex()
         return _hex[:7]
-
-    @classmethod
-    def __get_pydantic_core_schema__(
-        cls, source_type: Any, handler: GetCoreSchemaHandler
-    ) -> CoreSchema:
-        """
-        Pydantic magic straight out of the docs to validate as bytes
-        """
-        _ = source_type
-        return core_schema.no_info_after_validator_function(cls, handler(bytes))
 
 class TaskOp(str, Enum):
     """
@@ -86,7 +73,7 @@ class ResourceClaim:
     """
     Resources claimed by a task
     """
-    cpus: int = Field(ge=0)
+    cpus: int
 
 @dataclass
 class CoreTaskDef(BaseTaskDef):

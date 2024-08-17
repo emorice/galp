@@ -6,7 +6,7 @@ from types import UnionType, GenericAlias
 from typing import TypeVar, Protocol, Callable, Any, TypeAlias, Generic
 
 from galp.result import Ok
-from galp.serializer import load_model, LoadError
+from galp.pack import LoadError
 from .types import MessageType
 
 T = TypeVar('T')
@@ -36,19 +36,6 @@ class LoaderDict:
             return self._default_loader(cls)
         return loader
 
-def default_loader(cls: type[T]) -> Loader[T]:
-    """
-    Fallback to loading a message consisting of a single frame by using the
-    general pydantic validating constructor for e.g. dataclasses
-    """
-    def _load(frames: list[bytes]) -> Ok[T] | LoadError:
-        match frames:
-            case [frame]:
-                return load_model(cls, frame)
-            case _:
-                return LoadError('Wrong number of frames')
-    return _load
-
 MT = TypeVar('MT', bound=MessageType)
 
 def _make_registry(union: UnionType) -> dict[bytes, type[MessageType]]:
@@ -73,7 +60,7 @@ class UnionLoader(Generic[MT]):
     and override the loaders class attribute to inject the loaders for the union
     member types.
     """
-    loaders: LoaderDict = LoaderDict(default_loader)
+    loaders: LoaderDict
 
     _member_registry: dict[bytes, type[MT]]
 

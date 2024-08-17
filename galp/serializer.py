@@ -13,8 +13,6 @@ import logging
 import msgpack # type: ignore[import] # Issue 85
 import dill # type: ignore[import] # Issue 85
 
-from pydantic import ValidationError, TypeAdapter, RootModel
-
 from galp.serialize import (LoadError, Serializer as BaseSerializer,
                             GenSerialized)
 from galp.result import Ok
@@ -142,53 +140,6 @@ def serialize_child(index: int) -> msgpack.ExtType:
         _CHILD_EXT_CODE,
         index.to_bytes(4, 'little')
         )
-
-def dump_model(model: Any) -> bytes:
-    """
-    Serialize pydantic model or dataclass with msgpack
-
-    Args:
-        model: the dataclass or pydantic model to dump
-    """
-    if hasattr(model, 'model_dump'):
-        dump = model.model_dump()
-    else:
-        dump = (
-                RootModel[type(model)] # type: ignore[operator, misc] # pydantic magic
-                (model).model_dump()
-                )
-    return msgpack.dumps(dump)
-
-T = TypeVar('T')
-
-def load_model(model_type: type[T], payload: bytes) -> Ok[T] | LoadError:
-    """
-    Load a msgpack-serialized pydantic model
-
-    Also works on dataclasses, or union of models (though for unions the call
-    won't type check because an union is not a Type).
-
-    Args:
-        model_type: The pydantic model class of the object to create
-        payload: The msgpack-encoded buffer with the object data
-
-    Returns:
-        The deserialized object or LoadError
-    """
-    try:
-        doc = msgpack.loads(payload)
-    # Per msgpack docs:
-    # "unpack may raise exception other than subclass of UnpackException.
-    # If you want to catch all error, catch Exception instead.:
-    except Exception: # pylint: disable=broad-except
-        err = f'Invalid msgpack message: {payload!r}'
-        return LoadError(err)
-
-    try:
-        return Ok(TypeAdapter(model_type).validate_python(doc))
-    except ValidationError:
-        err = 'Invalid model data'
-        return LoadError(err)
 
 # Private serializer helpers
 # ==========================
