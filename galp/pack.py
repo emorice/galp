@@ -8,12 +8,14 @@ dataclass instances
 import logging
 from dataclasses import fields, is_dataclass
 from functools import singledispatch
-from typing import TypeVar, get_args, get_origin, Any, Annotated, Literal
-from types import UnionType, NoneType
+from typing import (TypeVar, get_args, get_origin, Any, Annotated, Literal,
+                    Union, Generic)
+from collections.abc import Hashable
+from types import NoneType, UnionType
 
 import msgpack # type:ignore[import-untyped]
 
-from galp.result import Ok, Result, Error
+from galp.result import Ok, Error
 
 class LoadError(Error[str]):
     """Error value to be returned on failed deserialization"""
@@ -25,40 +27,40 @@ class LoadException(TypeError):
 
 _IsPayload = object()
 
-U = TypeVar('U')
-Payload = Annotated[U, _IsPayload]
+T = TypeVar('T')
+Payload = Annotated[T, _IsPayload]
 
-class TypeMap:
+class TypeMap(Generic[T]):
     """
     Bi-directional mapping between keys and types
     """
-    def __init__(self, types: dict[str, Any]):
+    def __init__(self, types: dict[Hashable, type[T]]):
         self.from_key = {}
         @singledispatch
-        def _get_key(obj):
+        def _get_key(obj: T) -> Hashable:
             raise LoadException(obj)
         self.get_key = _get_key
         for key, cls in types.items():
             self.from_key[key] = cls
             self.get_key.register(cls, lambda _obj, key=key: key)
 
-    def dump_part(self, obj: object) -> tuple[object, list[bytes]]:
+    def dump_part(self, obj: T) -> tuple[object, list[bytes]]:
         """Dump an object with the union member key"""
         obj_doc, extras = dump_part(obj)
         return (self.get_key(obj), obj_doc), extras
 
-    def dump(self, obj: object) -> list[bytes]:
+    def dump(self, obj: T) -> list[bytes]:
         """Dump object and member key and finalize root doc"""
         root, extras = self.dump_part(obj)
         return [msgpack.dumps(root), *extras]
 
-    def load_part(self, doc: tuple[str, object], stream: list[bytes]
-                  ) -> tuple[object, list[bytes]]:
+    def load_part(self, doc: tuple[Hashable, object], stream: list[bytes]
+                  ) -> tuple[T, list[bytes]]:
         """Load a union member according to key"""
         key, value_doc = doc
         return load_part(self.from_key[key], value_doc, stream)
 
-    def load(self, msg: list[bytes]) -> Result:
+    def load(self, msg: list[bytes]) -> Ok[T] | LoadError:
         """Load union member from finalized root doc"""
         root_buf, *extras = msg
         try:
@@ -69,6 +71,14 @@ class TypeMap:
         if extras:
             return LoadError('Extra data at end of input')
         return Ok(obj)
+
+    @classmethod
+    def from_union(cls, union):
+        """Build number-based type map if type is a union"""
+        # Union types recognition is complicated by the history of python typing
+        if not get_origin(union) in (Union, UnionType):
+            raise TypeError
+        return cls(dict(enumerate(get_args(union))))
 
 L = TypeVar('L', list, tuple)
 def load_list(cls: type[L], doc: object, stream: list[bytes]
@@ -115,10 +125,9 @@ def parse_fields(cls):
 
     for f in fields(cls):
         orig_cls, is_payload = check_payload(f.type)
-        # Generate a type map for unions
-        if isinstance(orig_cls, UnionType):
-            typemap = TypeMap(dict(enumerate(get_args(orig_cls))))
-        else:
+        try:
+            typemap = TypeMap.from_union(orig_cls)
+        except TypeError:
             typemap = None
 
         field_list.append((
@@ -130,7 +139,6 @@ def parse_fields(cls):
     _FIELDS_CACHE[cls] = field_list
     return field_list
 
-T = TypeVar('T')
 def load_builtin(cls: type[T], doc: object, stream: list[bytes]
               ) -> tuple[T, list[bytes]]:
     """

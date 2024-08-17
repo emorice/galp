@@ -2,11 +2,11 @@
 Specific parsing logic for core layer
 """
 
-from galp.result import Result, Ok, Progress
+from galp.result import Ok, Progress
 from galp.serialize import LoadError
 from galp.serializer import load_model
 from galp.net.base.load import LoaderDict, default_loader, UnionLoader
-from galp.task_types import FlatResultRef, TaskDef, Serialized
+from galp.task_types import TaskDef, Serialized
 from galp.pack import load
 
 from .types import Message, Reply, RequestId, RemoteError, Upload
@@ -37,11 +37,7 @@ def _remote_error_loader(ok_frame: bytes, request_id: RequestId, frames: list[by
 
 def _ok_value_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | LoadError:
     rep_type = _get_reply_value_type(request_id)
-    loaded: Result
-    if rep_type in (Serialized, FlatResultRef):
-        loaded = load(rep_type, frames)
-    else:
-        loaded = UnionLoader[rep_type].load(frames) # type: ignore
+    loaded: Ok | LoadError = load(rep_type, frames)
     return loaded.then(lambda value: Ok(Reply(request_id, Ok(value))))
 
 def _reply_value_loader(request_id: RequestId, frames: list[bytes]) -> Ok[Reply] | LoadError:

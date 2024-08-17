@@ -6,7 +6,6 @@ import logging
 from typing import Type, Iterable
 
 from galp.result import Ok, Error
-import galp.net.requests.types as gr
 import galp.net.core.types as gm
 from galp.store import StoreReadError
 from . import commands as cm
@@ -237,7 +236,7 @@ class Done(Operator):
     """
     def __call__(self) -> cm.Command:
         return cm.Send(gm.Stat(self.subject.name)).then(
-                lambda statr: Ok(isinstance(statr, gr.StatDone))
+                lambda statr: Ok(statr.result is not None)
                 )
 
 class Def(Operator):
@@ -257,7 +256,7 @@ class Args(Operator):
     def requires(task: gtt.Task):
         return cm.safe_stat(task)
 
-    def _recurse(self, stat_result: gr.StatDone | gr.Found):
+    def _recurse(self, stat_result: cm.Found):
         """
         Build list of sub-queries for arguments of subject task from the
         definition obtained from STAT

@@ -156,22 +156,28 @@ def sget(task: gtt.Task) -> CommandLike[object]:
         .then(lambda res: res.deserialize(res.children))
         )
 
-def _no_not_found(stat_result: gr.StatReplyValue, task: gtt.Task
-                 ) -> Result[gr.Found | gr.StatDone]:
+@dataclass(frozen=True)
+class Found:
+    """
+    Specialized stat result with task_def filled in
+    """
+    task_def: gtt.TaskDef
+    result: gtt.FlatResultRef | None
+
+def _no_not_found(stat_result: gr.StatResult, task: gtt.Task
+                  ) -> Result[Found]:
     """
     Transform NotFound in Found if the task is a real object, and fails
     otherwise.
     """
-    if not isinstance(stat_result, gr.NotFound):
-        return Ok(stat_result)
+    if stat_result.task_def is None:
+        if isinstance(task, gtt.TaskNode):
+            return Ok(Found(task_def=task.task_def, result=None))
+        return Error(f'The task reference {task.name} could not be resolved to'
+            + 'a definition')
+    return Ok(Found(task_def=stat_result.task_def, result=stat_result.result))
 
-    if isinstance(task, gtt.TaskNode):
-        return Ok(gr.Found(task_def=task.task_def))
-
-    return Error(f'The task reference {task.name} could not be resolved to a'
-        ' definition')
-
-def safe_stat(task: gtt.Task) -> Command[gr.StatDone | gr.Found]:
+def safe_stat(task: gtt.Task) -> Command[Found]:
     """
     Chains no_not_found to a stat
     """
@@ -207,12 +213,12 @@ def _inner_ssubmit(task: gtt.Task, options: ExecOptions,
             lambda statr: _ssubmit(task, statr, options, next_ssubmit)
             )
 
-def _upload(task: gtt.Task, stat_result: gr.Found | gr.StatDone
-        ) -> CommandLike[gtt.ResultRef]:
+def _upload(task: gtt.Task, stat_result: Found) -> CommandLike[gtt.ResultRef]:
     """
     Upload logic, which is the substitute for submit for literals
     """
     task_def = stat_result.task_def
+    result = stat_result.result
     assert isinstance(task_def, gtt.LiteralTaskDef)
 
     match task:
@@ -220,33 +226,28 @@ def _upload(task: gtt.Task, stat_result: gr.Found | gr.StatDone
             # Reference to something that turned out to be a literal. This means
             # a remote literal, stat_result must be Done, and we can safely hand
             # out the result ref which may contain further valid task refs.
-            assert isinstance(stat_result, gr.StatDone)
-            return Ok(stat_result.result)
+            assert result is not None
+            return Ok(result)
         case gtt.LiteralTaskNode():
             # Local literal. We still return a full ref, not a flat ref,
             # because we do have the child tasks available locally,
             # but maybe not remotely yet, and we want to keep local information.
             result_ref = gtt.ResultRef(task.name, tuple(task.children))
-            match stat_result:
-                case gr.StatDone():
-                    # Someone already did the upload. We can cut to returning
-                    # the ref.
-                    return Ok(result_ref)
-                case gr.Found():
-                    # We hit a NotFound, that was upgraded. Do the upload, but
-                    # discard and upgrade the FlatRef
-                    return Send(
-                                gm.Upload(task_def, task.serialized)
-                            ).then(
-                                lambda _flat_ref: Ok(result_ref)
-                            )
-                case _:
-                    assert False, 'Bad stat result type'
+            if result is None:
+                # We hit a NotFound, that was upgraded. Do the upload, but
+                # discard and upgrade the FlatRef
+                return Send(
+                            gm.Upload(task_def, task.serialized)
+                        ).then(
+                            lambda _flat_ref: Ok(result_ref)
+                        )
+            # Someone already did the upload. We can cut to returning
+            # the ref.
+            return Ok(result_ref)
         case _:
             assert False, 'Bad task type'
 
-def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
-             options: ExecOptions,
+def _ssubmit(task: gtt.Task, stat_result: Found, options: ExecOptions,
              next_ssubmit: Callable[[gtt.Task], CommandLike[gtt.ResultRef]]
              ) -> CommandLike[gtt.ResultRef]:
     """
@@ -259,7 +260,7 @@ def _ssubmit(task: gtt.Task, stat_result: gr.Found | gr.StatDone,
         return _upload(task, stat_result)
 
     # Short circuit for tasks already processed
-    if isinstance(stat_result, gr.StatDone):
+    if stat_result.result is not None:
         return Ok(stat_result.result)
 
     # Query, should never have reached this layer as queries have custom run

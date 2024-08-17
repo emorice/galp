@@ -10,7 +10,7 @@ from typing import Iterable
 from galp.result import Ok
 from galp.net.core.types import Get, Stat, Upload, Message
 from galp.net.core.dump import Writer
-from galp.net.requests.types import NotFound, Found, StatDone, RemoteError
+from galp.net.requests.types import StatResult, RemoteError
 from galp.net.core.dump import add_request_id
 from galp.store import Store, StoreReadError
 from galp.protocol import TransportMessage
@@ -58,7 +58,7 @@ def handle_upload(write: Writer[Message], msg: Upload, store: Store
     result_ref = store.put_serial(msg.task_def.name, msg.payload)
     return [write_reply(Ok(result_ref))]
 
-def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:
+def _on_stat_io_unsafe(store, msg: Stat) -> StatResult:
     """
     STAT handler allowed to raise store read errors
     """
@@ -78,12 +78,12 @@ def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:
     # Case 1: both def and children, DONE
     if task_def is not None and result_ref is not None:
         logging.info('STAT: DONE %s', msg.name)
-        return StatDone(task_def=task_def, result=result_ref)
+        return StatResult(task_def=task_def, result=result_ref)
 
     # Case 2: only def, FOUND
     if task_def is not None:
         logging.info('STAT: FOUND %s', msg.name)
-        return Found(task_def=task_def)
+        return StatResult(task_def=task_def, result=None)
 
     # Case 3: only children
     # This means a legacy store that was missing tasks definition
@@ -94,4 +94,4 @@ def _on_stat_io_unsafe(store, msg: Stat) -> StatDone | Found | NotFound:
 
     # Case 4: nothing
     logging.info('STAT: NOT FOUND %s', msg.name)
-    return NotFound()
+    return StatResult(None, None)

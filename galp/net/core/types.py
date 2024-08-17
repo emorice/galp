@@ -110,7 +110,7 @@ class Get(BaseRequest[gtt.Serialized], key='get'):
         return self.name
 
 @dataclass(frozen=True)
-class Stat(BaseRequest[gr.StatReplyValue], key='stat'):
+class Stat(BaseRequest[gr.StatResult], key='stat'):
     """
     A message asking if a task is defined or executed
 

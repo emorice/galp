@@ -16,7 +16,7 @@ from galp.result import Ok
 from galp.protocol import make_stack
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.net.core.types import Reply, RequestId, Submit, Stat, NextRequest
-from galp.net.requests.types import NotFound
+from galp.net.requests.types import StatResult
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=protected-access
@@ -129,7 +129,8 @@ async def test_unique_submission(make_peer_client):
             # said order, which is an implementation detail
             for name in (task.name, tdef.args[0].name, tdef.args[1].name):
                 await peer.recv_message()
-                await peer.send_message(Reply(RequestId(b'stat', name), Ok(NotFound())))
+                await peer.send_message(Reply(RequestId(b'stat', name),
+                                              Ok(StatResult(None, None))))
                 await peer.send_message(NextRequest())
 
             # Process one SUBMIT and drop it

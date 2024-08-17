@@ -3,8 +3,8 @@ Task defs: flat objects describing tasks
 """
 
 from enum import Enum
-from typing import Union, Any, Annotated, Literal
-from dataclasses import dataclass, field, KW_ONLY
+from typing import Union, Any, TypeAlias
+from dataclasses import dataclass, KW_ONLY
 
 from pydantic_core import CoreSchema, core_schema
 from pydantic import GetCoreSchemaHandler, Field
@@ -100,8 +100,6 @@ class CoreTaskDef(BaseTaskDef):
     vtags: list[str] # ideally ascii
     resources: ResourceClaim
 
-    task_type: Literal['core'] = field(default='core', repr=False)
-
     @property
     def inputs(self) -> list[TaskInput]:
         return [*self.args, *self.kwargs.values()]
@@ -114,8 +112,6 @@ class ChildTaskDef(BaseTaskDef):
     parent: TaskName
     index: int
 
-    task_type: Literal['child'] = field(default='child', repr=False)
-
     @property
     def inputs(self) -> list[TaskInput]:
         # SubTask, the one input is the parent task
@@ -127,8 +123,6 @@ class LiteralTaskDef(BaseTaskDef):
     Information defining a literal Task, i.e. a constant.
     """
     children: list[TaskName]
-
-    task_type: Literal['literal'] = field(default='literal', repr=False)
 
     @property
     def inputs(self) -> list[TaskInput]:
@@ -150,13 +144,8 @@ class QueryTaskDef(BaseTaskDef):
     subject: TaskName
     query: Any # Query type is not well specified yet
 
-    task_type: Literal['query'] = field(default='query', repr=False)
-
     @property
     def inputs(self) -> list[TaskInput]:
         raise NotImplementedError
 
-TaskDef = Annotated[
-        Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef],
-        Field(discriminator='task_type')
-        ]
+TaskDef: TypeAlias = Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef]

@@ -11,7 +11,11 @@ import galp.task_types as gtt
 from galp.result import Ok
 from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
         TaskNode, TaskSerializer, Serialized, LiteralTaskNode)
-from galp.serializer import serialize_child, dump_model, load_model, LoadError
+from galp.serializer import serialize_child, LoadError
+from galp.pack import TypeMap
+
+task_def_typemap: TypeMap[TaskDef] = TypeMap.from_union(TaskDef)
+"""To serialize and deserialize task defs"""
 
 class StoreReadError(Exception):
     """
@@ -186,7 +190,7 @@ class Store():
         if key in self.serialcache:
             return
 
-        self.serialcache[key] = dump_model(task_def)
+        self.serialcache[key] = task_def_typemap.dump(task_def)
 
     def put_child_task_def(self, task_def: gtt.ChildTaskDef) -> TaskRef:
         """
@@ -231,8 +235,9 @@ class Store():
         Loads a task definition, non-recursively
         """
         # Load with a union, I don't know any way to type this
-        task_def: Ok[TaskDef] | LoadError = \
-                load_model(TaskDef, self.serialcache[name + b'.task']) # type: ignore[arg-type]
+        task_def: Ok[TaskDef] | LoadError = task_def_typemap.load(
+                self.serialcache[name + b'.task']
+                )
         match task_def:
             case LoadError() as err:
                 raise StoreReadError(err)
