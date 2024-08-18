@@ -6,6 +6,7 @@ Convert pyinstrument json report to flamegraph log
 import sys
 import json
 import math
+import hashlib
 
 def color(x):
     """Rotating color"""
@@ -22,7 +23,11 @@ def print_log(frame, stack=None, file=sys.stdout, palette={}):
     if stack is None:
         stack = []
     item = f"{frame['function']}:{frame['file_path_short']}:{frame['line_no']}"
-    x_color = (hash(frame['file_path_short']) % 1000)/1000
+    x_color = int.from_bytes(
+            hashlib.md5(
+                frame['file_path_short'].encode('utf8')
+            ).digest()[-2:]
+            ) / 2**16
     palette[item] = color(x_color)
     stack.append(item)
     total_time = frame['time']
