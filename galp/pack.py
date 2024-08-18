@@ -30,26 +30,55 @@ _IsPayload = object()
 T = TypeVar('T')
 Payload = Annotated[T, _IsPayload]
 
+Loader: TypeAlias = Callable[[type[T], list[bytes]], tuple[T, list[bytes]]]
+Dumper: TypeAlias = Callable[[T], tuple[object, list[bytes]]]
+
+_LOADERS: dict[type, Loader] = {}
+"""
+Cache the loading function for types already seen
+"""
+_DUMPERS: dict[type, Dumper] = {}
+
+def get_loader(cls: type[T]) -> Loader[T]:
+    """Get loader for cls, creating and caching it if necessary"""
+    if cls in _LOADERS:
+        return _LOADERS[cls]
+    if is_dataclass(cls):
+        loader = make_load_dataclass(cls)
+    else:
+        loader = make_load_builtin(cls)
+    _LOADERS[cls] = loader
+    return loader
+
+def get_dumper(cls: type[T]) -> Dumper[T]:
+    """Get dumper for cls, creating and caching it if necessary"""
+    if cls in _DUMPERS:
+        return _DUMPERS[cls]
+    dumper = make_dumper(cls)
+    _DUMPERS[cls] = dumper
+    return dumper
+
 class TypeMap(Generic[T]):
     """
     Bi-directional mapping between keys and types
     """
     def __init__(self, types: dict[Hashable, type[T]]):
-        self.from_key = {}
         self.loaders = {}
+        self.dumpers = {}
         @singledispatch
-        def _get_key(obj: T) -> Hashable:
+        def _get_key(obj: T) -> tuple[Hashable, Dumper]:
             raise LoadException(obj)
         self.get_key = _get_key
         for key, cls in types.items():
-            self.from_key[key] = cls
-            self.get_key.register(cls, lambda _obj, key=key: key)
+            dumper = get_dumper(cls)
+            self.get_key.register(cls, lambda _obj, val=(key, dumper): val)
             self.loaders[key] = get_loader(cls)
 
     def dump_part(self, obj: T) -> tuple[object, list[bytes]]:
         """Dump an object with the union member key"""
-        obj_doc, extras = dump_part(obj)
-        return (self.get_key(obj), obj_doc), extras
+        key, dumper = self.get_key(obj)
+        obj_doc, extras = dumper(obj)
+        return (key, obj_doc), extras
 
     def dump(self, obj: T) -> list[bytes]:
         """Dump object and member key and finalize root doc"""
@@ -82,23 +111,6 @@ class TypeMap(Generic[T]):
             raise TypeError
         return cls(dict(enumerate(get_args(union))))
 
-Loader: TypeAlias = Callable[[type[T], list[bytes]], tuple[T, list[bytes]]]
-
-_LOADERS: dict[type, Loader] = {}
-"""
-Cache the loading function for types already seen
-"""
-
-def get_loader(cls: type[T]) -> Loader[T]:
-    """Get loader for cls, creating and caching it if necessary"""
-    if cls in _LOADERS:
-        return _LOADERS[cls]
-    if is_dataclass(cls):
-        loader = make_load_dataclass(cls)
-    else:
-        loader = make_load_builtin(cls)
-    _LOADERS[cls] = loader
-    return loader
 
 L = TypeVar('L', list, tuple)
 def make_load_list(cls: type[L]) -> Loader[L]:
@@ -194,22 +206,19 @@ def parse_fields(cls):
         orig_cls, is_payload = check_payload(f.type)
         try:
             typemap = TypeMap.from_union(orig_cls)
-        except TypeError:
-            typemap = None
-
-        if typemap:
             loader = typemap.load_part
-        else:
+            dumper = typemap.dump_part
+        except TypeError:
             loader = get_loader(orig_cls)
+            dumper = get_dumper(orig_cls)
 
         field_list.append((
             f.name,
             is_payload,
-            typemap,
             orig_cls,
-            loader))
+            loader,
+            dumper))
 
-    _FIELDS_CACHE[cls] = field_list
     return field_list
 
 def make_load_dataclass(cls: type[T]) -> Loader[T]:
@@ -222,7 +231,7 @@ def make_load_dataclass(cls: type[T]) -> Loader[T]:
         if not isinstance(doc, dict):
             raise LoadException
         obj_dict = dict(doc)
-        for name, is_payload, _typemap, item_cls, loader in field_list:
+        for name, is_payload, item_cls, loader, _dumper in field_list:
             if is_payload:
                 # Get data for this attribute from the rest of the stream
                 attr_doc_buf, *stream = stream
@@ -254,73 +263,98 @@ def load_part(cls: type[T], doc: object, stream: list[bytes]
 
     return get_loader(cls)(doc, stream)
 
-def dump_list(obj: list | tuple) -> tuple[list, list[bytes]]:
+def make_dump_list(cls: type[L]) -> Dumper[L]:
     """Dump a list or tuple"""
-    doc = []
-    extras: list[bytes] = []
-    for item in obj:
-        item_doc, item_extras = dump_part(item)
-        doc.append(item_doc)
-        extras.extend(item_extras)
-    return doc, extras
 
-def dump_dict(obj: dict) -> tuple[dict, list[bytes]]:
+    args = get_args(cls)
+    if args:
+        type_var, *_ellipsis = args
+        assert _ellipsis in ([], [...]), 'not supported yet'
+        dump_item = get_dumper(type_var)
+    else:
+        # We may have an unparametrized type too
+        dump_item = dump_part
+
+    def _dump_list(obj: list | tuple) -> tuple[list, list[bytes]]:
+        """Dump a list or tuple"""
+        doc = []
+        extras: list[bytes] = []
+        for item in obj:
+            item_doc, item_extras = dump_item(item)
+            doc.append(item_doc)
+            extras.extend(item_extras)
+        return doc, extras
+    return _dump_list
+
+def make_dump_dict(cls: type[D]) -> Dumper[D]:
     """Dump a dict"""
-    doc = {}
-    extras: list[bytes] = []
-    for key, value in obj.items():
-        key_doc, key_extras = dump_part(key)
-        extras.extend(key_extras)
-        value_doc, value_extras = dump_part(value)
-        extras.extend(value_extras)
-        doc[key_doc] = value_doc
-    return doc, extras
+    args = get_args(cls)
+    if len(args) == 2:
+        key_type_var, value_type_var = args
+        dump_key = get_dumper(key_type_var)
+        dump_value = get_dumper(value_type_var)
+    else: # Unparametrized
+        dump_key, dump_value = dump_part, dump_part
+    def _dump_dict(obj: dict) -> tuple[dict, list[bytes]]:
+        """Dump a dict"""
+        doc = {}
+        extras: list[bytes] = []
+        for key, value in obj.items():
+            key_doc, key_extras = dump_key(key)
+            extras.extend(key_extras)
+            value_doc, value_extras = dump_value(value)
+            extras.extend(value_extras)
+            doc[key_doc] = value_doc
+        return doc, extras
+    return _dump_dict
 
-def dump_part(obj: object) -> tuple[object, list[bytes]]:
+def make_dumper(cls: type[T]) -> Dumper[T]:
     """
-    Dump an arbitrary object
+    Make dump for an arbitrary type
     """
-    # Trivial guard for basic types
-    if not is_dataclass(obj):
-        if isinstance(obj, list | tuple):
-            return dump_list(obj)
-        if isinstance(obj, dict):
-            return dump_dict(obj)
-        return obj, []
+    if not is_dataclass(cls):
+        # contrary to load, we may get both parametrized and unparamterized
+        # types
+        orig = get_origin(cls)
+        if issubclass(cls, (list, tuple)) or orig in (list, tuple):
+            return make_dump_list(cls)
+        if issubclass(cls, dict) or orig is dict:
+            return make_dump_dict(cls)
+        return lambda obj: (obj, [])
 
-    # Extract original attributes
-    orig_obj_dict = vars(obj)
-    obj_dict = {}
-    docstream: list[bytes] = []
+    field_list = parse_fields(cls)
 
-    try:
-        field_list = _FIELDS_CACHE[type(obj)]
-    except KeyError:
-        field_list = parse_fields(type(obj))
+    def _dump_dataclass(obj: T) -> tuple[object, list[bytes]]:
+        # Extract original attributes
+        orig_obj_dict = vars(obj)
+        obj_dict = {}
+        docstream: list[bytes] = []
 
-    for name, is_payload, typemap, item_cls, _loader in field_list:
-        # Apply the dumper for this attribute
-        # The dumper can produce further stream items
-        if typemap:
-            attr_doc, extras = typemap.dump_part(orig_obj_dict[name])
-        else:
-            attr_doc, extras = dump_part(orig_obj_dict[name])
+        for name, is_payload, item_cls, _loader, dumper in field_list:
+            # Apply the dumper for this attribute
+            # The dumper can produce further stream items
+            attr_doc, extras = dumper(orig_obj_dict[name])
 
-        if is_payload:
-            # Put data for this attribute in the rest of the stream
-            if item_cls is bytes:
-                if not isinstance(attr_doc, bytes):
-                    raise LoadException
-                attr_doc_buf = attr_doc
+            if is_payload:
+                # Put data for this attribute in the rest of the stream
+                if item_cls is bytes:
+                    if not isinstance(attr_doc, bytes):
+                        raise LoadException
+                    attr_doc_buf = attr_doc
+                else:
+                    attr_doc_buf = msgpack.dumps(attr_doc)
+                docstream.append(attr_doc_buf)
             else:
-                attr_doc_buf = msgpack.dumps(attr_doc)
-            docstream.append(attr_doc_buf)
-        else:
-            # Put data in the main dict
-            obj_dict[name] = attr_doc
-        docstream.extend(extras)
+                # Put data in the main dict
+                obj_dict[name] = attr_doc
+            docstream.extend(extras)
 
-    return obj_dict, docstream
+        return obj_dict, docstream
+    return _dump_dataclass
+
+def dump_part(obj: T) -> tuple[object, list[bytes]]:
+    """Get dumper for object type and use it"""
+    return get_dumper(type(obj))(obj)
 
 def dump(obj: object) -> list[bytes]:
     """Dump object and finalize root doc"""
