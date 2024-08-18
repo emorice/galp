@@ -8,8 +8,6 @@ import logging
 import signal
 
 import psutil
-import numpy as np
-import pyarrow as pa # type: ignore[import]
 
 import galp
 from galp import step
@@ -75,6 +73,9 @@ def profile_me(n): # pylint: disable=invalid-name
 @step
 def arange(n): # pylint: disable=invalid-name
     """Numpy return type"""
+    # pylint: disable=import-outside-toplevel
+    import numpy as np
+
     return np.arange(n)
 
 @step
@@ -82,6 +83,9 @@ def npsum(vect):
     """
     Numpy input but generic return type
     """
+    # pylint: disable=import-outside-toplevel
+    import numpy as np
+
     return float(np.sum(vect))
 
 @step
@@ -89,6 +93,8 @@ def some_table():
     """
     Pyarrow return type
     """
+    # pylint: disable=import-outside-toplevel
+    import pyarrow as pa # type: ignore[import]
     return  pa.table({
         'x': ['abc', 'def', 'gh'],
         'y': [1.0, -0.0, 7]
@@ -99,6 +105,8 @@ def some_tuple():
     """
     Returns two resources that can be addressed separately
     """
+    # pylint: disable=import-outside-toplevel
+    import numpy as np
     return (
         np.arange(10),
         10
@@ -205,6 +213,9 @@ def alloc_mem(N, dummy): # pylint: disable=invalid-name
     """
     Tries to alloc N bytes of memory
     """
+    # pylint: disable=import-outside-toplevel
+    import numpy as np
+
     del dummy # only to make different tasks
     proc = psutil.Process()
     logging.info('VM: %d', proc.memory_info().vms)
@@ -254,6 +265,7 @@ def meta_error():
 
 @step
 def echo(to_stdout: str, to_stderr: str):
+    """Print to both std streams"""
     print(to_stdout, file=sys.stdout)
     print(to_stderr, file=sys.stderr)
 

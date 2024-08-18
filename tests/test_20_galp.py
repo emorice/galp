@@ -5,7 +5,6 @@ High-level tests for galp
 import asyncio
 import time
 
-import numpy as np
 from async_timeout import timeout
 
 import tests.steps as gts
@@ -188,6 +187,8 @@ async def test_inline(client):
 
 async def test_npserializer(client):
     """Tests fetching a non-standard type"""
+    # pylint: disable=import-outside-toplevel
+    import numpy as np
     task = gts.arange(10)
 
     ans = (await asyncio.wait_for(client.collect(task), 3))[0]
@@ -240,6 +241,8 @@ async def test_tuple(client):
 
     gt_a, gt_b = gts.some_tuple.function()
 
+    # pylint: disable=import-outside-toplevel
+    import numpy as np
     np.testing.assert_array_equal(ans_a[0], gt_a)
     assert gt_b == ans_b[0]
 
@@ -319,6 +322,8 @@ async def test_complex_inline(client):
     """
     Sends a non-native object as inline argument
     """
+    # pylint: disable=import-outside-toplevel
+    import numpy as np
 
     async with timeout(3):
         ans = await client.run(
