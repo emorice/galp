@@ -144,7 +144,7 @@ def ok_callback(callback: Callback[InOkT, OkT]
     Wrap a callback from Ok values to accept and propagate Done/Failed
     accordingly
     """
-    def _ok_callback(val: Result[InOkT]):
+    def _ok_callback(val: 'Result[InOkT]'):
         return val.then(callback)
     return _ok_callback
 
