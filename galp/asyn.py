@@ -308,7 +308,7 @@ class Slot(Generic[OkT]):
     Mutable container that holds the current computation state of a future
     """
     state: Result[OkT] | Primitive[OkT] | Pending[OkT]
-    outputs: 'WeakSet[Slot]' = field(default_factory=WeakSet)
+    outputs: 'list[Slot]' = field(default_factory=list)
 
     def get_value(self) -> State[OkT]:
         """
@@ -420,7 +420,7 @@ class Script:
                             new_inputs = []
                             for cin in new_state.inputs:
                                 slot_in = self.slots[cin]
-                                slot_in.outputs.add(slot)
+                                slot_in.outputs.append(slot)
                                 new_inputs.append(slot_in)
                             slots.extend(new_leaf_slots)
                             slot.state = Pending(new_inputs, new_state.eval)
@@ -478,7 +478,7 @@ class Script:
             any_done = False
             for cin in command.inputs:
                 slot_in = self.slots[cin]
-                slot_in.outputs.add(slot)
+                slot_in.outputs.append(slot)
                 slot.state.inputs.append(slot_in)
                 any_done |= (slot_in.get_value() is not None)
             # Slot has input already settled, candidate dynamic leave
