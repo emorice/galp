@@ -68,7 +68,7 @@ class Command(Generic[OkT]):
         """
         Chain callback to this command on sucess
         """
-        return self.eventually(ok_callback(callback))
+        return DeferredCommand(self, ok_callback(callback))
 
     def eventually(self, callback: 'PlainCallback[OkT, OutOkT]') -> 'Command[OutOkT]':
         """
