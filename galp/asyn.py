@@ -8,7 +8,6 @@ from typing import (TypeVar, Generic, Callable, Iterable, TypeAlias,
     Mapping, Sequence)
 from collections.abc import Hashable
 from dataclasses import dataclass, field
-from functools import wraps
 from galp.result import Ok, Error, Result, Progress, all_ok as result_all_ok
 
 # Extension of Result with a "pending" state
@@ -145,7 +144,6 @@ def ok_callback(callback: Callback[InOkT, OkT]
     Wrap a callback from Ok values to accept and propagate Done/Failed
     accordingly
     """
-    @wraps(callback)
     def _ok_callback(val: Result[InOkT]):
         return val.then(callback)
     return _ok_callback

@@ -7,3 +7,4 @@ pyarrow
 plotly
 beautifulsoup4
 mypy
+pyinstrument-flamegraph @ git+https://github.com/emorice/pyinstrument-flamegraph
