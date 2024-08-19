@@ -173,6 +173,7 @@ def _no_not_found(stat_result: gr.StatResult, task: gtt.Task
     """
     if stat_result.task_def is None:
         if isinstance(task, gtt.TaskNode):
+            assert not isinstance(task.task_def, gtt.QueryDef)
             return Ok(Found(task_def=task.task_def, result=None))
         return Error(f'The task reference {task.name} could not be resolved to'
             + 'a definition')
@@ -266,8 +267,7 @@ def _ssubmit(task: gtt.Task, stat_result: Found, options: ExecOptions,
 
     # Query, should never have reached this layer as queries have custom run
     # mechanics
-    if isinstance(task_def, gtt.QueryTaskDef):
-        raise NotImplementedError
+    assert not isinstance(task_def, gtt.QueryDef)
 
     # Finally, Core or Child, process inputs/parent first
 

@@ -13,9 +13,9 @@ from dataclasses import dataclass
 import msgpack # type: ignore[import] # Issue #85
 
 from galp.result import Ok
-from galp.task_defs import (TaskName, TaskDef, LiteralTaskDef, TaskInput,
+from galp.task_defs import (TaskName, LiteralTaskDef, TaskInput,
                             ResourceClaim, TaskOp, BaseTaskDef, CoreTaskDef,
-                            ChildTaskDef, QueryTaskDef)
+                            ChildTaskDef, TaskDef, QueryDef)
 from galp.default_resources import get_resources
 from galp.serializer import Serializer, GenSerialized
 from galp.pack import dump, LoadError
@@ -60,7 +60,7 @@ class TaskNode:
         inputs: list of either task nodes or task references required to
             reconstruct this tasks' result
     """
-    task_def: TaskDef
+    task_def: TaskDef | QueryDef
     inputs: 'list[Task]'
 
     @property
@@ -122,7 +122,7 @@ class TaskNode:
                 def_str = f'Index {tdef.index} of:'
             case LiteralTaskDef():
                 def_str = 'Literal'
-            case QueryTaskDef():
+            case QueryDef():
                 def_str = 'Query'
 
         string = f'{prefix}{self.name} {def_str}\n'
@@ -199,7 +199,7 @@ def make_task_input(obj: Any) -> tuple[TaskInput, Task]:
     Returns: a tuple (tin, node) where tin is a task input suitable for
         referencing the task while node is the full task object
     """
-    if isinstance(obj, TaskNode) and isinstance(obj.task_def, QueryTaskDef):
+    if isinstance(obj, TaskNode) and isinstance(obj.task_def, QueryDef):
         # Only allowed query for now, will be extended in the future
         dep, = obj.inputs
         if obj.task_def.query in ['$base']:
@@ -533,7 +533,7 @@ def query(subject: Any, query_doc: Any) -> TaskNode:
     tdef = {'query': query_doc, 'subject': subj_node.name}
     return TaskNode(
             task_def=make_task_def(
-                QueryTaskDef, tdef
+                QueryDef, tdef
                 ),
             inputs=[subj_node]
             )

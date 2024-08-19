@@ -10,7 +10,7 @@ import msgpack # type: ignore[import] # Issue 85
 import galp.task_types as gtt
 from galp.result import Ok
 from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
-        TaskNode, TaskSerializer, Serialized, LiteralTaskNode)
+        TaskNode, TaskSerializer, Serialized, LiteralTaskNode, QueryDef)
 from galp.serializer import serialize_child, LoadError
 from galp.pack import TypeMap
 
@@ -218,7 +218,13 @@ class Store():
             # so there is nothing to do
             return task
 
-        self.put_task_def(task.task_def)
+        task_def = task.task_def
+
+        if isinstance(task_def, QueryDef):
+            raise TypeError('Queries can\'t be persisted and'
+             + ' cannot be used inside meta steps')
+
+        self.put_task_def(task_def)
 
         for tin in task.inputs:
             self.put_task(tin)

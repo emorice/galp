@@ -226,7 +226,8 @@ async def test_vmlimit(make_galp_set):
     unlimited_client = unlimited_gls.client
     limited_client = limited_gls.client
 
-    task_a, task_b = [gts.alloc_mem(2**30, x) for x in 'ab']
+    # Exactly 2GiB
+    task_a, task_b = [gts.alloc_mem(2**31, x) for x in 'ab']
 
     await asyncio.wait_for(
             unlimited_client.collect(task_a),

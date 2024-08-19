@@ -10,7 +10,7 @@ import galp.net.core.types as gm
 from galp.store import StoreReadError
 from . import commands as cm
 from . import task_types as gtt
-from .task_types import TaskNode, QueryTaskDef, CoreTaskDef
+from .task_types import TaskNode, QueryDef, CoreTaskDef
 from .asyn import as_command, collect, collect_dict
 
 def run_task(task: gtt.Task, options: cm.ExecOptions
@@ -20,7 +20,7 @@ def run_task(task: gtt.Task, options: cm.ExecOptions
     """
     if isinstance(task, TaskNode):
         task_def = task.task_def
-        if isinstance(task_def, QueryTaskDef):
+        if isinstance(task_def, QueryDef):
             if options.dry:
                 raise NotImplementedError('Cannot dry-run queries yet')
             subject, = task.inputs
@@ -446,7 +446,7 @@ class Iterate(Operator, named=False):
             raise TypeError('Object is not a collection of tasks, cannot'
                 + ' use a "*" query here')
         for task_ref in shallow_obj:
-            if not isinstance(task_ref, gtt.Task):
+            if not isinstance(task_ref, (gtt.TaskNode, gtt.TaskRef)):
                 raise TypeError('Object is not a collection of tasks, cannot'
                     + ' use a "*" query here')
             # Issue # 81

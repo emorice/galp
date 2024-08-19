@@ -118,7 +118,7 @@ class LiteralTaskDef(BaseTaskDef):
         return []
 
 @dataclass
-class QueryTaskDef(BaseTaskDef):
+class QueryDef(BaseTaskDef):
     """
     Information defining a query Task, i.e. a task with a modifier.
 
@@ -135,4 +135,4 @@ class QueryTaskDef(BaseTaskDef):
     def inputs(self) -> list[TaskInput]:
         raise NotImplementedError
 
-TaskDef: TypeAlias = Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef, QueryTaskDef]
+TaskDef: TypeAlias = Union[CoreTaskDef, ChildTaskDef, LiteralTaskDef]
