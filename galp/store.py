@@ -14,7 +14,7 @@ from galp.task_types import (TaskName, TaskRef, Task, TaskDef,
 from galp.serializer import serialize_child, LoadError
 from galp.pack import TypeMap
 
-task_def_typemap: TypeMap[TaskDef] = TypeMap.from_union(TaskDef)
+task_def_typemap: TypeMap[int, TaskDef] = TypeMap.from_union(TaskDef)
 """To serialize and deserialize task defs"""
 
 class StoreReadError(Exception):

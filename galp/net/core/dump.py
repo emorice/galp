@@ -2,30 +2,21 @@
 Core message serialization
 """
 
-from typing import TypeVar
-from functools import singledispatch
+from typing import TypeVar, Callable, TypeAlias
 
-from galp.result import Ok, Progress
-from galp.net.requests.dump import dump_reply_value
-from galp.net.base.dump import Writer
-from galp.pack import dump
-from .types import Message, Reply, get_request_id, BaseRequest, RemoteError
+from galp.result import Ok
+from .types import Message, Reply, BaseRequest, RemoteError, Progress
+from .load import dump_message, get_request_id, MessageTypeMap # pylint: disable=unused-import # reexport
 
-@singledispatch
-def _dump_message_data(message: Message) -> list[bytes]:
-    return dump(message)
 
-@_dump_message_data.register
-def _(message: Reply) -> list[bytes]:
-    return [*dump(message.request), *dump_reply_value(message.value)]
+M = TypeVar('M')
 
-def dump_message(message: Message) -> list[bytes]:
-    """
-    Serialize a core message
-
-    For replies, the enclosed value is dumped to separate extra frames.
-    """
-    return [message.message_get_key(), *_dump_message_data(message)]
+Writer: TypeAlias = Callable[[M], list[bytes]]
+"""
+Function that converts M to a list of bytes. This is defined as a type alias:
+    * as a shortcut because Callable is verbose, and
+    * as a central point to define what is the result type of the serialization
+"""
 
 V = TypeVar('V')
 

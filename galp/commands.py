@@ -14,6 +14,7 @@ import galp.asyn as ga
 from galp.result import Result, Ok, Error
 from galp.asyn import Command, collect, Primitive, CommandLike
 from galp.printer import Printer, PassTroughPrinter
+from galp.net.core.dump import get_request_id
 
 # Custom Script
 # -------------
@@ -44,7 +45,7 @@ class Send(Primitive[T_co]):
 
     @property
     def key(self) -> Hashable:
-        return gm.get_request_id(self.request)
+        return get_request_id(self.request)
 
 class End(Primitive):
     """Finish the command processing"""

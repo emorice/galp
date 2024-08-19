@@ -8,7 +8,7 @@ from typing import TypeAlias, Iterable, Callable
 from dataclasses import dataclass
 
 import galp.net.core.types as gm
-from galp.net.core.dump import Writer
+from galp.net.core.dump import Writer, MessageTypeMap
 from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
         ForwardSessions)
 from galp.net.routing.load import Routed, load_routed
@@ -51,7 +51,7 @@ def _handle_routing(is_router: bool, session: Writer[list[bytes]], msg: Routed
 
 def _log_message(routed: Routed, proto_name: str) -> Routed:
     msg = routed.body
-    verb = msg.message_get_key()
+    verb, _dumper = MessageTypeMap.get_key(msg)
     match msg:
         case gm.Submit() | gm.Upload():
             arg = str(msg.task_def.name)

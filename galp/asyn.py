@@ -3,7 +3,7 @@ Functional, framework-agnostic, asynchronous programming system
 """
 
 import logging
-from weakref import WeakKeyDictionary, WeakSet
+from weakref import WeakKeyDictionary
 from typing import (TypeVar, Generic, Callable, Iterable, TypeAlias,
     Mapping, Sequence)
 from collections.abc import Hashable

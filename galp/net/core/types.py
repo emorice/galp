@@ -14,7 +14,6 @@ import galp.task_types as gtt
 import galp.net.requests.types as gr
 
 from galp.result import Ok, Progress
-from galp.net.base.types import MessageType
 from galp.net.requests.types import RemoteError
 
 # Messages
@@ -24,7 +23,7 @@ from galp.net.requests.types import RemoteError
 # ----------
 
 @dataclass(frozen=True)
-class Exited(MessageType, key='exited'):
+class Exited:
     """
     Signals that a peer (unexpectedly) exited. This is typically sent by an
     other peer that detected the kill event
@@ -35,7 +34,7 @@ class Exited(MessageType, key='exited'):
     peer: str
 
 @dataclass(frozen=True)
-class Fork(MessageType, key='fork'):
+class Fork:
     """
     A message asking for a new peer, compatible with some resource claim, to be
     created.
@@ -44,7 +43,7 @@ class Fork(MessageType, key='fork'):
     resources: gtt.ResourceClaim
 
 @dataclass(frozen=True)
-class Ready(MessageType, key='ready'):
+class Ready:
     """
     A message advertising a worker joining the system
 
@@ -56,7 +55,7 @@ class Ready(MessageType, key='ready'):
     mission: bytes
 
 @dataclass(frozen=True)
-class PoolReady(MessageType, key='poolReady'):
+class PoolReady:
     """
     A message advertising a pool (forkserver) joining the system
 
@@ -71,7 +70,7 @@ class PoolReady(MessageType, key='poolReady'):
 V = TypeVar('V', covariant=True) # pylint: disable=typevar-name-incorrect-variance
 
 # pylint: disable=too-few-public-methods
-class BaseRequest(MessageType, Generic[V], key=None):
+class BaseRequest(Generic[V]):
     """
     Logical base request class.
 
@@ -86,7 +85,7 @@ class BaseRequest(MessageType, Generic[V], key=None):
 
     def __class_getitem__(cls, item):
         orig = GenericAlias(cls, item)
-        class _Request(orig, key=None):
+        class _Request(orig):
             reply_type = item
 
             @property
@@ -96,7 +95,7 @@ class BaseRequest(MessageType, Generic[V], key=None):
         return _Request
 
 @dataclass(frozen=True)
-class Get(BaseRequest[gtt.Serialized], key='get'):
+class Get(BaseRequest[gtt.Serialized]):
     """
     A message asking for an already computed resource
 
@@ -110,7 +109,7 @@ class Get(BaseRequest[gtt.Serialized], key='get'):
         return self.name
 
 @dataclass(frozen=True)
-class Stat(BaseRequest[gr.StatResult], key='stat'):
+class Stat(BaseRequest[gr.StatResult]):
     """
     A message asking if a task is defined or executed
 
@@ -124,7 +123,7 @@ class Stat(BaseRequest[gr.StatResult], key='stat'):
         return self.name
 
 @dataclass(frozen=True)
-class Submit(BaseRequest[gtt.FlatResultRef], key='submit'):
+class Submit(BaseRequest[gtt.FlatResultRef]):
     """
     A message asking for a task to be executed
 
@@ -139,7 +138,7 @@ class Submit(BaseRequest[gtt.FlatResultRef], key='submit'):
         return self.task_def.name
 
 @dataclass(frozen=True)
-class Upload(BaseRequest[gtt.FlatResultRef], key='upload'):
+class Upload(BaseRequest[gtt.FlatResultRef]):
     """
     Ask for a task result to be written in store
     """
@@ -177,25 +176,20 @@ class RequestId:
                 gtt.TaskName.fromhex(hexname.decode('ascii'))
                 )
 
-def get_request_id(req: BaseRequest) -> RequestId:
-    """
-    Make request id from Request
-    """
-    return RequestId(req.message_get_key(), req.input_id)
-
 # Req-rep wrappers
 # ----------------
 
 @dataclass(frozen=True)
-class Exec(MessageType, key='exec'):
+class Exec:
     """
     A message wrapping a Submit with a resource allocation
     """
     submit: Submit
     resources: gtt.Resources
 
+
 @dataclass(frozen=True)
-class Reply(MessageType, Generic[V], key='reply'):
+class Reply(Generic[V]):
     """
     Wraps the result to a request, identifing said request
     """
@@ -203,8 +197,9 @@ class Reply(MessageType, Generic[V], key='reply'):
     value: Ok[V] | Progress | RemoteError
 
 @dataclass(frozen=True)
-class NextRequest(MessageType, key='next_request'):
+class NextRequest:
     """Event sent by broker when ready for next request"""
+
 
 Message: TypeAlias = (
         Exited | Fork | Ready | PoolReady |

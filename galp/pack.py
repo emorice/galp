@@ -30,7 +30,7 @@ _IsPayload = object()
 T = TypeVar('T')
 Payload = Annotated[T, _IsPayload]
 
-Loader: TypeAlias = Callable[[type[T], list[bytes]], tuple[T, list[bytes]]]
+Loader: TypeAlias = Callable[[object, list[bytes]], tuple[T, list[bytes]]]
 Dumper: TypeAlias = Callable[[T], tuple[object, list[bytes]]]
 
 _LOADERS: dict[type, Loader] = {}
@@ -43,8 +43,10 @@ def get_loader(cls: type[T]) -> Loader[T]:
     """Get loader for cls, creating and caching it if necessary"""
     if cls in _LOADERS:
         return _LOADERS[cls]
+    loader: Loader[T]
     if is_dataclass(cls):
-        loader = make_load_dataclass(cls)
+        # Fails narrowing, cls is both a dataclass and a type T
+        loader = make_load_dataclass(cls) # type: ignore[arg-type]
     else:
         loader = make_load_builtin(cls)
     _LOADERS[cls] = loader
@@ -58,15 +60,25 @@ def get_dumper(cls: type[T]) -> Dumper[T]:
     _DUMPERS[cls] = dumper
     return dumper
 
-class TypeMap(Generic[T]):
+def set_loader(cls: type[T], loader: Loader[T]) -> None:
+    """Register a custom loader"""
+    _LOADERS[cls] = loader
+
+def set_dumper(cls: type[T], dumper: Dumper[T]) -> None:
+    """Register a custom dumper"""
+    _DUMPERS[cls] = dumper
+
+K = TypeVar('K', bound=Hashable)
+class TypeMap(Generic[K, T]):
     """
     Bi-directional mapping between keys and types
     """
-    def __init__(self, types: dict[Hashable, type[T]]):
+    def __init__(self, types: dict[K, type[T]]):
         self.loaders = {}
-        self.dumpers = {}
+        self.dumpers: dict[K, Dumper] = {}
+        self.types = types
         @singledispatch
-        def _get_key(obj: T) -> tuple[Hashable, Dumper]:
+        def _get_key(obj: T) -> tuple[K, Dumper]:
             raise LoadException(obj)
         self.get_key = _get_key
         for key, cls in types.items():
@@ -85,7 +97,7 @@ class TypeMap(Generic[T]):
         root, extras = self.dump_part(obj)
         return [msgpack.dumps(root), *extras]
 
-    def load_part(self, doc: tuple[Hashable, object], stream: list[bytes]
+    def load_part(self, doc: tuple[K, object], stream: list[bytes]
                   ) -> tuple[T, list[bytes]]:
         """Load a union member according to key"""
         key, value_doc = doc
@@ -118,7 +130,7 @@ def make_load_list(cls: type[L]) -> Loader[L]:
 
     type_var, *_ellipsis = get_args(cls)
     assert _ellipsis in ([], [...]), 'not supported yet'
-    load_item = get_loader(type_var)
+    load_item: Loader = get_loader(type_var)
 
     def _load_list(doc: object, stream: list[bytes]
                  ) -> tuple[L, list[bytes]]:
@@ -165,11 +177,21 @@ def load_none(doc: object, stream: list[bytes]) -> tuple[None, list[bytes]]:
     return None, stream
 
 def make_load_default(cls: type[T]) -> Loader[T]:
-    """Load other basic types: int, float, bool, str, bytes"""
+    """Load other basic types and their subtypes"""
+
+    # Basic type, check and return as is
+    if cls in (str, bytes, int, float, bool):
+        def _load_direct(doc: object, stream: list[bytes]) -> tuple[T, list[bytes]]:
+            if not isinstance(doc, cls):
+                raise LoadException(f'{cls} expected')
+            return doc, stream # type: ignore[call-arg]
+        return _load_direct
+
+    # Subtype, try to convert
     def _load(doc: object, stream: list[bytes]) -> tuple[T, list[bytes]]:
         # For all remaining basic types, we assume they can be coerced by
-        # calling the constructor
-        return cls(doc), stream
+        # calling the constructor, optimistically
+        return cls(doc), stream # type: ignore[call-arg]
     return _load
 
 def make_load_builtin(cls: type[T]) -> Loader[T]:
@@ -177,14 +199,15 @@ def make_load_builtin(cls: type[T]) -> Loader[T]:
     Load basic (non-dataclass) types
     """
     orig = get_origin(cls)
+    # Not narrowing most of these
     if orig in (list, tuple):
-        return make_load_list(cls)
+        return make_load_list(cls) # type: ignore[type-var]
     if orig is dict:
-        return make_load_dict(cls)
+        return make_load_dict(cls) # type: ignore[type-var]
     if orig is Literal:
         return make_load_literal(cls)
     if cls is NoneType:
-        return load_none
+        return load_none # type: ignore[return-value]
     return make_load_default(cls)
 
 def check_payload(cls):
@@ -267,6 +290,7 @@ def make_dump_list(cls: type[L]) -> Dumper[L]:
     """Dump a list or tuple"""
 
     args = get_args(cls)
+    dump_item: Dumper
     if args:
         type_var, *_ellipsis = args
         assert _ellipsis in ([], [...]), 'not supported yet'
@@ -317,9 +341,9 @@ def make_dumper(cls: type[T]) -> Dumper[T]:
         # types
         orig = get_origin(cls)
         if issubclass(cls, (list, tuple)) or orig in (list, tuple):
-            return make_dump_list(cls)
+            return make_dump_list(cls) # type: ignore[type-var]
         if issubclass(cls, dict) or orig is dict:
-            return make_dump_dict(cls)
+            return make_dump_dict(cls) # type: ignore[type-var]
         return lambda obj: (obj, [])
 
     field_list = parse_fields(cls)

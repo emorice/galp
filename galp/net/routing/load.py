@@ -2,7 +2,7 @@
 Parsing for routing layer
 """
 
-from galp.net.base.load import LoadError
+from galp.pack import LoadError
 from galp.result import Ok
 
 from galp.net.core.load import parse_core_message

@@ -13,7 +13,7 @@ import zmq
 
 from galp.result import Result
 import galp.net.core.types as gm
-from galp.net.core.dump import add_request_id, Writer
+from galp.net.core.dump import add_request_id, Writer, get_request_id
 from galp.net.routing.dump import SessionUid
 import galp.net.requests.types as gr
 import galp.task_types as gtt
@@ -258,7 +258,7 @@ class CommonProtocol:
         # This ideally should not happen if the client receives proper feedback
         # on when to re-submit, but should happen from time to time under normal
         # operation
-        task_id = gm.get_request_id(msg).as_word()
+        task_id = get_request_id(msg).as_word()
         if task_id in self.alloc_from_task:
             logging.error('Reprocessing %s (already allocated)', task_id)
 
