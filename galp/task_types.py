@@ -579,7 +579,6 @@ def _s_getitem(obj, index):
     the container itself, in which case we need to recurse and follow the chain
     of task refs until we get to the actual container.
     """
-    print(obj, flush=True)
     match obj:
         case TaskRef():
             task = getitem(obj, index)
