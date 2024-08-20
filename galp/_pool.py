@@ -94,6 +94,19 @@ def log_child_exit(rpid, rstatus,
                 signal.strsignal(rsig),
                 '(core dumped)' if rdumped else ''
                 )
+        if rsig == signal.SIGKILL:
+            try:
+                # Check dmesg for OOM
+                dmesg = subprocess.run(
+                        f'dmesg -H | grep -i "Killed process {rpid}"',
+                        shell=True, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, check=False)
+                if dmesg.returncode == 0:
+                    logging.log(level, 'Worker %s has a matching kernel log entry:', rpid)
+                    logging.log(level, '%s', dmesg.stdout.decode('utf8'))
+            except: # pylint: disable=bare-except # Never crash on this
+                logging.exception('Could not check logs')
+
     else:
         logging.log(noerror_level, 'Worker %s exited with code %s',
                 rpid, rret)
