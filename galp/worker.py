@@ -233,7 +233,11 @@ class Worker:
                     case _:
                         raise NotImplementedError(command)
             case cm.End():
-                return [self.run_submission(command.value)], []
+                job = command.value
+                del self.pending_jobs[job.submit.task_def.name]
+                return [job.write_reply(
+                    run_submission(self.store, self.sock_logclient, job)
+                    )], []
             case _:
                 raise NotImplementedError(command)
 
@@ -255,7 +259,7 @@ class Worker:
         collection = collect_task_inputs(
             TaskRef(task_def.name), task_def
             )
-        end: cm.Command = collection.eventually(lambda inputs: cm.End(
+        end: cm.Command[Job] = collection.eventually(lambda inputs: cm.End(
             Job(write_reply, msg, inputs)
             ))
         self.pending_jobs[task_def.name] = end
@@ -273,68 +277,68 @@ class Worker:
 
         return await self.transport.listen_reply_loop()
 
-    # Task execution logic
-    # ====================
+# Task execution logic
+# ====================
 
-    def run_submission(self, job: Job) -> TransportMessage:
-        """
-        Actually run the task
-        """
-        task_def = job.submit.task_def
-        inputs = job.inputs
-        name = task_def.name
-        del self.pending_jobs[name]
-        step_name = task_def.step
+def run_submission(store: Store, sock_logclient, job: Job
+                   ) -> Ok[gtt.ResultRef] | gr.RemoteError:
+    """
+    Actually run the task
+    """
+    task_def = job.submit.task_def
+    inputs = job.inputs
+    name = task_def.name
+    step_name = task_def.step
+
+    try:
+        if isinstance(inputs, Error):
+            logging.error('Could not gather task inputs' +
+                          ' for step %s (%s): %s', name, step_name,
+                          inputs.error)
+            raise NonFatalTaskError(inputs.error)
+        args, kwargs = inputs.value
+
 
         try:
-            if isinstance(inputs, Error):
-                logging.error('Could not gather task inputs' +
-                              ' for step %s (%s): %s', name, step_name,
-                              inputs.error)
-                raise NonFatalTaskError(inputs.error)
-            args, kwargs = inputs.value
+            step = load_step_by_key(step_name)
+        except NoSuchStep as exc:
+            logging.exception('No such step known to worker: %s', step_name)
+            raise NonFatalTaskError from exc
 
+        # Put the task definition in store as soon as we've validated the
+        # step and inputs. This allows to start interactive debugging from
+        # just the task name is execution fails.
+        store.put_task_def(task_def)
 
-            try:
-                step = load_step_by_key(step_name)
-            except NoSuchStep as exc:
-                logging.exception('No such step known to worker: %s', step_name)
-                raise NonFatalTaskError from exc
-
-            # Put the task definition in store as soon as we've validated the
-            # step and inputs. This allows to start interactive debugging from
-            # just the task name is execution fails.
-            self.store.put_task_def(task_def)
-
-            logging.info('Executing step %s (%s)', name, step_name)
-            # This may block for a long time, by design
-            try:
-                with set_path(self.store.dirpath, name.hex()):
-                    with logserver_connect(get_request_id(job.submit),
-                            self.sock_logclient):
-                        result = step.function(*args, **kwargs)
-            except Exception as exc:
-                logging.exception('Submitted task step failed: %s [%s]',
-                step_name, name)
-                raise NonFatalTaskError from exc
-
-            # Store the result back
-            result_ref = self.store.put_native(name, result, task_def.scatter)
-
-            return job.write_reply(Ok(result_ref))
-
-        except NonFatalTaskError:
-            # All raises include exception logging so it's safe to discard the
-            # exception here
-            return job.write_reply(gr.RemoteError(
-                f'Failed to execute task {step_name} [{name.hex()}], check worker logs'
-                ))
+        logging.info('Executing step %s (%s)', name, step_name)
+        # This may block for a long time, by design
+        try:
+            with set_path(store.dirpath, name.hex()):
+                with logserver_connect(get_request_id(job.submit),
+                        sock_logclient):
+                    result = step.function(*args, **kwargs)
         except Exception as exc:
-            # Ensures we log as soon as the error happens. The exception may be
-            # re-logged afterwards.
-            logging.exception('An unhandled error has occured within a step-' +
-                'running asynchronous task. This signals a bug in GALP itself.')
-            raise
+            logging.exception('Submitted task step failed: %s [%s]',
+            step_name, name)
+            raise NonFatalTaskError from exc
+
+        # Store the result back
+        result_ref = store.put_native(name, result, task_def.scatter)
+
+        return Ok(result_ref)
+
+    except NonFatalTaskError:
+        # All raises include exception logging so it's safe to discard the
+        # exception here
+        return gr.RemoteError(
+            f'Failed to execute task {step_name} [{name.hex()}], check worker logs'
+            )
+    except Exception as exc:
+        # Ensures we log as soon as the error happens. The exception may be
+        # re-logged afterwards.
+        logging.exception('An unhandled error has occured within a step-' +
+            'running asynchronous task. This signals a bug in GALP itself.')
+        raise
 
 def fork(config: dict) -> int:
     """
