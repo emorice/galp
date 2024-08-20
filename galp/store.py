@@ -1,7 +1,7 @@
 """
 Caching utils
 """
-
+import os
 from typing import Any, Sequence
 
 import diskcache # type: ignore[import] # Issue 85
@@ -39,6 +39,7 @@ class Store():
         if dirpath is None:
             self.serialcache = {}
         else:
+            os.makedirs(os.path.join(dirpath, 'galp'), exist_ok=True)
             self.serialcache = diskcache.Cache(dirpath, cull_limit=0)
 
         self.serializer = serializer

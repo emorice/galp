@@ -8,7 +8,6 @@ from importlib import import_module
 
 from flask import Flask, render_template, abort
 
-import galp.config
 import galp.commands as cm
 import galp.asyn as ga
 from galp.net.core.types import Get
@@ -47,7 +46,7 @@ def render_object(obj):
 
 def create_app(endpoints: dict[str, TaskNode], store: str) -> Flask:
     """
-    Creates the dashboard flask app from a galp.config-compatible dictionnary
+    Creates the dashboard flask app
     """
     app = Flask(__name__)
     app.galp = { # type: ignore[attr-defined]

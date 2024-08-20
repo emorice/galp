@@ -26,8 +26,7 @@ import galp.commands as cm
 import galp.task_types as gtt
 from galp.result import Result, Ok, Error
 
-from galp.config import load_config
-from galp.store import StoreReadError
+from galp.store import StoreReadError, Store
 from galp.protocol import make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import collect_task_inputs
@@ -89,7 +88,7 @@ def limit_task_resources(resources: gtt.Resources):
     """
     psutil.Process().cpu_affinity(resources.cpus)
 
-def make_worker_init(config):
+def make_worker(config: dict) -> 'Worker':
     """Prepare a worker factory function. Must be called in main thread.
 
     Args:
@@ -99,20 +98,25 @@ def make_worker_init(config):
     # Early setup, make sure this work before attempting config
     galp.cli.setup("worker", config.get('log_level'))
     galp.cli.set_sync_handlers()
+
     limit_resources(config.get('vm'), config.get('cpus_per_task'))
+    if 'pin_cpus' in config:
+        psutil.Process().cpu_affinity(config['pin_cpus'])
+
+    # Validate config
+    for key in ('store', 'endpoint'):
+        if not key in config:
+            raise TypeError(f'Worker config missing mandatory "{key}"')
 
     # Open store
-    setup = load_config(config,
-            mandatory=['endpoint', 'store']
-            )
+    store_path = config.pop('store')
+    logging.debug("Storing in %s", store_path)
+    store = Store(store_path, gtt.TaskSerializer)
 
-    os.makedirs(os.path.join(setup['store'].dirpath, 'galp'), exist_ok=True)
 
-    logging.info("Worker starting, connecting to %s", setup['endpoint'])
+    logging.info("Worker starting, connecting to %s", config['endpoint'])
 
-    def _make_worker():
-        return Worker(setup)
-    return _make_worker
+    return Worker(store, config)
 
 SubReplyWriter: TypeAlias = Writer[Ok[gtt.FlatResultRef] | gr.RemoteError]
 
@@ -130,16 +134,16 @@ class Worker:
     Class representing an an async worker, wrapping transport, protocol and task
     execution logic.
     """
-    def __init__(self, setup: dict):
+    def __init__(self, store: Store, setup: dict):
         def on_message(write: Writer[gm.Message], msg: gm.Message
                 ) -> Iterable[TransportMessage] | Error:
             match msg:
                 case gm.Get():
-                    return handle_get(write, msg, setup['store'])
+                    return handle_get(write, msg, store)
                 case gm.Stat():
-                    return handle_stat(write, msg, setup['store'])
+                    return handle_stat(write, msg, store)
                 case gm.Upload():
-                    return handle_upload(write, msg, setup['store'])
+                    return handle_upload(write, msg, store)
                 case gm.Exec():
                     return self.on_routed_exec(write, msg)
                 case gm.Reply():
@@ -154,7 +158,7 @@ class Worker:
                 setup['endpoint'], zmq.DEALER # pylint: disable=no-member
                 )
         self.mission = setup.get('mission', b'')
-        self.store = setup['store']
+        self.store = store
         self.script = cm.Script()
         self.sock_logclient = setup.get('sock_logclient')
 
@@ -349,17 +353,11 @@ def main(config: dict):
     """
     # Set cpu pins early, before we load any new module that may read it for its
     # init
-    if 'pin_cpus' in config:
-        psutil.Process().cpu_affinity(config['pin_cpus'])
 
-    make_worker = make_worker_init(config)
-    async def _coro(make_worker):
-        worker = make_worker()
-        ret = await worker.listen()
-        obj = ret.unwrap()
-        logging.info("Worker terminating normally")
-        return obj
-    return asyncio.run(_coro(make_worker))
+    ret =  asyncio.run(make_worker(config).listen())
+    obj = ret.unwrap()
+    logging.info("Worker terminating normally")
+    return obj
 
 def add_parser_arguments(parser):
     """Add worker-specific arguments to the given parser"""
