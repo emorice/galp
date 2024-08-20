@@ -1,6 +1,50 @@
-[build-system]
-requires = [
-  "setuptools >= 40.8.0",
-  "wheel",
+[project]
+name = "galp"
+version = "0.0.1"
+description = "Incremental distributed python runner"
+# Uses: |-style unions, match, type aliases ; released 2021
+requires-python = ">= 3.10"
+dependencies = [
+    "psutil",
+    "pyzmq",
+    "diskcache",
+    "msgpack",
+    "dill",
+    "flask",
+    "threadpoolctl",
+    "tqdm",
+    "typing_extensions",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "tox",
+    "pytest",
+    "pytest-asyncio",
+    "async-timeout",
+    "psutil",
+    "numpy",
+    "pyarrow",
+    "plotly",
+    "beautifulsoup4",
+    "mypy",
+    "pyinstrument-flamegraph @ git+https://github.com/emorice/pyinstrument-flamegraph",
+]
+
+[build-system]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.tox]
+legacy_tox_ini = """
+[tox]
+env_list = py310,py311,py312,py313
+
+[testenv]
+extras = dev
+deps = ./wdl-galp
+commands = pytest {posargs}
+"""
