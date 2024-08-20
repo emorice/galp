@@ -45,6 +45,5 @@ env_list = py310,py311,py312,py313
 
 [testenv]
 extras = dev
-deps = ./wdl-galp
 commands = pytest {posargs}
 """
