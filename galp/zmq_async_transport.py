@@ -2,7 +2,7 @@
 Using ØMQ as a transport for Galp protoclols
 """
 from typing import Iterable
-import zmq
+import zmq.asyncio
 
 from galp.protocol import Stack, TransportReturn
 from galp.writer import TransportMessage

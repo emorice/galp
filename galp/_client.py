@@ -11,7 +11,6 @@ from collections import defaultdict
 from typing import Iterable, Any
 
 import zmq
-import zmq.asyncio
 
 import galp.net.core.types as gm
 import galp.commands as cm

@@ -18,7 +18,6 @@ from dataclasses import dataclass
 
 import psutil
 import zmq
-import zmq.asyncio
 
 import galp.cli
 import galp.net.core.types as gm
