@@ -159,7 +159,7 @@ class TaskPrinter(Printer):
         out_lines = []
         for line in status.splitlines():
             out_lines.append(
-                    f'{task_def.step} {task_def.name}: {line}'
+                    f'{task_def.step} {task_def.name} {line}'
                     )
         self.live_display.update_log(out_lines)
 
