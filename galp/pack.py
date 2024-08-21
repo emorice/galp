@@ -250,7 +250,8 @@ def make_load_dataclass(cls: type[T]) -> Loader[T]:
     """
     field_list = parse_fields(cls)
 
-    def _load(doc: object, stream: list[bytes]) -> tuple[T, list[bytes]]:
+    def _load_dataclass(doc: object, stream: list[bytes]
+            ) -> tuple[T, list[bytes]]:
         if not isinstance(doc, dict):
             raise LoadException
         obj_dict = dict(doc)
@@ -265,13 +266,16 @@ def make_load_dataclass(cls: type[T]) -> Loader[T]:
                     attr_doc = msgpack.loads(attr_doc_buf)
             else:
                 # Get data from the main dict
-                attr_doc = obj_dict[name]
+                try:
+                    attr_doc = obj_dict[name]
+                except KeyError as exc:
+                    raise LoadException(f'Missing {name} for {item_cls}') from exc
 
             # Then apply the corresponding loader
             # The loader can consume further stream items
             obj_dict[name], stream = loader(attr_doc, stream)
         return cls(**obj_dict), stream # type: ignore[return-value] # what
-    return _load
+    return _load_dataclass
 
 def load_part(cls: type[T], doc: object, stream: list[bytes]
               ) -> tuple[T, list[bytes]]:

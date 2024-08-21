@@ -3,9 +3,10 @@ Tests for pack
 """
 from dataclasses import dataclass
 from typing import Optional
+import msgpack
 import pytest
 
-from galp.pack import dump, load, Payload
+from galp.pack import dump, load, Payload, LoadError
 
 @dataclass(frozen=True)
 class A:
@@ -94,3 +95,12 @@ def test_pack_unpack(case):
     assert len(msg) == n_frames
     objback = load(type(obj), msg).unwrap()
     assert obj == objback
+
+def test_failure():
+    """
+    Correctly return LoadError on failed validation
+    """
+
+    frames = [msgpack.dumps({})]
+    obj = load(A, frames)
+    assert isinstance(obj, LoadError)
