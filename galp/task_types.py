@@ -6,6 +6,7 @@ import inspect
 import functools
 import logging
 import hashlib
+import msgpack
 from importlib import import_module
 from typing import Any, TypeAlias, TypeVar, Iterable, Callable, Sequence
 from dataclasses import dataclass
@@ -221,8 +222,19 @@ def make_task_def(cls: type[T], attrs, extra=None) -> T:
     Generate a name from attribute and extra and create a named task def of the
     wanted type
     """
+    def _dump_obj_attrs(obj):
+        match obj:
+            case ResourceClaim():
+                attrs = dict(vars(obj))
+                if attrs['vm'] < 0:
+                    del attrs['vm']
+                return [msgpack.dumps(attrs)]
+            case TaskInput():
+                return [msgpack.dumps(vars(obj))]
+            case _:
+                raise NotImplementedError(obj)
     name = obj_to_name(msgpack.dumps((attrs, extra),
-        default=dump))
+        default=_dump_obj_attrs))
     return cls(name=name, **attrs)
 
 # Literal and child tasks
