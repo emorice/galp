@@ -22,7 +22,7 @@ class LocalSystem:
 
     _instances = 0 # To generate unique endpoint names
 
-    def __init__(self, pool_size=1, pin_workers=False, **worker_options):
+    def __init__(self, pool_size=1, **worker_options):
         self._stack = AsyncExitStack()
 
         endpoint = f'ipc://@galp_{os.getpid()}_{self._instances}'
@@ -35,7 +35,6 @@ class LocalSystem:
             )
         self._pool_config = {
                 'endpoint': endpoint,
-                'pin_workers': pin_workers,
                 **worker_options,
             }
         if 'log_level' not in self._pool_config:

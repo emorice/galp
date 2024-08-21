@@ -129,7 +129,7 @@ def test_definition_cpus(run):
     one = s_get_cpus()
     with galp.resources(cpus=2):
         two = s_get_cpus()
-    assert run([one, two], pool_size=2, pin_workers=True) == (1, 2)
+    assert run([one, two], pool_size=2) == (1, 2)
 
 @galp.step
 def s_meta_cpus(dummy, *_, kw_dummy):
@@ -143,7 +143,7 @@ def test_meta_cpus(run):
     one = s_meta_cpus(None, kw_dummy=None)
     with galp.resources(cpus=2):
         two = s_meta_cpus(None, kw_dummy=None)
-    assert run([one, two], pool_size=2, pin_workers=True) == (1, 2)
+    assert run([one, two], pool_size=2) == (1, 2)
 
 def test_functional_cpus(run):
     """Create a task with specific resources functionally"""
@@ -151,4 +151,4 @@ def test_functional_cpus(run):
                          cpus=1)
     two = galp.make_task(s_meta_cpus, args=(None,), kwargs={'kw_dummy': None},
                      cpus=2)
-    assert run([one, two], pool_size=2, pin_workers=True) == (1, 2)
+    assert run([one, two], pool_size=2) == (1, 2)

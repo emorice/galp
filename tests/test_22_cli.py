@@ -66,7 +66,7 @@ async def test_cli_jobs(tmpdir):
     Start a pool from cli
     """
     out = await run(f'python3 -m galp.client -s {tmpdir} -j 2 tests.steps hello '
-        '--log-level=info --pin-workers')
+        '--log-level=info')
 
     assert out == str(gts.hello.function())
 

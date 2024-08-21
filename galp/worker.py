@@ -45,7 +45,7 @@ class NonFatalTaskError(RuntimeError):
     running.
     """
 
-def limit_resources(vm_limit=None, cpus=None):
+def limit_resources(vm_limit=None):
     """
     Set resource limits from command line, for now only virtual memory
 
@@ -72,18 +72,6 @@ def limit_resources(vm_limit=None, cpus=None):
         _soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         resource.setrlimit(resource.RLIMIT_AS, (size, hard))
 
-    # This should not be necessary, because we pin the right number of cpus
-    # before reaching here, and most libraries we care about inspect pins to set
-    # the default pool size.
-    # We keep it commented out as documentation of the former behavior.
-    # Furthermore, we should need nothing at startup anyways, see issue #89
-    # if cpus:
-    #     import threadpoolctl # type: ignore[import]
-    #     # pylint: disable=import-outside-toplevel
-    #     import numpy # pylint: disable=unused-import # side effect
-    #     threadpoolctl.threadpool_limits(cpus)
-    del cpus
-
 def limit_task_resources(resources: gtt.Resources):
     """
     Set resource limits from received request, for each task independently
@@ -101,7 +89,7 @@ def make_worker(config: dict) -> 'Worker':
     galp.cli.setup("worker", config.get('log_level'))
     galp.cli.set_sync_handlers()
 
-    limit_resources(config.get('vm'), config.get('cpus_per_task'))
+    limit_resources(config.get('vm'))
     if 'pin_cpus' in config:
         psutil.Process().cpu_affinity(config['pin_cpus'])
 

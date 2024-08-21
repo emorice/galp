@@ -165,28 +165,15 @@ def register_signal_handler(selector, pids: set[int], signal_read_fd,
 # Listen socket and start workers
 # ===============================
 
-def on_socket_frames(frames, config, cpus, pids):
+def on_socket_frames(frames, config, pids):
     """
     Handler for messages proxied to forkserver
     """
     msg = parse_core_message(frames)
     match msg:
         case Ok(gm.Fork() as fork):
-            _config = dict(config, mission=fork.mission,
-                           cpus_per_task=fork.resources.cpus)
-            if _config.get('pin_workers'):
-                # We always pin to the first n cpus. This does not mean that
-                # we will actually execute on these ; cpu pins should be
-                # reset in the worker based on information from the broker
-                # at each task. Rather, it is a matter of having the right
-                # number of bits in the cpu mask when modules that inspect
-                # the mask are loaded, possibly even before the first task
-                # is run.
-                _cpus = cpus[:fork.resources.cpus]
-                logging.info('Pinning new worker to cpus %s', _cpus)
-                pid = galp.worker.fork(dict(_config, pin_cpus=_cpus))
-            else:
-                pid = galp.worker.fork(_config)
+            _config = dict(config, mission=fork.mission)
+            pid = galp.worker.fork(_config)
             pids.add(pid)
         case _:
             logging.error('Unexpected %s', msg)
@@ -196,14 +183,14 @@ def register_socket_handler(selector, config, sock_server, pids):
     Initialize the handler for broker messages, which does the actual forking
     work, and send the ready message
     """
-    cpus = psutil.Process().cpu_affinity() or []
-    if config.get('pin_workers'):
-        assert cpus
+    cpus = psutil.Process().cpu_affinity()
+    if not cpus:
+        raise RuntimeError('Could not read cpu affinity mask')
     socket_send_message(sock_server, gm.PoolReady(cpus=cpus))
 
     # Set up protocol
     multipart_reader = galp.socket_transport.make_multipart_generator(
-            lambda frames: on_socket_frames(frames, config, cpus, pids)
+            lambda frames: on_socket_frames(frames, config, pids)
             )
     multipart_reader.send(None)
 
@@ -304,9 +291,6 @@ def make_cli(config):
         raise TypeError(f'Pool config missing required arguments: {missing}')
     for key, val in config.items():
         match key:
-            case 'pin_workers':
-                if val:
-                    args.append('--pin_workers')
             case 'endpoint':
                 args.append(val)
             case 'store':
