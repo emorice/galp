@@ -2,8 +2,10 @@
 Reporting and printing
 """
 import sys
+import logging
 from typing import Callable
 from dataclasses import dataclass, field
+from contextlib import asynccontextmanager, AsyncExitStack
 
 import galp.task_types as gtt
 
@@ -41,7 +43,6 @@ CTRL_DEFCOL = '\033[39m'
 GREEN_OK = CTRL_GREEN + 'OK' + CTRL_DEFCOL
 RED_FAIL = CTRL_RED + 'FAIL' + CTRL_DEFCOL
 
-@dataclass
 class LiveDisplay:
     """Live display interface"""
 
@@ -59,14 +60,52 @@ class LiveDisplay:
         """
         raise NotImplementedError
 
-@dataclass
+    async def __aenter__(self):
+        """
+        Called before collection
+        """
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        """
+        Called before collection
+        """
+
+class LogFileDisplay(LiveDisplay):
+    """Append only logs to a file named galp.log"""
+    def __init__(self):
+        self.file = None
+
+    def update_log(self, log: list[str], open_log: list[str]):
+        for line in log:
+            print(line, file=self.file)
+        self.file.flush()
+
+    def update_summary(self, summary: list[str], log: list[str]):
+        for line in log:
+            print(line, file=self.file)
+        self.file.flush()
+
+    async def __aenter__(self):
+        """
+        Called before collection
+        """
+        # pylint: disable=consider-using-with
+        self.file = open('galp.log', 'a', encoding='utf-8')
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        """
+        Called before collection
+        """
+        self.file.close()
+
 class TerminalLiveDisplay(LiveDisplay):
     """
     Display summary at bottom of screen using ansi escapes
     """
-    summary: list[str] = field(default_factory=list)
-    open_log: list[str] = field(default_factory=list)
-    n_lines: int = 0
+    def __init__(self) -> None:
+        self.summary: list[str] = []
+        self.open_log: list[str] = []
+        self.n_lines: int = 0
 
     def update_log(self, log: list[str], open_log: list[str]):
         # Save open log for update_summary
@@ -130,6 +169,64 @@ class JupyterLiveDisplay(LiveDisplay):
                     for i in (0, 1)
                     ]
 
+class HTTPLiveDisplay(LiveDisplay):
+    """
+    Start an http server that display progress on demand
+    """
+    def __init__(self) -> None:
+        self.summary: list[str] = []
+        self.open_log: list[str] = []
+        self.log: list[str] = []
+        self.max_lines = 10_000
+
+        # pylint: disable=import-outside-toplevel # optdepend
+        try:
+            from aiohttp import web
+        except ImportError as exc:
+            raise TypeError('aiohttp is needed for output=\'http\'') from exc
+        self.web = web
+        app = web.Application()
+        app.add_routes([web.get('/', self.display)])
+        self.runner = web.AppRunner(app)
+        self.site = None
+
+    async def __aenter__(self):
+        """
+        Start serving display requests
+        """
+        await self.runner.setup()
+        self.site = self.web.TCPSite(self.runner, 'localhost', 0)
+        await self.site.start()
+        # pylint: disable=protected-access
+        host, port = self.site._server.sockets[0].getsockname()
+        print(f'Serving on http://{host}:{port}', flush=True)
+
+
+    async def display(self, request):
+        """
+        Callback to handler http requests
+        """
+        del request
+        return self.web.Response(text='\n'.join(
+            self.summary
+            + self.open_log
+            + self.log
+            ))
+
+    def update_log(self, log: list[str], open_log: list[str]):
+        self.log = (self.log + log)[:self.max_lines]
+        self.open_log = open_log
+
+    def update_summary(self, summary: list[str], log: list[str]):
+        self.log = (self.log + log)[:self.max_lines]
+        self.summary = summary
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        """
+        Stop serving display requests
+        """
+        await self.site.stop()
+
 def emulate_cr(string: str):
     """
     Emulate \r effect
@@ -144,7 +241,7 @@ class TaskPrinter(Printer):
     """
     running: dict[str, set[gtt.TaskName]] = field(default_factory=dict)
     out_lines: list[str] = field(default_factory=list)
-    live_display: LiveDisplay = field(default_factory=TerminalLiveDisplay)
+    live_displays: list[LiveDisplay] = field(default_factory=list)
     # Key is the header "<step> <name>"
     open_lines: dict[str, str] = field(default_factory=dict)
 
@@ -181,7 +278,8 @@ class TaskPrinter(Printer):
             summary.append(f'{step} [{tasks} pending]')
 
         # Display both
-        self.live_display.update_summary(summary, log_lines)
+        for display in self.live_displays:
+            display.update_summary(summary, log_lines)
 
     def update_task_output(self, task_def: gtt.CoreTaskDef, status: str):
         header = f'{task_def.step} {task_def.name}'
@@ -205,21 +303,63 @@ class TaskPrinter(Printer):
             f'{other_header} {other_line}'
             for other_header, other_line in self.open_lines.items()
             ]
-        self.live_display.update_log(closed_lines, open_lines)
+        for display in self.live_displays:
+            display.update_log(closed_lines, open_lines)
 
+def _validate(verbose: bool, output: str) -> set[str]:
+    if verbose:
+        if output:
+            raise TypeError('Give either verbose or output')
+        logging.warning('Use output=\'auto\' instead of verbose=True')
+        output = 'auto'
 
-def make_printer(verbose: bool) -> Printer:
+    outputs = set(output.split('+'))
+    for out in outputs:
+        if out not in ('', 'auto', 'http', 'ipython', 'console', 'logfile'):
+            raise TypeError(f'No such output: {out}')
+
+    return outputs
+
+@asynccontextmanager
+async def make_printer(verbose: bool, output: str):
     """
     Choose a printer
     """
-    if verbose:
+    outputs = _validate(verbose, output)
+    displays: list[LiveDisplay] = []
+
+
+    ipython = sys.modules.get('IPython')
+
+    # Resolve auto
+    if 'auto' in outputs:
         # Detect ipython, taken from tqdm
-        ipython = sys.modules.get('IPython')
-        if ipython and 'IPKernelApp' in ipython.get_ipython().config:
-            return TaskPrinter(
-                    live_display=JupyterLiveDisplay(
-                        display_function=ipython.display.display
-                        )
-                    )
-        return TaskPrinter(live_display=TerminalLiveDisplay())
-    return PassTroughPrinter()
+        in_ipython = ipython and 'IPKernelApp' in ipython.get_ipython().config
+        outputs.remove('auto')
+        outputs.add('ipython' if in_ipython else 'console')
+
+    if 'console' in outputs:
+        displays.append(TerminalLiveDisplay())
+
+    if 'ipython'in outputs:
+        if not ipython:
+            raise RuntimeError('IPython not loaded')
+        displays.append(JupyterLiveDisplay(
+            display_function=ipython.display.display
+            ))
+
+    if 'http' in outputs:
+        displays.append(HTTPLiveDisplay())
+
+    if 'logfile' in outputs:
+        displays.append(LogFileDisplay())
+
+    stack = AsyncExitStack()
+    for display in displays:
+        await stack.enter_async_context(display)
+
+    async with stack:
+        if displays:
+            yield TaskPrinter(live_displays=displays)
+        else:
+            yield PassTroughPrinter()

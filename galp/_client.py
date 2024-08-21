@@ -76,7 +76,8 @@ class Client:
             )
 
     async def gather(self, *tasks, return_exceptions: bool = False,
-            dry_run: bool = False, verbose: bool = False):
+                     dry_run: bool = False, verbose: bool = False,
+                     output: str = ''):
         """
         Recursively submit the tasks, wait for completion, fetches, deserialize
         and returns the actual results.
@@ -94,10 +95,13 @@ class Client:
 
         task_objs = list(map(gtt.ensure_task, tasks))
 
-        cmd_vals = await self._run_collection(task_objs, cm.ExecOptions(
-                    keep_going=return_exceptions, dry=dry_run,
-                    printer=make_printer(verbose)
-                    ))
+        async with make_printer(verbose, output) as printer:
+            exec_options = cm.ExecOptions(
+                        keep_going=return_exceptions,
+                        dry=dry_run,
+                        printer=printer
+                        )
+            cmd_vals = await self._run_collection(task_objs, exec_options)
 
         if isinstance(cmd_vals, Error):
             raise TaskFailedError(
@@ -127,12 +131,12 @@ class Client:
     collect = gather
 
     async def run(self, *tasks, return_exceptions=False, dry_run=False,
-            verbose=False):
+            verbose=False, output=''):
         """
         Shorthand for gather with a more variadic style
         """
         results = await self.gather(*tasks, return_exceptions=return_exceptions,
-                dry_run=dry_run, verbose=verbose)
+                dry_run=dry_run, verbose=verbose, output=output)
 
         if results and len(results) == 1:
             return results[0]

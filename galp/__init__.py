@@ -27,7 +27,7 @@ async def async_run(*tasks, timeout: int | float | None = None, **options):
     Async version of `run`
     """
     run_options = {}
-    for key in ('return_exceptions', 'dry_run', 'verbose'):
+    for key in ('return_exceptions', 'dry_run', 'verbose', 'output'):
         try:
             run_options[key] = options.pop(key)
         except KeyError:
