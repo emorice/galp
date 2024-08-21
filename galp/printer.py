@@ -45,16 +45,17 @@ RED_FAIL = CTRL_RED + 'FAIL' + CTRL_DEFCOL
 class LiveDisplay:
     """Live display interface"""
 
-    def update_log(self, log: list[str]):
+    def update_log(self, log: list[str], open_log: list[str]):
         """
         Append to the log that must be displayed somewhere alongside the
-        summary
+        summary. The open log are unfinished lines that may me displayed
+        dynamically
         """
         raise NotImplementedError
 
-    def update_all(self, summary: list[str], log: list[str]):
+    def update_summary(self, summary: list[str], log: list[str]):
         """
-        Update the summary that must be overwritten in place and the log at once
+        Update the summary that must be overwritten in place
         """
         raise NotImplementedError
 
@@ -64,28 +65,35 @@ class TerminalLiveDisplay(LiveDisplay):
     Display summary at bottom of screen using ansi escapes
     """
     summary: list[str] = field(default_factory=list)
+    open_log: list[str] = field(default_factory=list)
     n_lines: int = 0
 
-    def update_log(self, log: list[str]):
-        # To add to the log, we need to overwrite and re-display the summary
-        return self.update_all(self.summary, log)
+    def update_log(self, log: list[str], open_log: list[str]):
+        # Save open log for update_summary
+        self.open_log = open_log
+        # To add to the log, we need to overwrite and re-display all
+        return self._display_all(log)
 
-    def update_all(self, summary: list[str], log: list[str]):
+    def update_summary(self, summary: list[str], log: list[str]):
         # Save summary for update_log
         self.summary = summary
+        return self._display_all(log)
 
-        # Go up
-        print(CTRL_UP * self.n_lines, end='')
+    def _display_all(self, log: list[str]):
+        # Go up and clear
+        print((CTRL_UP + CTRL_RETKILL) * self.n_lines, end='')
 
         # Print buffer
         for line in log:
-            print(f'{CTRL_RETKILL}{line}')
+            print(line)
 
-        # Print summary
-        for line in summary:
-            print(f'{CTRL_RETKILL}{line}')
+        # Print summary and open log
+        dyn_lines = self.summary + self.open_log
+        # Print backwards, most important line last
+        for line in reversed(dyn_lines):
+            print(line)
         # Remember how many lines we'll have to overwrite next time
-        self.n_lines = len(summary)
+        self.n_lines = len(dyn_lines)
 
         sys.stdout.flush()
 
@@ -95,21 +103,38 @@ class JupyterLiveDisplay(LiveDisplay):
     Display summary in jupyter writable display
     """
     display_function: Callable
-    handle = None
+    handles = None
 
-    def update_log(self, log: list[str]):
-        # Do a normal print
+    def update_log(self, log: list[str], open_log: list[str]):
+        # Do a normal print for log
         if log:
             print('\n'.join(log), flush=True)
+        self._update_display(1, open_log)
 
-    def update_all(self, summary: list[str], log: list[str]):
-        self.update_log(log)
-        summary_bundle = {'text/plain': '\n'.join(summary)}
-        if self.handle:
-            self.handle.update(summary_bundle, raw=True)
+    def update_summary(self, summary: list[str], log: list[str]):
+        # Do a normal print for log
+        if log:
+            print('\n'.join(log), flush=True)
+        self._update_display(0, summary)
+
+    def _update_display(self, handle_pos: int, lines: list[str]):
+        display_bundle = {'text/plain': '\n'.join(lines)}
+        if self.handles:
+            self.handles[handle_pos].update(display_bundle, raw=True)
         else:
-            self.handle = self.display_function(summary_bundle, raw=True, display_id=True)
+            self.handles = [
+                    self.display_function(
+                        display_bundle if i == handle_pos
+                        else {'text/plain': ''},
+                        raw=True, display_id=True)
+                    for i in (0, 1)
+                    ]
 
+def emulate_cr(string: str):
+    """
+    Emulate \r effect
+    """
+    return string.rpartition('\r')[-1]
 
 @dataclass
 class TaskPrinter(Printer):
@@ -120,6 +145,8 @@ class TaskPrinter(Printer):
     running: dict[str, set[gtt.TaskName]] = field(default_factory=dict)
     out_lines: list[str] = field(default_factory=list)
     live_display: LiveDisplay = field(default_factory=TerminalLiveDisplay)
+    # Key is the header "<step> <name>"
+    open_lines: dict[str, str] = field(default_factory=dict)
 
     def update_task_status(self, task_def: gtt.CoreTaskDef, done: bool | None):
         step = task_def.step
@@ -137,6 +164,7 @@ class TaskPrinter(Printer):
                     self.running[step].remove(name)
                 if not self.running[step]:
                     del self.running[step]
+                self.open_lines.pop(f'{step} {name}', '')
             log_lines.append(
                     f'{step} {name} [{GREEN_OK if done else RED_FAIL}]'
                     )
@@ -153,15 +181,31 @@ class TaskPrinter(Printer):
             summary.append(f'{step} [{tasks} pending]')
 
         # Display both
-        self.live_display.update_all(summary, log_lines)
+        self.live_display.update_summary(summary, log_lines)
 
     def update_task_output(self, task_def: gtt.CoreTaskDef, status: str):
-        out_lines = []
-        for line in status.splitlines():
-            out_lines.append(
-                    f'{task_def.step} {task_def.name} {line}'
-                    )
-        self.live_display.update_log(out_lines)
+        header = f'{task_def.step} {task_def.name}'
+        # Not splitlines, we want a final empty string
+        lines = status.split('\n')
+        # Join previous hanging data
+        # Don't delete the item to keep the pos in the dict
+        lines[0] = self.open_lines.get(header, '') + lines[0]
+
+        # Full lines to append to log
+        closed_lines = [
+            f'{header} {emulate_cr(line)}'
+            for line in lines[:-1]
+            ]
+
+        # Save final (often empty) open line, clearing previous
+        self.open_lines[header] = emulate_cr(lines[-1])
+
+        # Open lines to update
+        open_lines = [
+            f'{other_header} {other_line}'
+            for other_header, other_line in self.open_lines.items()
+            ]
+        self.live_display.update_log(closed_lines, open_lines)
 
 
 def make_printer(verbose: bool) -> Printer:
