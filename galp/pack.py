@@ -268,13 +268,20 @@ def make_load_dataclass(cls: type[T]) -> Loader[T]:
                 # Get data from the main dict
                 try:
                     attr_doc = obj_dict[name]
-                except KeyError as exc:
-                    raise LoadException(f'Missing {name} for {item_cls}') from exc
+                except KeyError:
+                    # The attribute may have a default, wait for object
+                    # construction
+                    continue
 
             # Then apply the corresponding loader
             # The loader can consume further stream items
             obj_dict[name], stream = loader(attr_doc, stream)
-        return cls(**obj_dict), stream # type: ignore[return-value] # what
+        try:
+            obj = cls(**obj_dict)
+        except TypeError as exc: # Missing attributes
+            raise LoadException(f'Could not build {cls}') from exc
+
+        return obj, stream # type: ignore[return-value] # what
     return _load_dataclass
 
 def load_part(cls: type[T], doc: object, stream: list[bytes]

@@ -6,7 +6,7 @@ from typing import Optional
 import msgpack
 import pytest
 
-from galp.pack import dump, load, Payload, LoadError
+from galp.pack import dump, load, Payload, LoadError, Ok
 
 @dataclass(frozen=True)
 class A:
@@ -69,6 +69,12 @@ class Opt:
     """option"""
     x: Optional[A]
 
+@dataclass(frozen=True)
+class HasDefault:
+    """option"""
+    x: int
+    y: int = 0
+
 @pytest.mark.parametrize('case', [
     (A(1), 1),
     (B(1.5, A(1), 'bar'), 1),
@@ -104,3 +110,12 @@ def test_failure():
     frames = [msgpack.dumps({})]
     obj = load(A, frames)
     assert isinstance(obj, LoadError)
+
+def test_default():
+    """
+    Handle objects where an attribute with a default is missing from the
+    serialized data. Important to extend object models.
+    """
+    frames = [msgpack.dumps({'x': 1})] # No y
+    obj = load(HasDefault, frames)
+    assert obj == Ok(HasDefault(x=1, y=0))
