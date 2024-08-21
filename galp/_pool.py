@@ -98,7 +98,7 @@ def log_child_exit(rpid, rstatus,
             try:
                 # Check dmesg for OOM
                 dmesg = subprocess.run(
-                        f'dmesg -H | grep -i "Killed process {rpid}"',
+                        f'dmesg -T | grep -i "Killed process {rpid}"',
                         shell=True, stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL, check=False)
                 if dmesg.returncode == 0:
