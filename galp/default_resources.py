@@ -41,9 +41,14 @@ def resources(claim: ResourceClaim | None = None, **kwargs):
     For readability, this can accept either a ResouceClaim object, keyword
     arguments that should be used to initialize a ResourceClaim, or both to
     override specific attributes of a ResourceClaim.
+
+    Priority order: first the keyword arguments, then the attributes of the
+    claim argument, then the former default resources.
     """
+    upper = get_resources()
     local_claim = ResourceClaim(**(
-            (asdict(claim) if claim is not None else {})
+            asdict(upper)
+            | (asdict(claim) if claim is not None else {})
             | kwargs
             ))
     token = set_resources(local_claim)

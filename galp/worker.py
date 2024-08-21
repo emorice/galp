@@ -45,7 +45,7 @@ class NonFatalTaskError(RuntimeError):
     running.
     """
 
-def limit_resources(vm_limit=None):
+def limit_vm(vm_limit=None):
     """
     Set resource limits from command line, for now only virtual memory
 
@@ -77,6 +77,7 @@ def limit_task_resources(resources: gtt.Resources):
     Set resource limits from received request, for each task independently
     """
     psutil.Process().cpu_affinity(resources.cpus)
+    limit_vm(resources.vm)
 
 def make_worker(config: dict) -> 'Worker':
     """Prepare a worker factory function. Must be called in main thread.
@@ -88,10 +89,6 @@ def make_worker(config: dict) -> 'Worker':
     # Early setup, make sure this work before attempting config
     galp.cli.setup("worker", config.get('log_level'))
     galp.cli.set_sync_handlers()
-
-    limit_resources(config.get('vm'))
-    if 'pin_cpus' in config:
-        psutil.Process().cpu_affinity(config['pin_cpus'])
 
     # Validate config
     for key in ('store', 'endpoint'):
@@ -374,8 +371,4 @@ def add_parser_arguments(parser):
             "or ipc://path/to/socket ; see also man zmq_bind."
         )
     galp.store.add_store_argument(parser, optional=True)
-
-    parser.add_argument('--vm',
-        help='Limit on process virtual memory size, e.g. "2M" or "1G"')
-
     galp.cli.add_parser_arguments(parser)

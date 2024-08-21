@@ -226,7 +226,7 @@ def make_task_def(cls: type[T], attrs, extra=None) -> T:
         match obj:
             case ResourceClaim():
                 attrs = dict(vars(obj))
-                if attrs['vm'] < 0:
+                if not attrs['vm']:
                     del attrs['vm']
                 return [msgpack.dumps(attrs)]
             case TaskInput():
@@ -369,8 +369,12 @@ class RecResultRef(ResultRef):
 class Resources:
     """
     Resources available or allocated to a task
+
+    Virtual memory is used as a limit inside the worker but not globally metered
+    yet (no "maximum total vm across tasks")
     """
     cpus: list[int]
+    vm: str
 
     def allocate(self, claim: ResourceClaim
             ) -> tuple['Resources | None', 'Resources']:
@@ -386,13 +390,13 @@ class Resources:
 
         alloc_cpus, rest_cpus = self.cpus[:claim.cpus], self.cpus[claim.cpus:]
 
-        return Resources(alloc_cpus), Resources(rest_cpus)
+        return Resources(alloc_cpus, claim.vm), Resources(rest_cpus, '')
 
     def free(self, resources):
         """
         Return allocated resources
         """
-        return Resources(self.cpus + resources.cpus)
+        return Resources(self.cpus + resources.cpus, '')
 
 # Steps, i.e. Core Task makers
 # ============================
@@ -412,10 +416,13 @@ def raise_if_bad_signature(stp: 'Step', args, kwargs) -> None:
                 ) from exc
 
 # Public interface variant
-def make_task(stp: 'Step', args: tuple, kwargs: dict[str, Any], **resources):
+def make_task(stp: 'Step', args: tuple = tuple(),
+              kwargs: dict[str, Any] | None = None, **resources):
     """
     Create a task from a step and arguments with given resources
     """
+    if kwargs is None:
+        kwargs = {}
     # Create resource object by merging in defaults
     res_obj = ResourceClaim(**(vars(get_resources()) | resources))
 

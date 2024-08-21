@@ -68,7 +68,7 @@ class CommonProtocol:
 
         # Total resources
         self.max_cpus = max_cpus
-        self.resources = Resources(cpus=[]) # Available cpus
+        self.resources = Resources(cpus=[], vm='') # Available cpus
 
         # Route to a worker spawner
         self.write_pool: Writer[gm.Message] | None = None
@@ -119,7 +119,7 @@ class CommonProtocol:
         # Adapt the list of cpus to the requested number of max cpus by dropping
         # or repeting some as needed
         cpus = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
-        self.resources = Resources(cpus)
+        self.resources = Resources(cpus=cpus, vm='')
 
         return self.allocate_any()
 

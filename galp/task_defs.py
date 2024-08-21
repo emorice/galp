@@ -74,7 +74,7 @@ class ResourceClaim:
     Resources claimed by a task
     """
     cpus: int
-    vm: int = -1
+    vm: str = ''
 
 @dataclass
 class CoreTaskDef(BaseTaskDef):

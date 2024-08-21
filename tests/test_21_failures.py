@@ -216,26 +216,28 @@ async def test_refcount(client):
 
     assert ok == 1
 
-async def test_vmlimit(make_galp_set):
+async def test_vmlimit(client):
     """
     Worker  fails tasks if going above virtual memory limit
     """
-    unlimited_gls = await make_galp_set(1)
-    limited_gls = await make_galp_set(1, extra_pool_args={'vm': '2G'})
-
-    unlimited_client = unlimited_gls.client
-    limited_client = limited_gls.client
-
     # Exactly 2GiB
-    task_a, task_b = [gts.alloc_mem(2**31, x) for x in 'ab']
+    unlimited_task = gts.alloc_mem(2**31, 'a')
+    limited_task = galp.make_task(gts.alloc_mem, (2**31, 'b'), vm='2G')
+    with galp.resources(vm='2G'):
+        limited_task2 = gts.alloc_mem(2**31, 'c')
 
     await asyncio.wait_for(
-            unlimited_client.collect(task_a),
+            client.collect(unlimited_task),
             3)
 
     with pytest.raises(galp.TaskFailedError):
         await asyncio.wait_for(
-                limited_client.collect(task_b),
+                client.collect(limited_task),
+                3)
+
+    with pytest.raises(galp.TaskFailedError):
+        await asyncio.wait_for(
+                client.collect(limited_task2),
                 3)
 
 async def test_missing_argument(client):
