@@ -12,8 +12,7 @@ import psutil
 import galp
 from galp import step
 
-from . import utils, dashboard, files, query
-from .utils import identity
+from . import dashboard, files, query
 
 @step
 def hello():
@@ -21,6 +20,14 @@ def hello():
     Takes no arguments, returns a constant, simplest step
     """
     return '6*7'
+
+@step
+def identity(arg):
+    """
+    Returns its arg unchanged
+    """
+    print(arg)
+    return arg
 
 @step
 def double(value=1):

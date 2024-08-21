@@ -15,6 +15,7 @@ import resource
 
 from typing import Iterable, TypeAlias
 from dataclasses import dataclass
+from contextlib import ExitStack
 
 import psutil
 import zmq
@@ -24,6 +25,7 @@ import galp.net.core.types as gm
 import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
+import galp.default_resources
 from galp.result import Result, Ok, Error
 
 from galp.store import StoreReadError, Store
@@ -311,12 +313,25 @@ def run_submission(store: Store, sock_logclient, job: Job
         store.put_task_def(task_def)
 
         logging.info('Executing step %s (%s)', name, step_name)
-        # This may block for a long time, by design
         try:
-            with set_path(store.dirpath, name.hex()):
-                with logserver_connect(get_request_id(job.submit),
-                        sock_logclient):
-                    result = step.function(*args, **kwargs)
+            # Set all the global changes:
+            with ExitStack() as stack:
+                # Set name of running task to use in generating unique files
+                stack.enter_context(
+                        set_path(store.dirpath, name.hex())
+                        )
+                # Propagate task resources to all child steps
+                stack.enter_context(
+                        galp.default_resources.resources(task_def.resources)
+                        )
+                # Set up redirect of std file descriptors
+                stack.enter_context(
+                        logserver_connect(get_request_id(job.submit),
+                                          sock_logclient)
+                        )
+
+                # Actually run
+                result = step.function(*args, **kwargs)
         except Exception as exc:
             logging.exception('Submitted task step failed: %s [%s]',
             step_name, name)

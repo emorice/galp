@@ -399,6 +399,16 @@ def raise_if_bad_signature(stp: 'Step', args, kwargs) -> None:
                 f'{stp.function.__qualname__}() {str(exc)}'
                 ) from exc
 
+# Public interface variant
+def make_task(stp: 'Step', args: tuple, kwargs: dict[str, Any], **resources):
+    """
+    Create a task from a step and arguments with given resources
+    """
+    # Create resource object by merging in defaults
+    res_obj = ResourceClaim(**(vars(get_resources()) | resources))
+
+    return make_core_task(stp, args, kwargs, res_obj, **stp.task_options)
+
 def make_core_task(stp: 'Step', args: tuple, kwargs: dict[str, Any],
                    resources: ResourceClaim,
                    vtag: str | None = None, items: int | None = None,
@@ -463,7 +473,7 @@ class Step:
         Symbolically call the function wrapped by this step, returning a Task
         object representing the eventual result.
         """
-        return make_core_task(self, args, kwargs, get_resources(), **self.task_options)
+        return make_task(self, args, kwargs)
 
     def __get__(self, obj, objtype=None):
         """

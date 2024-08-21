@@ -111,11 +111,44 @@ def test_oneshot_suicide(run):
     with pytest.raises(galp.TaskFailedError):
         run(gts.suicide(signal.SIGKILL))
 
+@galp.step
+def s_get_cpus():
+    """
+    Return currently configured number of (openmp) threads
+    """
+    # pylint: disable=import-outside-toplevel
+    import numpy # pylint: disable=unused-import # side effect
+    import threadpoolctl # type: ignore[import]
+    print(threadpoolctl.threadpool_info())
+    return threadpoolctl.threadpool_info()[-1]['num_threads']
+
 def test_definition_cpus(run):
     """
     Run two tasks defined with a different number of cpus
     """
-    one = gts.utils.get_cpus()
+    one = s_get_cpus()
     with galp.resources(cpus=2):
-        two = gts.utils.get_cpus()
+        two = s_get_cpus()
+    assert run([one, two], pool_size=2, pin_workers=True) == (1, 2)
+
+@galp.step
+def s_meta_cpus(dummy, *_, kw_dummy):
+    """Meta step passing on cpus"""
+    return s_get_cpus()
+
+def test_meta_cpus(run):
+    """
+    Run a task from a limited meta task
+    """
+    one = s_meta_cpus(None, kw_dummy=None)
+    with galp.resources(cpus=2):
+        two = s_meta_cpus(None, kw_dummy=None)
+    assert run([one, two], pool_size=2, pin_workers=True) == (1, 2)
+
+def test_functional_cpus(run):
+    """Create a task with specific resources functionally"""
+    one = galp.make_task(s_meta_cpus, args=(None,), kwargs={'kw_dummy': None},
+                         cpus=1)
+    two = galp.make_task(s_meta_cpus, args=(None,), kwargs={'kw_dummy': None},
+                     cpus=2)
     assert run([one, two], pool_size=2, pin_workers=True) == (1, 2)
