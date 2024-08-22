@@ -37,9 +37,10 @@ class PassTroughPrinter(Printer):
 
 CTRL_UP = '\033[A;'
 CTRL_RETKILL = '\r\033[K'
-CTRL_RED = '\033[31m'
-CTRL_GREEN = '\033[32m'
-CTRL_DEFCOL = '\033[39m'
+# Disabled until we can exclude html output
+CTRL_RED = '' # '\033[31m'
+CTRL_GREEN = '' #'\033[32m'
+CTRL_DEFCOL = '' #'\033[39m'
 GREEN_OK = CTRL_GREEN + 'OK' + CTRL_DEFCOL
 RED_FAIL = CTRL_RED + 'FAIL' + CTRL_DEFCOL
 
@@ -67,7 +68,7 @@ class LiveDisplay:
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         """
-        Called before collection
+        Called after collection
         """
 
 class LogFileDisplay(LiveDisplay):
@@ -94,7 +95,7 @@ class LogFileDisplay(LiveDisplay):
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         """
-        Called before collection
+        Called after collection
         """
         self.file.close()
 
@@ -169,6 +170,44 @@ class JupyterLiveDisplay(LiveDisplay):
                     for i in (0, 1)
                     ]
 
+HTML_CONTENT = """
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <script src="https://code.jquery.com/jquery-3.7.1.min.js"
+              integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+			  crossorigin="anonymous"></script>
+        <script>
+            function load() {
+                $.ajax({
+                    'url': '/content',
+                    'success': data => {
+                            $('#container').text(data);
+                            $('#status').text('Server online, updating every 5 seconds');
+                            setTimeout(load, 5000);
+                        },
+                    'error': () => $('#status').text('\u26a0 Server disconnected'),
+                    });
+                }
+            load();
+        </script>
+        <style>
+            body {
+                font-family: sans-serif;
+                max-width: 1024px;
+                margin: auto;
+            }
+        </style>
+        <title>Pipeline run live summary</title>
+    </head>
+    <body>
+    <h1>Pipeline run live summary</h1>
+    <div id="status">Connecting...</div>
+    <pre id="container"></pre></body>
+</html>
+"""
+
 class HTTPLiveDisplay(LiveDisplay):
     """
     Start an http server that display progress on demand
@@ -186,7 +225,10 @@ class HTTPLiveDisplay(LiveDisplay):
             raise TypeError('aiohttp is needed for output=\'http\'') from exc
         self.web = web
         app = web.Application()
-        app.add_routes([web.get('/', self.display)])
+        app.add_routes([
+            web.get('/', self.display),
+            web.get('/content', self.content),
+            ])
         self.runner = web.AppRunner(app)
         self.site = None
 
@@ -195,23 +237,35 @@ class HTTPLiveDisplay(LiveDisplay):
         Start serving display requests
         """
         await self.runner.setup()
-        self.site = self.web.TCPSite(self.runner, 'localhost', 0)
-        await self.site.start()
+        site = self.web.TCPSite(self.runner, 'localhost', 0)
+        await site.start()
         # pylint: disable=protected-access
-        host, port = self.site._server.sockets[0].getsockname()
+        host, port = site._server.sockets[0].getsockname()
         print(f'Serving on http://{host}:{port}', flush=True)
 
 
     async def display(self, request):
         """
-        Callback to handler http requests
+        Callback for page template
         """
         del request
-        return self.web.Response(text='\n'.join(
-            self.summary
-            + self.open_log
-            + self.log
-            ))
+        return self.web.Response(
+                content_type='text/html',
+                body=HTML_CONTENT
+                )
+
+    async def content(self, request):
+        """"
+        Callback for page content
+        """
+        del request
+        return self.web.Response(
+                text='\n'.join(
+                    self.summary
+                    + self.open_log
+                    + self.log
+                    ),
+                )
 
     def update_log(self, log: list[str], open_log: list[str]):
         self.log = (self.log + log)[:self.max_lines]
@@ -225,7 +279,7 @@ class HTTPLiveDisplay(LiveDisplay):
         """
         Stop serving display requests
         """
-        await self.site.stop()
+        await self.runner.cleanup()
 
 def emulate_cr(string: str):
     """
