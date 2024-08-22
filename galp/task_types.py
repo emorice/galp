@@ -84,12 +84,17 @@ class TaskNode:
         returns a generator yielding sub-task objects allowing to refer to
         individual members of the result independently.
         """
+        if self.scatter is None:
+            raise TypeError(
+                    'cannot unpack non-iterable Task (no \'scatter\' value given)'
+                    )
         return (make_child_task(self, i) for i in
                 range(self.scatter))
 
     def __getitem__(self, index):
         if self.scatter is not None:
-            assert index <= self.scatter, 'Indexing past declared scatter'
+            if index >= self.scatter:
+                raise IndexError('scatter task index out of range')
             return make_child_task(self, index)
         # Hard getitem, we actually insert an extra task
         return getitem(self, index)
@@ -430,7 +435,7 @@ def make_task(stp: 'Step', args: tuple = tuple(),
 
 def make_core_task(stp: 'Step', args: tuple, kwargs: dict[str, Any],
                    resources: ResourceClaim,
-                   vtag: str | None = None, items: int | None = None,
+                   vtag: str | None = None, scatter: int | None = None,
                    ) -> TaskNode:
     """
     Build a core task from a function call
@@ -458,7 +463,7 @@ def make_core_task(stp: 'Step', args: tuple, kwargs: dict[str, Any],
             'kwargs': kwarg_inputs,
             'step': stp.key,
             'vtags': ([ascii(vtag) ] if vtag is not None else []),
-            'scatter':items,
+            'scatter': scatter,
             'resources': resources
             }
 
@@ -475,15 +480,23 @@ class Step:
     is only ever run once.
 
     Args:
-        items: int, signal this task eventually returns a collection of items
+        scatter: int, signal this task eventually returns a collection of items
             objects, and allows to index or iterate over the task to generate
             handle pointing to the individual items.
+        items: legacy alias for scatter
     """
 
     def __init__(self, function: Callable, is_view: bool = False, **task_options):
         self.function = function
         self.key = function.__module__ + MODULE_SEPARATOR + function.__qualname__
+
+        items = task_options.pop('items', None)
+        if items is not None:
+            if task_options.get('scatter') is not None:
+                raise TypeError('Specify either scatter (preferred) or items')
+            task_options['scatter'] = items
         self.task_options = task_options
+
         self.is_view = is_view
         functools.update_wrapper(self, self.function)
 
