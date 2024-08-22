@@ -32,7 +32,7 @@ from galp.store import StoreReadError, Store
 from galp.protocol import make_stack, TransportMessage
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.query import collect_task_inputs
-from galp.task_types import TaskRef, load_step_by_key, NoSuchStep
+from galp.task_types import TaskRef, load_step_by_key, StepLoadError
 from galp.net_store import handle_get, handle_stat, handle_upload
 from galp.net.core.dump import add_request_id, Writer, get_request_id
 from galp.asyn import filter_commands
@@ -288,7 +288,7 @@ def run_submission(store: Store, sock_logclient, job: Job
 
         try:
             step = load_step_by_key(step_name)
-        except NoSuchStep as exc:
+        except StepLoadError as exc:
             logging.exception('No such step known to worker: %s', step_name)
             raise NonFatalTaskError from exc
 

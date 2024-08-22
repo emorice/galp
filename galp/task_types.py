@@ -519,9 +519,9 @@ class Step:
 
         raise NotImplementedError('Cannot only wrap functions, not methods')
 
-class NoSuchStep(ValueError):
+class StepLoadError(Exception):
     """
-    No step with the given name has been registered
+    Failed to load given step
     """
 
 def step(*decorated, **options):
@@ -585,16 +585,16 @@ def load_step_by_key(key: str) -> Step:
     Try to import the module containing a step and access such step
 
     Raises:
-        NoSuchStep: if loading the module or accessing the step fails
+        StepLoadError: if loading the module or accessing the step fails
     """
     module_name, step_name = key.split(MODULE_SEPARATOR)
 
     try:
         module = import_module(module_name)
     except ModuleNotFoundError as exc:
-        logging.error('Error while loading step %s: could not import module %s',
-                key, module_name)
-        raise NoSuchStep(key) from exc
+        logging.error('Failed loading step %s: %s',
+                key, exc.args[0])
+        raise StepLoadError(key) from exc
 
     try:
         return getattr(module, step_name)
@@ -602,7 +602,7 @@ def load_step_by_key(key: str) -> Step:
         logging.error(
         'Error while loading step %s: could not import find step %s in %s',
                 key, step_name, module_name)
-        raise NoSuchStep(key) from exc
+        raise StepLoadError(key) from exc
 
 def getitem(obj, index):
     """

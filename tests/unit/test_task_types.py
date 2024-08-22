@@ -4,7 +4,7 @@ Task types, aka graph construction
 
 import pytest
 
-from galp.task_types import step
+from galp.task_types import step, load_step_by_key, StepLoadError
 
 @step
 def _not_scatter():
@@ -44,3 +44,9 @@ def _doc():
 def test_doc():
     """Step preserve docstring"""
     assert 'Look I have some documentation' in _doc.__doc__
+
+def test_bad_import(caplog):
+    """Helpful error on failed import"""
+    with pytest.raises(StepLoadError):
+        load_step_by_key('tests.unit.unimportable::some_step')
+    assert 'i_dont_exist' in caplog.text
