@@ -179,9 +179,11 @@ HTML_CONTENT = """
               integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
 			  crossorigin="anonymous"></script>
         <script>
+            // Dynamic url to handle running behind  jupyter-server-proxy
+            const content_url = window.location.href + '/content'
             function load() {
                 $.ajax({
-                    'url': '/content',
+                    'url': content_url,
                     'success': data => {
                             $('#container').text(data);
                             $('#status').text('Server online, updating every 5 seconds');
@@ -241,7 +243,11 @@ class HTTPLiveDisplay(LiveDisplay):
         await site.start()
         # pylint: disable=protected-access
         host, port = site._server.sockets[0].getsockname()
-        print(f'Serving on http://{host}:{port}', flush=True)
+        print(f'Serving locally on http://{host}:{port}')
+        print(f"""\
+If port forwarding is required, make sure jupyter-server-proxy is installed,
+and use e.g. <jupyter lab url>/proxy/{port} with the url you currently see in
+your address bar, e.g. http://localhost:8888/proxy/{port}""", flush=True)
 
 
     async def display(self, request):
