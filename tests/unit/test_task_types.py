@@ -34,3 +34,13 @@ def test_bad_unpack():
     with pytest.raises(IndexError) as exc:
         _ = _small_scatter()[2]
     assert 'scatter task index out of range' in str(exc)
+
+@step
+def _doc():
+    """
+    Look I have some documentation
+    """
+
+def test_doc():
+    """Step preserve docstring"""
+    assert 'Look I have some documentation' in _doc.__doc__
