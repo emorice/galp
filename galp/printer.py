@@ -9,15 +9,16 @@ from typing import Callable
 from dataclasses import dataclass, field
 from contextlib import asynccontextmanager, AsyncExitStack
 
+from galp.result import Ok, Error, Result
 import galp.task_types as gtt
 
 class Printer:
     """
     Printer classes interface
     """
-    def update_task_status(self, task_def: gtt.CoreTaskDef, done: bool | None):
+    def update_task_status(self, task_def: gtt.CoreTaskDef, over: Result | None):
         """
-        Inform that a task is started (None), done (True) or failed (False)
+        Inform that a task is started (None), over (True) or failed (False)
         """
         raise NotImplementedError
 
@@ -31,7 +32,7 @@ class PassTroughPrinter(Printer):
     """
     Trivial printer class, outputs no metadata and leaves statuses as is
     """
-    def update_task_status(self, _task_def: gtt.CoreTaskDef, _done: bool | None):
+    def update_task_status(self, _task_def: gtt.CoreTaskDef, _over: Result | None):
         pass
 
     def update_task_output(self, _task_def: gtt.CoreTaskDef, status: bytes):
@@ -312,7 +313,7 @@ class TaskPrinter(Printer):
     # Key is the header "<step> <name>", value is (time, text)
     open_lines: dict[str, tuple[str, str]] = field(default_factory=dict)
 
-    def update_task_status(self, task_def: gtt.CoreTaskDef, done: bool | None):
+    def update_task_status(self, task_def: gtt.CoreTaskDef, over: Result | None):
         step = task_def.step
         name = task_def.name
         ltime = hour()
@@ -320,7 +321,7 @@ class TaskPrinter(Printer):
 
         # Update state and compute log
         log_lines = []
-        if done is None:
+        if over is None:
             if step not in self.running:
                 self.running[step] = set()
             self.running[step].add(name)
@@ -331,8 +332,13 @@ class TaskPrinter(Printer):
                 if not self.running[step]:
                     del self.running[step]
                 self.open_lines.pop(f'{step} {name}', '')
+            match over:
+                case Ok():
+                    message = f'[{GREEN_OK}]'
+                case Error():
+                    message = f'[{RED_FAIL}] {over.error}'
             log_lines.append(
-                    f'{ltime} {step} {name} [{GREEN_OK if done else RED_FAIL}]'
+                    f'{ltime} {step} {name} {message}'
                     )
 
         # Recompute summary

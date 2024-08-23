@@ -77,9 +77,12 @@ async def listen_forkserver(forkserver_socket, broker_transport) -> None:
 # =================================
 
 def log_child_exit(rpid, rstatus,
-                   noerror_level=logging.DEBUG):
+                   noerror_level=logging.DEBUG) -> str:
     """
-    Parse and log exit status
+    Parse and log exit status.
+
+    Returns:
+        the log message, for additional consumers
     """
     rsig = rstatus & 0x7F
     rdumped = rstatus & 0x80
@@ -89,11 +92,10 @@ def log_child_exit(rpid, rstatus,
             level = noerror_level
         else:
             level = logging.ERROR
-        logging.log(level, 'Worker %s killed by signal %d (%s) %s', rpid,
-                rsig,
-                signal.strsignal(rsig),
-                '(core dumped)' if rdumped else ''
-                )
+        message = f'Worker {rpid} killed by signal {signal.Signals(rsig).name}'
+        if rdumped:
+            message += ' (core dumped)'
+        logging.log(level, message)
         if rsig == signal.SIGKILL:
             try:
                 # Check dmesg for OOM
@@ -102,14 +104,20 @@ def log_child_exit(rpid, rstatus,
                         shell=True, stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL, check=False)
                 if dmesg.returncode == 0:
-                    logging.log(level, 'Worker %s has a matching kernel log entry:', rpid)
-                    logging.log(level, '%s', dmesg.stdout.decode('utf8'))
+                    line = f'Worker {rpid} has a matching kernel log entry:'
+                    logging.log(level, line)
+                    message += ('\n' + line)
+                    line = dmesg.stdout.decode('utf8')
+                    logging.log(level, line)
+                    message += ('\n' + line)
             except: # pylint: disable=bare-except # Never crash on this
                 logging.exception('Could not check logs')
 
     else:
-        logging.log(noerror_level, 'Worker %s exited with code %s',
-                rpid, rret)
+        message = f'Worker {rpid} exited with code {rret}'
+        logging.log(noerror_level, message)
+
+    return message
 
 def check_deaths(pids: set[int], sock_server: socket.socket) -> None:
     """
@@ -122,8 +130,8 @@ def check_deaths(pids: set[int], sock_server: socket.socket) -> None:
             if rpid not in pids:
                 logging.error('Ignoring exit of unknown child %s', rpid)
                 continue
-            log_child_exit(rpid, rstatus, logging.ERROR)
-            socket_send_message(sock_server, gm.Exited(peer=str(rpid)))
+            error = log_child_exit(rpid, rstatus, logging.ERROR)
+            socket_send_message(sock_server, gm.Exited(str(rpid), error))
             pids.remove(rpid)
 
 def kill_all(pids: set[int], sig: signal.Signals = signal.SIGTERM) -> None:

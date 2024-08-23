@@ -28,8 +28,10 @@ class Exited:
 
     Attributes:
         peer: the local id (pid) of the exited peer
+        error: any additional details to report to user
     """
     peer: str
+    error: str
 
 @dataclass(frozen=True)
 class Fork:

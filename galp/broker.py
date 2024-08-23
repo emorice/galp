@@ -171,7 +171,7 @@ class CommonProtocol:
         self._free_resources(worker, reuse=reuse)
         return self.allocate_any()
 
-    def exited_errors(self, alloc: Allocation) -> list[TransportMessage]:
+    def exited_errors(self, alloc: Allocation, error: str) -> list[TransportMessage]:
         """
         Generate error messages to propagate when a peer exits
         """
@@ -182,15 +182,10 @@ class CommonProtocol:
 
         match orig_msg:
             case gm.Exec():
-                task_def = orig_msg.submit.task_def
-                reply = gm.RemoteError(
-                        f'Failed to execute task {task_def}: worker died'
-                        )
-                return [add_request_id(write_client, orig_msg.submit)(reply)]
+                request: gm.Request = orig_msg.submit
             case _:
-                return [add_request_id(write_client, orig_msg)(
-                    gm.RemoteError('Worker died when processing request')
-                    )]
+                request = orig_msg
+        return [add_request_id(write_client, request)(gm.RemoteError(error))]
 
     def on_exited(self, msg: gm.Exited
             ) -> list[TransportMessage]:
@@ -215,7 +210,7 @@ class CommonProtocol:
         return (
             self.reallocate(session, reuse=False)
             +
-            self.exited_errors(alloc)
+            self.exited_errors(alloc, msg.error)
             )
 
     def calc_resource_claim(self, msg: gm.Message) -> gtt.ResourceClaim:
