@@ -60,8 +60,10 @@ async def test_suicide(client):
     """
     Test running a task triggering a signal
     """
-    with pytest.raises(galp.TaskFailedError):
-        await asyncio.wait_for(client.collect(gts.suicide(signal.SIGKILL)), 3)
+    async with timeout(3):
+        with pytest.raises(galp.TaskFailedError):
+            await client.collect(gts.suicide(signal.SIGKILL))
+        assert await client.run(gts.identity(1)) == 1
 
 async def test_step_error_multiple(client):
     """

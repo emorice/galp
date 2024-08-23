@@ -143,7 +143,6 @@ class CommonProtocol:
         # Else, the free came from an unmetered source, for instance a PUT sent
         # by a client to a worker
 
-
     def allocate_any(self) -> list[TransportMessage]:
         """
         Go through the queue and try to allocate pending requests.
@@ -206,7 +205,7 @@ class CommonProtocol:
             logging.error("Worker %s is unknown, ignoring exit", peer)
             return []
 
-        alloc = self.alloc_from_wuid.pop(session.uid, None)
+        alloc = self.alloc_from_wuid.get(session.uid, None)
         if alloc is None:
             logging.error("Worker %s was not assigned a task, ignoring exit", peer)
             return []
