@@ -270,8 +270,8 @@ class Primitive(Command[OkT]):
 
     Fully defined and identified by a task name
     """
-    def __init__(self):
-        self._progress_callbacks = []
+    def __init__(self) -> None:
+        self._progress_callbacks: list[Callable[[bytes], None]] = []
 
     @property
     def key(self) -> Hashable:
@@ -280,14 +280,14 @@ class Primitive(Command[OkT]):
         """
         raise NotImplementedError
 
-    def on_progress(self, callback):
+    def on_progress(self, callback: Callable[[bytes], None]):
         """
         Register a progress hook
         """
         self._progress_callbacks.append(callback)
         return self
 
-    def progress(self, status):
+    def progress(self, status: bytes):
         """
         Call progress hooks
         """

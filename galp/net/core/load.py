@@ -29,7 +29,7 @@ def get_request_id(req: gm.BaseRequest) -> RequestId:
 
 load_request_id = get_loader(RequestId)
 load_remote_error = get_loader(str)
-load_progress = get_loader(str)
+load_progress = get_loader(bytes)
 
 def _reply_loader(doc, frames: list[bytes]) -> tuple[Reply, list[bytes]]:
     """Constructs a Reply"""

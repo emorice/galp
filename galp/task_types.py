@@ -6,7 +6,6 @@ import inspect
 import functools
 import logging
 import hashlib
-import msgpack
 from importlib import import_module
 from typing import Any, TypeAlias, TypeVar, Iterable, Callable, Sequence
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ from galp.task_defs import (TaskName, LiteralTaskDef, TaskInput,
                             ChildTaskDef, TaskDef, QueryDef)
 from galp.default_resources import get_resources
 from galp.serializer import Serializer, GenSerialized
-from galp.pack import dump, LoadError
+from galp.pack import LoadError
 
 # Core task type definitions
 # ==========================

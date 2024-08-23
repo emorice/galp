@@ -1,6 +1,7 @@
 """
 Reporting and printing
 """
+import os
 import sys
 import time
 import logging
@@ -20,7 +21,7 @@ class Printer:
         """
         raise NotImplementedError
 
-    def update_task_output(self, task_def: gtt.CoreTaskDef, status: str):
+    def update_task_output(self, task_def: gtt.CoreTaskDef, status: bytes):
         """
         Live task output
         """
@@ -33,8 +34,8 @@ class PassTroughPrinter(Printer):
     def update_task_status(self, _task_def: gtt.CoreTaskDef, _done: bool | None):
         pass
 
-    def update_task_output(self, _task_def: gtt.CoreTaskDef, status: str):
-        print(status, flush=True, end='')
+    def update_task_output(self, _task_def: gtt.CoreTaskDef, status: bytes):
+        os.write(sys.stdout.fileno(), status)
 
 CTRL_UP = '\033[A;'
 CTRL_RETKILL = '\r\033[K'
@@ -349,11 +350,11 @@ class TaskPrinter(Printer):
         for display in self.live_displays:
             display.update_summary(summary, log_lines)
 
-    def update_task_output(self, task_def: gtt.CoreTaskDef, status: str):
+    def update_task_output(self, task_def: gtt.CoreTaskDef, status: bytes):
         tid = f'{task_def.step} {task_def.name}'
         ltime = hour()
         # Not splitlines, we want a final empty string
-        lines = status.split('\n')
+        lines = status.decode('utf8', errors='ignore').split('\n')
         # Join previous hanging data
         # Don't delete the item to keep the pos in the dict
         _old_time, last_open = self.open_lines.get(tid, (None, ''))

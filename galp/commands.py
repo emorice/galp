@@ -304,7 +304,7 @@ def _end_submit(task_def: gtt.CoreTaskDef, submit_result: Result[gtt.ResultRef],
     options.printer.update_task_status(task_def, isinstance(submit_result, Ok))
     return submit_result
 
-def _progress_submit(task_def: gtt.CoreTaskDef, status: str, options:
+def _progress_submit(task_def: gtt.CoreTaskDef, status: bytes, options:
                      ExecOptions) -> None:
     options.printer.update_task_output(task_def, status)
 

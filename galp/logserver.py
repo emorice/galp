@@ -110,13 +110,9 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
         if item:
             if tee_file:
                 tee_file.write(item)
-            try:
-                item_s = item.decode('utf8')
-            except UnicodeDecodeError:
-                item_s = f'<failed utf-8 decoding of {len(item)} bytes>'
             galp.socket_transport.send_multipart(
                     sock_proxy,
-                    dump_message(Reply(request_id, Progress(item_s)))
+                    dump_message(Reply(request_id, Progress(item)))
                     )
         else:
             # Other end finished the task or died. Close the log file, our end
