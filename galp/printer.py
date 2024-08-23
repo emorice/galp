@@ -2,6 +2,7 @@
 Reporting and printing
 """
 import sys
+import time
 import logging
 from typing import Callable
 from dataclasses import dataclass, field
@@ -180,7 +181,7 @@ HTML_CONTENT = """
 			  crossorigin="anonymous"></script>
         <script>
             // Dynamic url to handle running behind  jupyter-server-proxy
-            const content_url = window.location.href + '/content'
+            const content_url = window.location.href.replace(/\\/$/, '') + '/content'
             function load() {
                 $.ajax({
                     'url': content_url,
@@ -293,6 +294,11 @@ def emulate_cr(string: str):
     """
     return string.rpartition('\r')[-1]
 
+def hour() -> str:
+    """Local hour as string"""
+    ltime = time.localtime()
+    return f'{ltime.tm_hour:02d}:{ltime.tm_min:02d}'
+
 @dataclass
 class TaskPrinter(Printer):
     """
@@ -302,12 +308,14 @@ class TaskPrinter(Printer):
     running: dict[str, set[gtt.TaskName]] = field(default_factory=dict)
     out_lines: list[str] = field(default_factory=list)
     live_displays: list[LiveDisplay] = field(default_factory=list)
-    # Key is the header "<step> <name>"
-    open_lines: dict[str, str] = field(default_factory=dict)
+    # Key is the header "<step> <name>", value is (time, text)
+    open_lines: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     def update_task_status(self, task_def: gtt.CoreTaskDef, done: bool | None):
         step = task_def.step
         name = task_def.name
+        ltime = hour()
+
 
         # Update state and compute log
         log_lines = []
@@ -323,7 +331,7 @@ class TaskPrinter(Printer):
                     del self.running[step]
                 self.open_lines.pop(f'{step} {name}', '')
             log_lines.append(
-                    f'{step} {name} [{GREEN_OK if done else RED_FAIL}]'
+                    f'{ltime} {step} {name} [{GREEN_OK if done else RED_FAIL}]'
                     )
 
         # Recompute summary
@@ -335,33 +343,35 @@ class TaskPrinter(Printer):
                 summary.append(f'and {n_steps - max_lines + 1} other steps')
                 break
             tasks = f'task {next(iter(names))}' if len(names) == 1 else f'{len(names)} tasks'
-            summary.append(f'{step} [{tasks} pending]')
+            summary.append(f'{ltime} {step} [{tasks} pending]')
 
         # Display both
         for display in self.live_displays:
             display.update_summary(summary, log_lines)
 
     def update_task_output(self, task_def: gtt.CoreTaskDef, status: str):
-        header = f'{task_def.step} {task_def.name}'
+        tid = f'{task_def.step} {task_def.name}'
+        ltime = hour()
         # Not splitlines, we want a final empty string
         lines = status.split('\n')
         # Join previous hanging data
         # Don't delete the item to keep the pos in the dict
-        lines[0] = self.open_lines.get(header, '') + lines[0]
+        _old_time, last_open = self.open_lines.get(tid, (None, ''))
+        lines[0] = last_open + lines[0]
 
         # Full lines to append to log
         closed_lines = [
-            f'{header} {emulate_cr(line)}'
+            f'{ltime} {tid} {emulate_cr(line)}'
             for line in lines[:-1]
             ]
 
         # Save final (often empty) open line, clearing previous
-        self.open_lines[header] = emulate_cr(lines[-1])
+        self.open_lines[tid] = ltime, emulate_cr(lines[-1])
 
-        # Open lines to update
+        # Open lines to display
         open_lines = [
-            f'{other_header} {other_line}'
-            for other_header, other_line in self.open_lines.items()
+            f'{other_ltime} {other_tid} {other_line}'
+            for other_tid, (other_ltime, other_line) in self.open_lines.items()
             ]
         for display in self.live_displays:
             display.update_log(closed_lines, open_lines)
