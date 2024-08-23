@@ -6,6 +6,7 @@ import os
 import sys
 import asyncio
 import logging
+import time
 import signal
 import selectors
 import subprocess
@@ -215,6 +216,39 @@ def register_socket_handler(selector, config, sock_server, pids):
 # Forkserver IO loop
 # ==================
 
+PSTAT_DELAY = 300
+
+def hsize(nbytes: int) -> str:
+    fbytes = float(nbytes)
+    for suffix in ('', 'Ki', 'Mi', 'Gi', 'Ti'):
+        if fbytes < 1024:
+            return f'{fbytes:.4g}{suffix}B'
+        fbytes /= 1024
+    # if somehow you got a machine with 2000TB of ram...
+    return f'{fbytes*1024:.4g}{suffix}B'
+
+def make_collect_stats(pids):
+    last_time = time.time()
+
+    def _collect_stats():
+        nonlocal last_time
+        cur_time = time.time()
+        if cur_time - last_time < PSTAT_DELAY:
+            return
+        last_time = cur_time
+        for pid in pids:
+            try:
+                process = psutil.Process(pid)
+            except psutil.NoSuchProcess:
+                continue
+            with process.oneshot():
+                cpu = process.cpu_percent()
+                mem = process.memory_info()
+            stats = f'{pid} {cpu:3.0f}% vms={hsize(mem.vms)} rss={hsize(mem.rss)}'
+            print(stats, flush=True)
+    return _collect_stats
+
+
 def forkserver(sock_server, sock_logserver, signal_read_fd, config) -> None:
     """
     A dedicated loop to fork workers on demand and return the pids.
@@ -234,12 +268,15 @@ def forkserver(sock_server, sock_logserver, signal_read_fd, config) -> None:
             sock_logserver, sock_server,
             log_dir)
 
+    collect_stats = make_collect_stats(pids)
+
     leave = False
     while not leave:
-        events = selector.select()
+        events = selector.select(PSTAT_DELAY)
         for key, _mask in events:
             callback = key.data
             leave = callback()
+        collect_stats()
 
 
 # Entry point
