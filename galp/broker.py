@@ -15,7 +15,6 @@ from galp.result import Result
 import galp.net.core.types as gm
 from galp.net.core.dump import add_request_id, Writer, get_request_id
 from galp.net.routing.dump import SessionUid
-import galp.net.requests.types as gr
 import galp.task_types as gtt
 
 from galp.protocol import (make_forward_stack, ReplyFromSession, ForwardSessions,
@@ -185,13 +184,13 @@ class CommonProtocol:
         match orig_msg:
             case gm.Exec():
                 task_def = orig_msg.submit.task_def
-                reply = gr.RemoteError(
+                reply = gm.RemoteError(
                         f'Failed to execute task {task_def}: worker died'
                         )
                 return [add_request_id(write_client, orig_msg.submit)(reply)]
             case _:
                 return [add_request_id(write_client, orig_msg)(
-                    gr.RemoteError('Worker died when processing request')
+                    gm.RemoteError('Worker died when processing request')
                     )]
 
     def on_exited(self, msg: gm.Exited

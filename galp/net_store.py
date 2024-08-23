@@ -8,9 +8,9 @@ import logging
 from typing import Iterable
 
 from galp.result import Ok
-from galp.net.core.types import Get, Stat, Upload, Message
+from galp.net.core.types import (Get, Stat, Upload, Message, StatResult,
+                                 RemoteError)
 from galp.net.core.dump import Writer
-from galp.net.requests.types import StatResult, RemoteError
 from galp.net.core.dump import add_request_id
 from galp.store import Store, StoreReadError
 from galp.protocol import TransportMessage

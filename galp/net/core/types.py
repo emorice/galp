@@ -11,10 +11,8 @@ from typing import TypeVar, Generic, TypeAlias
 from dataclasses import dataclass
 
 import galp.task_types as gtt
-import galp.net.requests.types as gr
 
-from galp.result import Ok, Progress
-from galp.net.requests.types import RemoteError
+from galp.result import Ok, Progress, Error
 
 # Messages
 # ========
@@ -109,7 +107,22 @@ class Get(BaseRequest[gtt.Serialized]):
         return self.name
 
 @dataclass(frozen=True)
-class Stat(BaseRequest[gr.StatResult]):
+class StatResult:
+    """
+    Unified stat reply
+
+    Attributes:
+        task_def: the task definition if present in the store from a remote
+            creation of previous execution attempt
+        result: the task result reference if the task has already been run
+            succesfully. Normally this should never be found set if the task def
+            is not.
+    """
+    task_def: gtt.TaskDef | None
+    result: gtt.FlatResultRef | None
+
+@dataclass(frozen=True)
+class Stat(BaseRequest[StatResult]):
     """
     A message asking if a task is defined or executed
 
@@ -188,6 +201,9 @@ class Exec:
     resources: gtt.Resources
 
 
+class RemoteError(Error[str]):
+    """Remote encountered an error when processing"""
+
 @dataclass(frozen=True)
 class Reply(Generic[V]):
     """
@@ -199,7 +215,6 @@ class Reply(Generic[V]):
 @dataclass(frozen=True)
 class NextRequest:
     """Event sent by broker when ready for next request"""
-
 
 Message: TypeAlias = (
         Exited | Fork | Ready | PoolReady |

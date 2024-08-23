@@ -4,19 +4,18 @@ Tests of client behavior, not connected to a full broker or worker
 
 import asyncio
 import logging
-import zmq
 
 import pytest
+import zmq
 from async_timeout import timeout
 
 import galp
 import tests.steps as gts
-
-from galp.result import Ok
+from galp.net.core.types import (NextRequest, Reply, RequestId, Stat,
+                                 StatResult, Submit)
 from galp.protocol import make_stack
+from galp.result import Ok
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.net.core.types import Reply, RequestId, Submit, Stat, NextRequest
-from galp.net.requests.types import StatResult
 
 # pylint: disable=redefined-outer-name
 # pylint: disable=protected-access

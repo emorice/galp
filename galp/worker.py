@@ -22,7 +22,6 @@ import zmq
 
 import galp.cli
 import galp.net.core.types as gm
-import galp.net.requests.types as gr
 import galp.commands as cm
 import galp.task_types as gtt
 import galp.default_resources
@@ -105,7 +104,7 @@ def make_worker(config: dict) -> 'Worker':
 
     return Worker(store, config)
 
-SubReplyWriter: TypeAlias = Writer[Ok[gtt.FlatResultRef] | gr.RemoteError]
+SubReplyWriter: TypeAlias = Writer[Ok[gtt.FlatResultRef] | gm.RemoteError]
 
 @dataclass
 class Job:
@@ -183,7 +182,7 @@ class Worker:
             except StoreReadError:
                 err = f'Failed cache hit: {name}'
                 logging.exception(err)
-                return [write_reply(gr.RemoteError(err))]
+                return [write_reply(gm.RemoteError(err))]
 
         # Process the list of GETs. This checks if they're in store,
         # and recursively finds new missing sub-resources when they are
@@ -268,7 +267,7 @@ class Worker:
 # ====================
 
 def run_submission(store: Store, sock_logclient, job: Job
-                   ) -> Ok[gtt.ResultRef] | gr.RemoteError:
+                   ) -> Ok[gtt.ResultRef] | gm.RemoteError:
     """
     Actually run the task
     """
@@ -330,7 +329,7 @@ def run_submission(store: Store, sock_logclient, job: Job
     except NonFatalTaskError:
         # All raises include exception logging so it's safe to discard the
         # exception here
-        return gr.RemoteError(
+        return gm.RemoteError(
             f'Failed to execute task {step_name} [{name.hex()}], check worker logs'
             )
     except Exception as exc:

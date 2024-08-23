@@ -6,7 +6,6 @@ from typing import TypeVar, Callable
 from collections.abc import Hashable
 from dataclasses import dataclass
 
-import galp.net.requests.types as gr
 import galp.net.core.types as gm
 import galp.task_types as gtt
 import galp.asyn as ga
@@ -165,7 +164,7 @@ class Found:
     task_def: gtt.TaskDef
     result: gtt.FlatResultRef | None
 
-def _no_not_found(stat_result: gr.StatResult, task: gtt.Task
+def _no_not_found(stat_result: gm.StatResult, task: gtt.Task
                   ) -> Result[Found]:
     """
     Transform NotFound in Found if the task is a real object, and fails
