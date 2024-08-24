@@ -183,12 +183,12 @@ class Store():
 
         return gtt.FlatResultRef(name, tuple(serialized.children))
 
-    def put_task_def(self, task_def: TaskDef) -> None:
+    def put_task_def(self, task_def: TaskDef, check: bool=True) -> None:
         """
         Non-recursively store the dictionnary describing the task
         """
         key = task_def.name + b'.task'
-        if key in self.serialcache:
+        if check and key in self.serialcache:
             return
 
         self.serialcache[key] = task_def_typemap.dump(task_def)
@@ -225,15 +225,23 @@ class Store():
             raise TypeError('Queries can\'t be persisted and'
              + ' cannot be used inside meta steps')
 
-        self.put_task_def(task_def)
+        # Do not recurse on inputs/children if we already saw this task
+        key = task_def.name + b'.task'
+        if key not in self.serialcache:
 
-        for tin in task.inputs:
-            self.put_task(tin)
+            for tin in task.inputs:
+                self.put_task(tin)
 
-        if isinstance(task, LiteralTaskNode):
-            self.put_serial(task.name, task.serialized)
-            for child in task.children:
-                self.put_task(child)
+            if isinstance(task, LiteralTaskNode):
+                # Children first
+                for child in task.children:
+                    self.put_task(child)
+                # Object last, same logic as below
+                self.put_serial(task.name, task.serialized)
+
+            # Put the task def last, so that in case of crash we reduce chances
+            # of creating a task with dangling inputs
+            self.put_task_def(task_def, check=False)
 
         return TaskRef(task.name)
 
