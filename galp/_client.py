@@ -10,8 +10,6 @@ import logging
 from collections import defaultdict
 from typing import Iterable, Any
 
-import zmq
-
 import galp.net.core.types as gm
 import galp.commands as cm
 import galp.asyn as ga
@@ -71,9 +69,8 @@ class Client:
                 case _:
                     return Error(f'Unexpected {msg}')
         self._stack = make_stack(on_message, name='BK')
-        self._transport = ZmqAsyncTransport(
-            stack=self._stack, endpoint=endpoint, socket_type=zmq.DEALER
-            )
+        self._transport = ZmqAsyncTransport(stack=self._stack,
+                                            endpoint=endpoint)
 
     async def gather(self, *tasks, return_exceptions: bool = False,
                      dry_run: bool = False, verbose: bool = False,

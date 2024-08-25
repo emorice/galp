@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from contextlib import ExitStack
 
 import psutil
-import zmq
 
 import galp.cli
 import galp.net.core.types as gm
@@ -141,7 +140,7 @@ class Worker:
 
         self.transport = ZmqAsyncTransport(
                 make_stack(on_message, name='BK'),
-                setup['endpoint'], zmq.DEALER # pylint: disable=no-member
+                setup['endpoint']
                 )
         self.mission = setup.get('mission', b'')
         self.store = store

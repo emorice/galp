@@ -2,6 +2,7 @@
 Using ØMQ as a transport for Galp protoclols
 """
 from typing import Iterable
+import zmq
 import zmq.asyncio
 
 from galp.protocol import Stack, TransportReturn
@@ -16,10 +17,10 @@ class ZmqAsyncTransport:
             stack root is normally needed but we have a legacy message writing path
             that uses the top layer too
         endpoint: zmq endpoint to connect to
-        socket_type: zmq socket type
-        bind: whether to bind or connect, default False (connect)
+        bind: whether to bind a ROUTER socket, or connect a DEALER socket.
+            Default False (connect, DEALER)
     """
-    def __init__(self, stack: Stack, endpoint, socket_type, bind=False):
+    def __init__(self, stack: Stack, endpoint, bind=False):
         self.stack: Stack = stack
         self.handler = stack.handler
 
@@ -27,10 +28,11 @@ class ZmqAsyncTransport:
 
         ctx = zmq.asyncio.Context.instance()
 
-        self.socket = ctx.socket(socket_type)
         if bind:
+            self.socket = ctx.socket(zmq.ROUTER)
             self.socket.bind(endpoint)
         else:
+            self.socket = ctx.socket(zmq.DEALER)
             self.socket.connect(endpoint)
 
     def __del__(self):

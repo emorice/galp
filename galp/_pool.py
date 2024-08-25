@@ -13,7 +13,6 @@ import subprocess
 import socket
 
 import psutil
-import zmq
 
 import galp.worker
 import galp.net.core.types as gm
@@ -50,9 +49,7 @@ async def proxy(broker_endpoint, forkserver_socket):
         socket_send_message(forkserver_socket, message)
         return []
     stack = make_stack(on_message, name='BK')
-    broker_transport = ZmqAsyncTransport(stack,
-        broker_endpoint, zmq.DEALER # pylint: disable=no-member
-        )
+    broker_transport = ZmqAsyncTransport(stack, broker_endpoint)
 
     async with background(
         broker_transport.listen_reply_loop()

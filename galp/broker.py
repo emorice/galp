@@ -9,8 +9,6 @@ from collections import defaultdict
 from itertools import cycle
 from functools import singledispatchmethod
 
-import zmq
-
 from galp.result import Result
 import galp.net.core.types as gm
 from galp.net.core.dump import add_request_id, Writer, get_request_id
@@ -30,8 +28,7 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
         self.proto = CommonProtocol(max_cpus=n_cpus)
         stack = make_forward_stack(self.proto.on_message,
                 name='CW')
-        self.transport = ZmqAsyncTransport(
-            stack, endpoint, zmq.ROUTER, bind=True)
+        self.transport = ZmqAsyncTransport(stack, endpoint, bind=True)
 
     async def run(self) -> Result[object]:
         """
