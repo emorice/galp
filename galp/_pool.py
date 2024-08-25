@@ -120,40 +120,43 @@ def log_child_exit(rpid, rstatus,
 
     return message
 
-def check_deaths(pids: set[int], sock_server: socket.socket) -> None:
+def check_deaths(children: dict[int, psutil.Process],
+                 sock_server: socket.socket) -> None:
     """
     Check for children deaths and send messages to broker
     """
     rpid = -1
-    while pids and rpid:
+    while children and rpid:
         rpid, rstatus = os.waitpid(-1, os.WNOHANG)
         if rpid:
-            if rpid not in pids:
+            if rpid not in children:
                 logging.error('Ignoring exit of unknown child %s', rpid)
                 continue
             error = log_child_exit(rpid, rstatus, logging.ERROR)
+            # Before sending message, we should empty the std streams
             socket_send_message(sock_server, gm.Exited(str(rpid), error))
-            pids.remove(rpid)
+            del children[rpid]
 
-def kill_all(pids: set[int], sig: signal.Signals = signal.SIGTERM) -> None:
+def kill_all(children: dict[int, psutil.Process],
+             sig: signal.Signals = signal.SIGTERM) -> None:
     """
     Kill all children and wait for them
     """
     logging.debug('Sending %s to all remaining %s children',
-            sig, len(pids))
-    for pid in pids:
+            sig, len(children))
+    for pid in children:
         logging.debug('Sending %s to %s', sig, pid)
         os.kill(pid, sig)
         logging.debug('Sent %s to %s', sig, pid)
-    for pid in pids:
+    for pid in children:
         logging.debug('Waiting for %s', pid)
         rpid = 0
         while not rpid:
             rpid, rexit = os.waitpid(pid, 0)
             log_child_exit(rpid, rexit)
 
-def register_signal_handler(selector, pids: set[int], signal_read_fd,
-                            sock_server) -> None:
+def register_signal_handler(selector, children: dict[int, psutil.Process],
+                            signal_read_fd, sock_server) -> None:
     """
     Set up signal handler to monitor worker deaths
     """
@@ -162,9 +165,9 @@ def register_signal_handler(selector, pids: set[int], signal_read_fd,
         sig = signal.Signals(int.from_bytes(sig_b, 'little'))
         logging.debug('Received signal %s', sig)
         if sig == signal.SIGCHLD:
-            check_deaths(pids, sock_server)
+            check_deaths(children, sock_server)
         elif sig in (signal.SIGINT, signal.SIGTERM):
-            kill_all(pids, sig)
+            kill_all(children, sig)
             return True
         else:
             logging.debug('Ignoring signal %s', sig)
@@ -174,7 +177,8 @@ def register_signal_handler(selector, pids: set[int], signal_read_fd,
 # Listen socket and start workers
 # ===============================
 
-def on_socket_frames(frames, config, pids):
+def on_socket_frames(frames, config,
+                     children: dict[int, psutil.Process]):
     """
     Handler for messages proxied to forkserver
     """
@@ -183,11 +187,12 @@ def on_socket_frames(frames, config, pids):
         case Ok(gm.Fork() as fork):
             _config = dict(config, mission=fork.mission)
             pid = galp.worker.fork(_config)
-            pids.add(pid)
+            children[pid] = psutil.Process(pid)
         case _:
             logging.error('Unexpected %s', msg)
 
-def register_socket_handler(selector, config, sock_server, pids):
+def register_socket_handler(selector, config, sock_server,
+                            children: dict[int, psutil.Process]):
     """
     Initialize the handler for broker messages, which does the actual forking
     work, and send the ready message
@@ -199,7 +204,7 @@ def register_socket_handler(selector, config, sock_server, pids):
 
     # Set up protocol
     multipart_reader = galp.socket_transport.make_multipart_generator(
-            lambda frames: on_socket_frames(frames, config, pids)
+            lambda frames: on_socket_frames(frames, config, children)
             )
     multipart_reader.send(None)
 
@@ -216,9 +221,12 @@ def register_socket_handler(selector, config, sock_server, pids):
 # Forkserver IO loop
 # ==================
 
-PSTAT_DELAY = 300
+PSTAT_DELAY = 300.0 # Seconds
 
 def hsize(nbytes: int) -> str:
+    """
+    Convert memory to human-readable string
+    """
     fbytes = float(nbytes)
     for suffix in ('', 'Ki', 'Mi', 'Gi', 'Ti'):
         if fbytes < 1024:
@@ -227,25 +235,30 @@ def hsize(nbytes: int) -> str:
     # if somehow you got a machine with 2000TB of ram...
     return f'{fbytes*1024:.4g}{suffix}B'
 
-def make_collect_stats(pids):
+def make_collect_stats(children: dict[int, psutil.Process]):
+    """
+    Create a hook to check and print child usage information
+
+    This is implemented as a closure because it needs to keep a variable for the
+    last measurement time. At each call, the function returns how much time is
+    left til next measurement point.
+    """
+
     last_time = time.time()
 
-    def _collect_stats():
+    def _collect_stats() -> float:
         nonlocal last_time
         cur_time = time.time()
-        if cur_time - last_time < PSTAT_DELAY:
-            return
+        if (time_left := last_time + PSTAT_DELAY - cur_time) > 0:
+            return time_left
         last_time = cur_time
-        for pid in pids:
-            try:
-                process = psutil.Process(pid)
-            except psutil.NoSuchProcess:
-                continue
+        for process in children.values():
             with process.oneshot():
                 cpu = process.cpu_percent()
                 mem = process.memory_info()
-            stats = f'{pid} {cpu:3.0f}% vms={hsize(mem.vms)} rss={hsize(mem.rss)}'
+            stats = f'{process.pid} {cpu:3.0f}% vms={hsize(mem.vms)} rss={hsize(mem.rss)}'
             print(stats, flush=True)
+        return PSTAT_DELAY
     return _collect_stats
 
 
@@ -257,9 +270,9 @@ def forkserver(sock_server, sock_logserver, signal_read_fd, config) -> None:
     loop or any state of the sort.
     """
     selector = selectors.DefaultSelector()
-    pids : set[int] = set()
-    register_socket_handler(selector, config, sock_server, pids)
-    register_signal_handler(selector, pids, signal_read_fd, sock_server)
+    children : dict[int, psutil.Process] = {}
+    register_socket_handler(selector, config, sock_server, children)
+    register_signal_handler(selector, children, signal_read_fd, sock_server)
 
     log_dir = os.path.join(config['store'], 'logs')
     os.makedirs(log_dir, exist_ok=True)
@@ -268,15 +281,16 @@ def forkserver(sock_server, sock_logserver, signal_read_fd, config) -> None:
             sock_logserver, sock_server,
             log_dir)
 
-    collect_stats = make_collect_stats(pids)
+    collect_stats = make_collect_stats(children)
 
     leave = False
+    delay = PSTAT_DELAY
     while not leave:
-        events = selector.select(PSTAT_DELAY)
+        events = selector.select(delay)
         for key, _mask in events:
             callback = key.data
             leave = callback()
-        collect_stats()
+        delay = collect_stats()
 
 
 # Entry point
