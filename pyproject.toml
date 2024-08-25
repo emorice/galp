@@ -2,6 +2,8 @@
 name = "galp"
 version = "0.0.1"
 description = "Incremental distributed python runner"
+authors = [{name = "Étienne Morice", email = "etienne.morice@mpinat.mpg.de"}]
+readme = "README.md"
 # Uses: |-style unions, match, type aliases ; released 2021
 requires-python = ">= 3.10"
 dependencies = [
@@ -30,7 +32,11 @@ dev = [
     "mypy",
     "pyinstrument-flamegraph @ git+https://github.com/emorice/pyinstrument-flamegraph",
     "aiohttp",
+    "miniwdl",
 ]
+wdl = [
+    "miniwdl",
+    ]
 
 [build-system]
 requires = ["setuptools"]

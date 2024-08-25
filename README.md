@@ -8,7 +8,7 @@
 
 # Incremental distributed python runner
 
-Designed for data science pipelines. Write your code by wrapping select functions with `@galp.step`. 
+Designed for data science pipelines. Write your code by wrapping select functions with `@galp.step`.
 Run with `galp.run(..., store='/path/to/storage')` to execute your code in a distributed manner, with
 each step's result being cached in the storage directory.
 
