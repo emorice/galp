@@ -174,8 +174,8 @@ def _no_not_found(stat_result: gm.StatResult, task: gtt.Task
         if isinstance(task, gtt.TaskNode):
             assert not isinstance(task.task_def, gtt.QueryDef)
             return Ok(Found(task_def=task.task_def, result=None))
-        return Error(f'The task reference {task.name} could not be resolved to'
-            + 'a definition')
+        raise RuntimeError(f'The task reference {task.name} could not be'
+            + ' resolved to a definition')
     return Ok(Found(task_def=stat_result.task_def, result=stat_result.result))
 
 def safe_stat(task: gtt.Task) -> Command[Found]:
