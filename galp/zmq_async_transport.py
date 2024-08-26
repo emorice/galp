@@ -10,7 +10,9 @@ from galp.writer import TransportMessage
 from galp.net.core.types import Message
 from galp.result import Result, Ok, Error
 
-class ZmqAsyncTransport:
+from galp.socket_transport import AsyncTransport
+
+class _ZmqAsyncTransport:
     """
     Args:
         stack: Protocol stack object with callbacks to handle messages. Only the
@@ -88,3 +90,6 @@ class ZmqAsyncTransport:
             if isinstance(replies, Ok):
                 return replies
             await self.send_messages(replies)
+
+ZmqAsyncTransport = AsyncTransport
+#ZmqAsyncTransport = _ZmqAsyncTransport

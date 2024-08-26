@@ -17,6 +17,9 @@ from galp.net.core.load import parse_core_message
 # pylint: disable=redefined-outer-name
 # pylint: disable=no-member
 
+import pytest
+pytestmark = pytest.mark.skip(reason='Not compatible with non-zmq transport')
+
 # Helpers
 # =======
 

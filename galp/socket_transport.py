@@ -1,10 +1,20 @@
 """
 Framing utils to transfer multipart messages over a classical socket
+
+This module is getting quicky messy because we need to support four interfaces:
+synchronous code, async code with selectors, async code with asyncio, and
+drop-in for zmq_async_transport.  Over time we will convert and drop support for
+most of these.
 """
 import socket
 import asyncio
+import logging
+from typing import Iterable
 
+from galp.result import Result, Ok, Error
 from galp.writer import TransportMessage
+from galp.protocol import Stack, TransportReturn
+from galp.net.core.types import Message
 
 def send_frame(sock: socket.socket, frame: bytes, send_more: bool) -> None:
     """
@@ -109,11 +119,12 @@ def recv_multipart(sock: socket.socket) -> TransportMessage:
         except Done as done:
             return done.value
 
-async def async_recv_multipart(sock: socket.socket) -> TransportMessage:
+async def async_recv_multipart(sock: socket.socket, loop=None) -> TransportMessage:
     """
     Receives a multipart message, async flavor
     """
-    loop = asyncio.get_event_loop()
+    if loop is None:
+        loop = asyncio.get_event_loop()
     _on_bytes = make_multipart_generator()
     size = _on_bytes.send(None)
     while True:
@@ -127,3 +138,200 @@ async def async_recv_multipart(sock: socket.socket) -> TransportMessage:
             size = _on_bytes.send(buf)
         except Done as done:
             return done.value
+
+class WriterAdapter:
+    """
+    Adapter to use classical socket code with asyncio writer
+    """
+    def __init__(self, writer: asyncio.StreamWriter):
+        self.writer = writer
+
+    def sendall(self, frame: bytes):
+        """
+        Wraps write
+        """
+        self.writer.write(frame)
+
+    async def drain(self):
+        """
+        Wraps drain
+        """
+        await self.writer.drain()
+
+class ReaderAdapter: # pylint: disable=too-few-public-methods
+    """
+    Adapter to use classical socket code with asyncio reader
+    """
+    @classmethod
+    async def sock_recv(cls, sock, size: int):
+        """
+        Wraps read
+        """
+        return await sock.read(size)
+
+class AsyncTransport:
+    """
+    Args:
+        stack: Protocol stack object with callbacks to handle messages. Only the
+            stack root is normally needed but we have a legacy message writing path
+            that uses the top layer too
+        endpoint: endpoint to connect to, using zmq syntax (ipc://... or tcp://...)
+        bind: whether to bind (and expose connection ids), or connect
+    """
+    def __init__(self, stack: Stack, endpoint: str, bind=False):
+        self.stack: Stack = stack
+        self.handler = stack.handler
+
+        self.endpoint: str = endpoint
+        self.bind = bind
+        self.writers: dict[bytes, WriterAdapter] = {}
+        self.next_client_id = 0
+        self.queue: asyncio.Queue[TransportMessage] = asyncio.Queue()
+        self.reader: asyncio.StreamReader
+        self._ready = asyncio.Event()
+        self._starting = False
+
+    async def send_message(self, msg: Message) -> None:
+        """
+        Passes msg to the protocol to be serialized, then sends it.
+
+        Intended to be used by application to spontaneously send a message and
+        start a new communication. Not used to generate replies/reacts to an
+        incoming message.
+        """
+        await self.send_raw(self.stack.write_local(msg))
+
+    async def send_raw(self, msg: TransportMessage) -> None:
+        """
+        Send a message as-is
+        """
+        await self.ensure_setup()
+        if self.bind:
+            cid, *msg = msg
+            try:
+                writer_adapter = self.writers[cid]
+            except KeyError:
+                logging.error('Dropping message to client %s', cid)
+        else:
+            writer_adapter = self.writers[b'']
+
+        send_multipart(writer_adapter, msg) # type: ignore[arg-type] # adapter
+        await writer_adapter.drain()
+
+    async def send_messages(self, messages: Iterable[TransportMessage]) -> None:
+        """
+        Wrapper of send_raw accepting several messages or errors.
+
+        Send messages up to the first error. Return None if all messages were
+        processed, and the error if one was encountered.
+        """
+        for message in messages:
+            await self.send_raw(message)
+
+    async def recv_message(self) -> TransportReturn:
+        """
+        Waits for one message, then call handlers when it arrives.
+
+        Returns what the protocol returns, normally a list of messages of the
+        type accepted by protocol.write_message.
+        """
+        if self.bind:
+            msg = await self.queue.get()
+        else:
+            msg = await async_recv_multipart(self.reader, ReaderAdapter) # type: ignore[arg-type]
+        return self.handler(lambda msg: msg, msg)
+
+    async def accept(self, reader, writer):
+        """
+        On connect, register a writer for peer, and start waiting on reader to
+        queue messages received
+        """
+        logging.info('Accepting')
+        cid = self.next_client_id.to_bytes(4, 'little')
+        self.next_client_id += 1
+
+        self.writers[cid] = WriterAdapter(writer)
+
+        try:
+            while True:
+                msg = await async_recv_multipart(reader, ReaderAdapter)
+                await self.queue.put([cid, *msg])
+        except EOFError:
+            del self.writers[cid]
+
+
+    async def ensure_setup(self):
+        """
+        Wait for setup
+        """
+        # Short path: we're already online
+        if self._ready.is_set():
+            return
+
+        # If not, setup
+        if self._starting:
+            # A concurrent call is doing the setup; wait
+            await self._ready.wait()
+        else:
+            # We're first, do the setup
+            self._starting = True
+            await self.setup()
+            self._ready.set()
+
+    async def setup(self):
+        """
+        Call try_setup in loopif needed
+        """
+        delay = .1
+        while True:
+            try:
+                await self.try_setup()
+                break
+            except ConnectionRefusedError:
+                logging.info('Failed setup, retrying in %s', delay)
+                await asyncio.sleep(delay)
+                delay *= 2
+        logging.info('Ready !')
+
+    async def try_setup(self):
+        """
+        Bind or connect
+        """
+        if self.endpoint.startswith('tcp://'):
+            host, s_port = self.endpoint[6:].split(':')
+            port = int(s_port)
+            if self.bind:
+                await asyncio.start_server(self.accept, host, port)
+            else:
+                self.reader, writer = await asyncio.open_connection(host, port)
+                self.writers[b''] = WriterAdapter(writer)
+        elif self.endpoint.startswith('ipc://'):
+            path = self.endpoint[6:]
+            if path[0] == '@':
+                path = '\x00' + path[1:]
+            if self.bind:
+                logging.info('Listening %s', path)
+                await asyncio.start_unix_server(self.accept, path)
+            else:
+                logging.info('Connecting %s', path)
+                self.reader, writer = await asyncio.open_unix_connection(path)
+                self.writers[b''] = WriterAdapter(writer)
+        else:
+            raise ValueError(f'Bad endpoint: {self.endpoint}')
+
+    async def listen_reply_loop(self) -> Result[object]:
+        """Message processing loop
+
+        Waits for a message, call the protocol handler, then sends the replies.
+        Can also block on sending replies if the underlying transport does.
+        Stops when a handler returns a Result.
+        """
+        await self.ensure_setup()
+
+        while True:
+            replies = await self.recv_message()
+            if isinstance(replies, Error):
+                return replies
+            if isinstance(replies, Ok):
+                return replies
+            await self.send_messages(replies)
