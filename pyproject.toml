@@ -60,3 +60,6 @@ python =
     3.11: py311
     3.12: py312
 """
+
+[tool.pylint.STRING]
+check-str-concat-over-line-jumps = "yes"

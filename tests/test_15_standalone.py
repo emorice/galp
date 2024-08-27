@@ -80,14 +80,14 @@ def test_oneshot_missing_store():
 
 def test_oneshot_verbose(run, capsys):
     """
-    Supports the verbose keyword
+    Supports the output keyword
     """
     assert run(gts.identity(1234)) == 1234
     out = capsys.readouterr().out
     assert 'OK' not in out
 
     # Need a different task as a cache hit is silent
-    assert run(gts.identity(1235), verbose=True) == 1235
+    assert run(gts.identity(1235), output='auto') == 1235
     out = capsys.readouterr().out
     assert 'OK' in out
 

@@ -108,6 +108,12 @@ class TaskNode:
     def __hash__(self):
         return hash(self.name)
 
+    def __repr__(self):
+        return (
+                f'TaskNode(task_def={self.task_def!r},'
+                f' inputs=[{"..." if self.inputs else ""}])'
+                )
+
     def tree_print(self, prefix: str = '', seen=None) -> str:
         """
         Debug-friendly printing
@@ -159,6 +165,14 @@ class LiteralTaskNode(TaskNode):
         for dep in self.children:
             string += dep.tree_print(prefix + '  ', seen)
         return string
+
+    def __repr__(self):
+        assert not self.inputs
+        return (
+                f'TaskNode(task_def={self.task_def!r},'
+                f' children=[{"..." if self.children else ""}],'
+                f' serialized=...)'
+                )
 
 Task: TypeAlias = TaskNode | TaskRef
 
