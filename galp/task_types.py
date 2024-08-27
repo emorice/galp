@@ -51,6 +51,9 @@ class TaskRef:
         # Hard getitem, we actually insert an extra task
         return getitem(self, index)
 
+    def __iter__(self):
+        raise TypeError("'TaskRef' object is not iterable")
+
 @dataclass(frozen=True)
 class TaskNode:
     """

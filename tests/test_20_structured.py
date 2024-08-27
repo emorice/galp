@@ -107,3 +107,7 @@ async def test_index_task_ref(assert_task_equal):
     # creating ref is ok as we ran that task before
     tref = galp.task_types.TaskRef(task.name)
     await assert_task_equal(tref[1], 1)
+
+    # but check we did not also allow unbounded iteration
+    with pytest.raises(TypeError):
+        _ = [i for i in tref]
