@@ -95,3 +95,15 @@ async def test_index_meta_meta(assert_task_equal):
     t_ok = task['ok']
 
     await assert_task_equal(t_ok, 1)
+
+async def test_index_task_ref(assert_task_equal):
+    """
+    Subscript a task ref
+    """
+    task = gts.arange(3)
+    # Run and fill cache
+    await assert_task_equal(task[2], 2)
+
+    # creating ref is ok as we ran that task before
+    tref = galp.task_types.TaskRef(task.name)
+    await assert_task_equal(tref[1], 1)

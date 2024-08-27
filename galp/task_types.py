@@ -47,6 +47,10 @@ class TaskRef:
         _ = seen
         return f'{prefix}Ref {self.name}\n'
 
+    def __getitem__(self, index):
+        # Hard getitem, we actually insert an extra task
+        return getitem(self, index)
+
 @dataclass(frozen=True)
 class TaskNode:
     """
