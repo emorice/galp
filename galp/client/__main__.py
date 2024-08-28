@@ -26,6 +26,9 @@ parser.add_argument('-j', '--jobs', type=int, help='Number of worker processes'
         ' to run in parallel. Ignored with -e.', default=1, dest='pool_size')
 parser.add_argument('-k', '--keep_going', action='store_true',
         help='Continue running on failure, returning exceptions')
+parser.add_argument('-o', '--output',
+        help=('+-separated list of output types among'
+        ' auto,console,ipython,http,logfile'), default='')
 galp.store.add_store_argument(parser, optional=True)
 galp.cli.add_parser_arguments(parser)
 
@@ -53,7 +56,8 @@ async def run(target):
         return await client.run(
                 target,
                 dry_run=args.dry_run,
-                return_exceptions=args.keep_going
+                return_exceptions=args.keep_going,
+                output=args.output,
                 )
 
 result = asyncio.run(
