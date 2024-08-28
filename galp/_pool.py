@@ -18,7 +18,7 @@ import galp.worker
 import galp.net.core.types as gm
 import galp.socket_transport
 import galp.logserver
-from galp.result import Result, Ok
+from galp.result import Ok
 from galp.zmq_async_transport import ZmqAsyncTransport
 from galp.protocol import make_stack
 from galp.net.core.dump import dump_message
@@ -31,10 +31,6 @@ from galp.async_utils import background
 def socket_send_message(sock: socket.socket, message: gm.Message) -> None:
     """Serialize and send galp message over sock"""
     return galp.socket_transport.send_multipart(sock, dump_message(message))
-
-async def async_socket_recv_message(sock: socket.socket) -> Result[gm.Message]:
-    """Receive and deserialize galp message over sock"""
-    return parse_core_message(await galp.socket_transport.async_recv_multipart(sock))
 
 # Proxying
 # ========
@@ -59,17 +55,17 @@ async def proxy(broker_endpoint, forkserver_socket):
 async def listen_forkserver(forkserver_socket, broker_transport) -> None:
     """Process messages from the forkserver"""
     forkserver_socket.setblocking(False)
+    loop = asyncio.get_event_loop()
+    multiparts: list[list[bytes]] = []
+    receive = galp.socket_transport.make_receiver(multiparts.append)
     while True:
-        try:
-            message = await async_socket_recv_message(forkserver_socket)
-        except EOFError:
+        buf = await loop.sock_recv(forkserver_socket, 4096)
+        if not buf:
             return
-        match message:
-            case Ok(_message):
-                # Forward anything else to broker
-                await broker_transport.send_message(_message)
-            case _:
-                raise ValueError(f'Unexpected {message}')
+        receive(buf)
+        while multiparts:
+            frames = multiparts.pop()
+            await broker_transport.send_raw([b'', *frames])
 
 # Listen signals and monitor deaths
 # =================================
@@ -200,16 +196,15 @@ def register_socket_handler(selector, config, sock_server,
     socket_send_message(sock_server, gm.PoolReady(cpus=cpus))
 
     # Set up protocol
-    multipart_reader = galp.socket_transport.make_multipart_generator(
+    multipart_reader = galp.socket_transport.make_receiver(
             lambda frames: on_socket_frames(frames, config, children)
             )
-    multipart_reader.send(None)
 
     # Connect transport
     def _on_socket():
         buf = sock_server.recv(4096)
         if buf:
-            multipart_reader.send(buf)
+            multipart_reader(buf)
             return False
         # Disconnect
         return True
