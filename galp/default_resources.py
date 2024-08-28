@@ -6,27 +6,27 @@ from contextvars import ContextVar, Token
 from contextlib import contextmanager
 from dataclasses import asdict
 
-from galp.task_defs import ResourceClaim
+from galp.task_defs import Resources
 
 
-_resources: ContextVar[ResourceClaim] = ContextVar(
+_resources: ContextVar[Resources] = ContextVar(
         'galp.default_resources._resources',
-        default=ResourceClaim(cpus=1))
+        default=Resources(cpus=1))
 
-def get_resources() -> ResourceClaim:
+def get_resources() -> Resources:
     """
     Get default resources
     """
     return _resources.get()
 
-def set_resources(claim: ResourceClaim) -> Token[ResourceClaim]:
+def set_resources(claim: Resources) -> Token[Resources]:
     """
     Set default resources. This should be avoided, use the `resources` context
     manager instead unless impossible.
     """
     return _resources.set(claim)
 
-def reset_resources(token: Token[ResourceClaim]) -> None:
+def reset_resources(token: Token[Resources]) -> None:
     """
     Reset default resources. This should be avoided, use the `resources` context
     manager instead unless impossible.
@@ -34,19 +34,19 @@ def reset_resources(token: Token[ResourceClaim]) -> None:
     return _resources.reset(token)
 
 @contextmanager
-def resources(claim: ResourceClaim | None = None, **kwargs):
+def resources(claim: Resources | None = None, **kwargs):
     """
     Contextually set the default resources per pipeline step
 
     For readability, this can accept either a ResouceClaim object, keyword
-    arguments that should be used to initialize a ResourceClaim, or both to
-    override specific attributes of a ResourceClaim.
+    arguments that should be used to initialize a Resources, or both to
+    override specific attributes of a Resources.
 
     Priority order: first the keyword arguments, then the attributes of the
     claim argument, then the former default resources.
     """
     upper = get_resources()
-    local_claim = ResourceClaim(**(
+    local_claim = Resources(**(
             asdict(upper)
             | (asdict(claim) if claim is not None else {})
             | kwargs

@@ -10,7 +10,7 @@ from galp.task_defs import (
         TaskInput,
         TaskOp,
         TaskName,
-        ResourceClaim,
+        Resources,
         CoreTaskDef,
         ChildTaskDef,
         LiteralTaskDef,
@@ -29,7 +29,7 @@ from galp.pack import dump, load
         args=[TaskInput(TaskOp.SUB, TaskName(b'b'*32))],
         kwargs={'opt': TaskInput(TaskOp.BASE, TaskName(b'c'*32))},
         vtags=['0.1: test'],
-        resources=ResourceClaim(4),
+        resources=Resources(4),
         ),
     ChildTaskDef(
         name=TaskName(b'a'*32),

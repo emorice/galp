@@ -4,7 +4,7 @@ Task defs: flat objects describing tasks
 
 from enum import Enum
 from typing import Union, Any, TypeAlias
-from dataclasses import dataclass, KW_ONLY
+from dataclasses import dataclass, KW_ONLY, field
 
 class TaskName(bytes):
     """
@@ -69,12 +69,20 @@ class BaseTaskDef:
         raise NotImplementedError
 
 @dataclass(frozen=True)
-class ResourceClaim:
+class Resources:
     """
-    Resources claimed by a task
+    Resources claimed or allocated for a task
+
+    Attributes:
+        cpus: number of cpus
+        vm: amount of virtual memory
+        cpu_list: explicit list of `cpus` ids. Should not be set by user, meant
+            to be filled in when allocating tasks.
+
     """
     cpus: int
     vm: str = ''
+    cpu_list: tuple[int, ...] = field(default_factory=tuple)
 
 @dataclass
 class CoreTaskDef(BaseTaskDef):
@@ -86,7 +94,7 @@ class CoreTaskDef(BaseTaskDef):
     args: list[TaskInput]
     kwargs: dict[str, TaskInput]
     vtags: list[str] # ideally ascii
-    resources: ResourceClaim
+    resources: Resources
 
     @property
     def inputs(self) -> list[TaskInput]:

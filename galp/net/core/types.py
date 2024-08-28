@@ -40,7 +40,7 @@ class Fork:
     created.
     """
     mission: bytes
-    resources: gtt.ResourceClaim
+    resources: gtt.Resources
 
 @dataclass(frozen=True)
 class Ready:
@@ -144,9 +144,11 @@ class Submit(BaseRequest[gtt.FlatResultRef]):
 
     Attributes:
         task_def: the task to execute
-        resources: to be allocated to the task
+        resources: an override to the resource claim in task_def, used e.g. to
+            allocate specific cpus
     """
     task_def: gtt.CoreTaskDef
+    resources: gtt.Resources | None = None
 
     @property
     def input_id(self) -> gtt.TaskName:
@@ -194,15 +196,6 @@ class RequestId:
 # Req-rep wrappers
 # ----------------
 
-@dataclass(frozen=True)
-class Exec:
-    """
-    A message wrapping a Submit with a resource allocation
-    """
-    submit: Submit
-    resources: gtt.Resources
-
-
 class RemoteError(Error[str]):
     """Remote encountered an error when processing"""
 
@@ -220,6 +213,5 @@ class NextRequest:
 
 Message: TypeAlias = (
         Exited | Fork | Ready | PoolReady |
-        Request |
-        Exec | Reply | NextRequest
+        Request | Reply | NextRequest
         )

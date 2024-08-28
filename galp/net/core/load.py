@@ -80,7 +80,6 @@ MessageTypeMap: TypeMap[bytes, Message] = TypeMap({
         b'stat': gm.Stat,
         b'submit': gm.Submit,
         b'upload': gm.Upload,
-        b'exec': gm.Exec,
         b'reply': gm.Reply,
         b'next_request': gm.NextRequest,
         })

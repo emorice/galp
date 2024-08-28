@@ -74,7 +74,7 @@ def limit_task_resources(resources: gtt.Resources):
     """
     Set resource limits from received request, for each task independently
     """
-    psutil.Process().cpu_affinity(resources.cpus)
+    psutil.Process().cpu_affinity(list(resources.cpu_list))
     limit_vm(resources.vm)
 
 def make_worker(config: dict) -> 'Worker':
@@ -129,8 +129,8 @@ class Worker:
                     return handle_stat(write, msg, store)
                 case gm.Upload():
                     return handle_upload(write, msg, store)
-                case gm.Exec():
-                    return self.on_routed_exec(write, msg)
+                case gm.Submit():
+                    return self.on_routed_submit(write, msg)
                 case gm.Reply():
                     return self._new_commands_to_replies(
                             self.script.done(msg.request, msg.value)
@@ -150,7 +150,7 @@ class Worker:
         # Submitted jobs
         self.pending_jobs: dict[gtt.TaskName, cm.Command] = {}
 
-    def on_routed_exec(self, write: Writer[gm.Message], msg: gm.Exec
+    def on_routed_submit(self, write: Writer[gm.Message], msg: gm.Submit
             ) -> list[list[bytes]]:
         """Start processing the submission asynchronously.
 
@@ -160,12 +160,13 @@ class Worker:
 
         This the only asynchronous handler, all others are semantically blocking.
         """
-        sub = msg.submit
-        task_def = sub.task_def
-        logging.info('SUBMIT: %s on cpus %s', task_def.step, msg.resources.cpus)
+        task_def = msg.task_def
+        if msg.resources is None:
+            raise ValueError(('Worker requires sender to provide resource'
+                    ' allocation'))
+        logging.info('SUBMIT: %s on cpus %s', task_def.step, msg.resources.cpu_list)
         name = task_def.name
-        # Not that we reply to the Submit, not the Exec
-        write_reply = add_request_id(write, sub)
+        write_reply = add_request_id(write, msg)
 
         # Set the resource limits immediately
         limit_task_resources(msg.resources)
@@ -188,7 +189,7 @@ class Worker:
         return self._new_commands_to_replies(
             # Schedule the task first. It won't actually start until its inputs are
             # marked as available, and will return the list of GETs that are needed
-            self.schedule_task(write_reply, sub)
+            self.schedule_task(write_reply, msg)
             )
 
     def _get_serial(self, name: gtt.TaskName) -> Result[gtt.Serialized]:

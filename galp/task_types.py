@@ -14,7 +14,7 @@ import msgpack # type: ignore[import] # Issue #85
 
 from galp.result import Ok
 from galp.task_defs import (TaskName, LiteralTaskDef, TaskInput,
-                            ResourceClaim, TaskOp, BaseTaskDef, CoreTaskDef,
+                            Resources, TaskOp, BaseTaskDef, CoreTaskDef,
                             ChildTaskDef, TaskDef, QueryDef)
 from galp.default_resources import get_resources
 from galp.serializer import Serializer, GenSerialized
@@ -249,10 +249,12 @@ def make_task_def(cls: type[T], attrs, extra=None) -> T:
     """
     def _dump_obj_attrs(obj):
         match obj:
-            case ResourceClaim():
+            case Resources():
                 attrs = dict(vars(obj))
                 if not attrs['vm']:
                     del attrs['vm']
+                if not attrs['cpu_list']:
+                    del attrs['cpu_list']
                 return [msgpack.dumps(attrs)]
             case TaskInput():
                 return [msgpack.dumps(vars(obj))]
@@ -390,39 +392,6 @@ class RecResultRef(ResultRef):
                 f' expected {expected}, got {received}')
         super().__init__(result.name, result.children)
 
-@dataclass(frozen=True)
-class Resources:
-    """
-    Resources available or allocated to a task
-
-    Virtual memory is used as a limit inside the worker but not globally metered
-    yet (no "maximum total vm across tasks")
-    """
-    cpus: list[int]
-    vm: str
-
-    def allocate(self, claim: ResourceClaim
-            ) -> tuple['Resources | None', 'Resources']:
-        """
-        Try to split resources specified by claim off this resource set
-
-        Returns:
-            tuple (allocated, rest). If resources are insufficient, `rest` is
-            unchanged and `allocated` will be None.
-        """
-        if claim.cpus > len(self.cpus):
-            return None, self
-
-        alloc_cpus, rest_cpus = self.cpus[:claim.cpus], self.cpus[claim.cpus:]
-
-        return Resources(alloc_cpus, claim.vm), Resources(rest_cpus, '')
-
-    def free(self, resources):
-        """
-        Return allocated resources
-        """
-        return Resources(self.cpus + resources.cpus, '')
-
 # Steps, i.e. Core Task makers
 # ============================
 
@@ -449,12 +418,12 @@ def make_task(stp: 'Step', args: tuple = tuple(),
     if kwargs is None:
         kwargs = {}
     # Create resource object by merging in defaults
-    res_obj = ResourceClaim(**(vars(get_resources()) | resources))
+    res_obj = Resources(**(vars(get_resources()) | resources))
 
     return make_core_task(stp, args, kwargs, res_obj, **stp.task_options)
 
 def make_core_task(stp: 'Step', args: tuple, kwargs: dict[str, Any],
-                   resources: ResourceClaim,
+                   resources: Resources,
                    vtag: str | None = None, scatter: int | None = None,
                    ) -> TaskNode:
     """

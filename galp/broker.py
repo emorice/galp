@@ -18,7 +18,6 @@ import galp.task_types as gtt
 from galp.protocol import (make_forward_stack, ReplyFromSession, ForwardSessions,
         TransportMessage)
 from galp.zmq_async_transport import ZmqAsyncTransport
-from galp.task_types import Resources
 
 class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
@@ -44,11 +43,37 @@ class Allocation:
     """
     A request that was accepted, but is not yet treated
     """
-    claim: gtt.ResourceClaim
-    resources: Resources
-    msg: gm.Request | gm.Exec
+    claim: gtt.Resources
+    resources: gtt.Resources
+    msg: gm.Request
     client: ReplyFromSession
     task_id: bytes
+
+
+def allocate_resources(avail: gtt.Resources, claim: gtt.Resources
+        ) -> tuple[gtt.Resources, gtt.Resources | None]:
+    """
+    Try to split resources specified by claim off a resource set
+
+    Returns:
+        tuple (rest, allocated). If resources are insufficient, `rest` is
+        unchanged and `allocated` will be None.
+    """
+    if claim.cpus > avail.cpus:
+        return avail, None
+
+    alloc_cpus, rest_cpus = avail.cpu_list[:claim.cpus], avail.cpu_list[claim.cpus:]
+
+    return (
+            gtt.Resources(avail.cpus - claim.cpus, '', tuple(rest_cpus)),
+            gtt.Resources(claim.cpus, claim.vm, tuple(alloc_cpus)),
+            )
+
+def free_resources(avail: gtt.Resources, alloc: gtt.Resources) -> gtt.Resources:
+    """
+    Return allocated resources
+    """
+    return gtt.Resources(avail.cpus + alloc.cpus, '', avail.cpu_list + alloc.cpu_list)
 
 class CommonProtocol:
     """
@@ -56,7 +81,7 @@ class CommonProtocol:
     """
     def __init__(self, max_cpus: int):
         # List of idle workers, by resources
-        self.idle_workers: defaultdict[gtt.ResourceClaim, list[ReplyFromSession]]
+        self.idle_workers: defaultdict[gtt.Resources, list[ReplyFromSession]]
         self.idle_workers = defaultdict(lambda : [])
 
         # Internal routing id indexed by self-identifiers
@@ -64,7 +89,7 @@ class CommonProtocol:
 
         # Total resources
         self.max_cpus = max_cpus
-        self.resources = Resources(cpus=[], vm='') # Available cpus
+        self.resources = gtt.Resources(cpus=0, vm='') # Available cpus
 
         # Route to a worker spawner
         self.write_pool: Writer[gm.Message] | None = None
@@ -114,8 +139,9 @@ class CommonProtocol:
         self.write_pool = pool.reply_from(None)
         # Adapt the list of cpus to the requested number of max cpus by dropping
         # or repeting some as needed
-        cpus = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
-        self.resources = Resources(cpus=cpus, vm='')
+        cpu_list = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
+        self.resources = gtt.Resources(cpus=len(cpu_list), vm='',
+                cpu_list=tuple(cpu_list))
 
         return self.allocate_any()
 
@@ -131,7 +157,7 @@ class CommonProtocol:
         alloc = self.alloc_from_wuid.pop(session.uid, None)
         if alloc:
             # Free resources
-            self.resources = self.resources.free(alloc.resources)
+            self.resources = free_resources(self.resources, alloc.resources)
             if self.alloc_from_task.pop(alloc.task_id, None) is None:
                 logging.error('Double free of allocation %s', alloc)
             # Free worker for reuse if marked as such
@@ -175,14 +201,8 @@ class CommonProtocol:
         # Note that we set the incoming to empty, which equals re-interpreting
         # the message as addressed to us
         write_client = alloc.client.reply_from(None)
-        orig_msg = alloc.msg
 
-        match orig_msg:
-            case gm.Exec():
-                request: gm.Request = orig_msg.submit
-            case _:
-                request = orig_msg
-        return [add_request_id(write_client, request)(gm.RemoteError(error))]
+        return [add_request_id(write_client, alloc.msg)(gm.RemoteError(error))]
 
     def on_exited(self, msg: gm.Exited
             ) -> list[TransportMessage]:
@@ -210,13 +230,13 @@ class CommonProtocol:
             self.exited_errors(alloc, msg.error)
             )
 
-    def calc_resource_claim(self, msg: gm.Message) -> gtt.ResourceClaim:
+    def calc_resource_claim(self, msg: gm.Message) -> gtt.Resources:
         """
         Determine resources requested by a request
         """
         if isinstance(msg, gm.Submit):
             return msg.task_def.resources
-        return gtt.ResourceClaim(cpus=1)
+        return gtt.Resources(cpus=1)
 
     def on_request(self, client: ReplyFromSession, msg: gm.Request
             ) -> list[TransportMessage]:
@@ -257,7 +277,7 @@ class CommonProtocol:
             return []
 
         # Try allocate and drop if we don't have any resources left
-        resources, self.resources = self.resources.allocate(claim)
+        self.resources, resources = allocate_resources(self.resources, claim)
         if resources is None:
             return []
 
@@ -266,10 +286,10 @@ class CommonProtocol:
         proceeds = [client.reply_from(None)(gm.NextRequest())]
 
         # For Submits, the worker will need to know the details of the
-        # allocation, so wrap the original message
-        new_msg: gm.Request | gm.Exec
+        # allocation, so rewrite the original message
+        new_msg: gm.Request
         if isinstance(msg, gm.Submit):
-            new_msg = gm.Exec(submit=msg, resources=resources)
+            new_msg = gm.Submit(task_def=msg.task_def, resources=resources)
         else:
             new_msg = msg
         del msg
