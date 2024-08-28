@@ -17,7 +17,7 @@ import galp.task_types as gtt
 
 from galp.protocol import (make_forward_stack, ReplyFromSession, ForwardSessions,
         TransportMessage)
-from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.socket_transport import AsyncServerTransport
 
 class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
@@ -27,7 +27,7 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
         self.proto = CommonProtocol(max_cpus=n_cpus)
         stack = make_forward_stack(self.proto.on_message,
                 name='CW')
-        self.transport = ZmqAsyncTransport(stack, endpoint, bind=True)
+        self.transport = AsyncServerTransport(stack, endpoint)
 
     async def run(self) -> Result[object]:
         """

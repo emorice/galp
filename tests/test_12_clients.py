@@ -14,7 +14,7 @@ from galp.net.core.types import (NextRequest, Reply, RequestId, Stat,
                                  StatResult, Submit)
 from galp.protocol import make_stack
 from galp.result import Ok
-from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.socket_transport import AsyncServerTransport
 
 import pytest
 pytestmark = pytest.mark.skip(reason='Not compatible with non-zmq transport')

@@ -19,7 +19,7 @@ import galp.net.core.types as gm
 import galp.socket_transport
 import galp.logserver
 from galp.result import Ok
-from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.socket_transport import AsyncClientTransport
 from galp.protocol import make_stack
 from galp.net.core.dump import dump_message
 from galp.net.core.load import parse_core_message
@@ -45,7 +45,7 @@ async def proxy(broker_endpoint, forkserver_socket):
         socket_send_message(forkserver_socket, message)
         return []
     stack = make_stack(on_message, name='BK')
-    broker_transport = ZmqAsyncTransport(stack, broker_endpoint)
+    broker_transport = AsyncClientTransport(stack, broker_endpoint)
 
     async with background(
         broker_transport.listen_reply_loop()
@@ -63,9 +63,10 @@ async def listen_forkserver(forkserver_socket, broker_transport) -> None:
         if not buf:
             return
         receive(buf)
-        while multiparts:
-            frames = multiparts.pop()
-            await broker_transport.send_raw([b'', *frames])
+        await broker_transport.send_messages([
+            [b'', *frames]
+            for frames in multiparts])
+        multiparts.clear()
 
 # Listen signals and monitor deaths
 # =================================

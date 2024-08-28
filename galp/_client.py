@@ -18,7 +18,7 @@ import galp.task_types as gtt
 from galp.result import Result, Ok, Error
 from galp.protocol import (make_stack, TransportMessage, Writer,
                            TransportReturn)
-from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.socket_transport import AsyncClientTransport
 from galp.control_queue import ControlQueue
 from galp.query import run_task
 from galp.printer import make_printer
@@ -69,7 +69,7 @@ class Client:
                 case _:
                     return Error(f'Unexpected {msg}')
         self._stack = make_stack(on_message, name='BK')
-        self._transport = ZmqAsyncTransport(stack=self._stack,
+        self._transport = AsyncClientTransport(stack=self._stack,
                                             endpoint=endpoint)
 
     async def gather(self, *tasks, return_exceptions: bool = False,

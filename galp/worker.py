@@ -28,7 +28,7 @@ from galp.result import Result, Ok, Error
 
 from galp.store import StoreReadError, Store
 from galp.protocol import make_stack, TransportMessage
-from galp.zmq_async_transport import ZmqAsyncTransport
+from galp.socket_transport import AsyncClientTransport
 from galp.query import collect_task_inputs
 from galp.task_types import TaskRef, load_step_by_key, StepLoadError
 from galp.net_store import handle_get, handle_stat, handle_upload
@@ -138,7 +138,7 @@ class Worker:
                 case _:
                     return Error(f'Unexpected {msg}')
 
-        self.transport = ZmqAsyncTransport(
+        self.transport = AsyncClientTransport(
                 make_stack(on_message, name='BK'),
                 setup['endpoint']
                 )

@@ -105,7 +105,7 @@ class WriterAdapter:
 
 BUFSIZE = 4096
 
-class AsyncTransport:
+class AsyncClientTransport:
     """
     Args:
         stack: Protocol stack object with callbacks to handle messages. Only the
@@ -114,15 +114,12 @@ class AsyncTransport:
         endpoint: endpoint to connect to, using zmq syntax (ipc://... or tcp://...)
         bind: whether to bind (and expose connection ids), or connect
     """
-    def __init__(self, stack: Stack, endpoint: str, bind=False):
+    def __init__(self, stack: Stack, endpoint: str):
         self.stack: Stack = stack
         self.handler = stack.handler
 
         self.endpoint: str = endpoint
-        self.bind = bind
-        self.writers: dict[bytes, WriterAdapter] = {}
-        self.next_client_id = 0
-        self.queue: asyncio.Queue[TransportMessage] = asyncio.Queue()
+        self.writer: WriterAdapter
         self.reader: asyncio.StreamReader
         self._ready = asyncio.Event()
         self._starting = False
@@ -135,24 +132,7 @@ class AsyncTransport:
         start a new communication. Not used to generate replies/reacts to an
         incoming message.
         """
-        await self.send_raw(self.stack.write_local(msg))
-
-    async def send_raw(self, msg: TransportMessage) -> None:
-        """
-        Send a message as-is
-        """
-        await self.ensure_setup()
-        if self.bind:
-            cid, *msg = msg
-            try:
-                writer_adapter = self.writers[cid]
-            except KeyError:
-                logging.error('Dropping message to client %s', cid)
-        else:
-            writer_adapter = self.writers[b'']
-
-        send_multipart(writer_adapter, msg) # type: ignore[arg-type] # adapter
-        await writer_adapter.drain()
+        await self.send_messages([self.stack.write_local(msg)])
 
     async def send_messages(self, messages: Iterable[TransportMessage]) -> None:
         """
@@ -161,27 +141,10 @@ class AsyncTransport:
         Send messages up to the first error. Return None if all messages were
         processed, and the error if one was encountered.
         """
+        await self.ensure_setup()
         for message in messages:
-            await self.send_raw(message)
-
-    async def accept(self, reader, writer):
-        """
-        On connect, register a writer for peer, and start waiting on reader to
-        queue messages received
-        """
-        logging.info('Accepting')
-        cid = self.next_client_id.to_bytes(4, 'little')
-        self.next_client_id += 1
-
-        self.writers[cid] = WriterAdapter(writer)
-        receive = make_receiver(lambda msg: self.queue.put_nowait([cid, *msg]))
-
-        while True:
-            buf = await reader.read(BUFSIZE)
-            if not buf:
-                break
-            receive(buf)
-        del self.writers[cid]
+            send_multipart(self.writer, message) # type: ignore[arg-type] # adapter
+        await self.writer.drain()
 
     async def ensure_setup(self):
         """
@@ -221,26 +184,17 @@ class AsyncTransport:
         Bind or connect
         """
         if self.endpoint.startswith('tcp://'):
-            host, s_port = self.endpoint[6:].split(':')
-            port = int(s_port)
-            if self.bind:
-                await asyncio.start_server(self.accept, host, port)
-            else:
-                self.reader, writer = await asyncio.open_connection(host, port)
-                self.writers[b''] = WriterAdapter(writer)
+            host, port = self.endpoint[6:].split(':')
+            self.reader, writer = await asyncio.open_connection(host, int(port))
         elif self.endpoint.startswith('ipc://'):
             path = self.endpoint[6:]
             if path[0] == '@':
                 path = '\x00' + path[1:]
-            if self.bind:
-                logging.info('Listening %s', path)
-                await asyncio.start_unix_server(self.accept, path)
-            else:
-                logging.info('Connecting %s', path)
-                self.reader, writer = await asyncio.open_unix_connection(path)
-                self.writers[b''] = WriterAdapter(writer)
+            logging.info('Connecting %s', path)
+            self.reader, writer = await asyncio.open_unix_connection(path)
         else:
             raise ValueError(f'Bad endpoint: {self.endpoint}')
+        self.writer = WriterAdapter(writer)
 
     async def listen_reply_loop(self) -> Result[object]:
         """Message processing loop
@@ -251,42 +205,122 @@ class AsyncTransport:
         """
         await self.ensure_setup()
 
-        if self.bind:
-            while True:
-                msg = await self.queue.get()
-                replies = self.handler(lambda msg: msg, msg)
-                if isinstance(replies, Error):
-                    return replies
-                if isinstance(replies, Ok):
-                    return replies
-                await self.send_messages(replies)
+        # Cumulative replies
+        final = None
+
+        # Set final or send replies on each message
+        def _cb(msg):
+            nonlocal final
+            replies = self.handler(lambda frms: frms, msg)
+            if isinstance(replies, Error):
+                final = replies
+            elif isinstance(replies, Ok):
+                final = replies
+            else:
+                for rep in replies:
+                    # type: ignore[arg-type] # adapter
+                    send_multipart(self.writer, rep)
+
+        # Make parser
+        receive = make_receiver(_cb)
+
+        # Loop
+        while not final:
+            buf = await self.reader.read(BUFSIZE)
+            if not buf:
+                raise EOFError
+            receive(buf)
+            await self.writer.drain()
+        return final
+
+class AsyncServerTransport:
+    """
+    Args:
+        stack: Protocol stack object with callbacks to handle messages. Only the
+            stack root is normally needed but we have a legacy message writing path
+            that uses the top layer too
+        endpoint: endpoint to bind to, using zmq syntax (ipc://... or tcp://...)
+    """
+    def __init__(self, stack: Stack, endpoint: str):
+        self._handler = stack.handler
+
+        self._endpoint: str = endpoint
+        self._writers: dict[bytes, WriterAdapter] = {}
+        self._server = None
+        self._next_client_id = 0
+        self._queue: asyncio.Queue[TransportMessage] = asyncio.Queue()
+
+    async def _accept(self, reader, writer):
+        """
+        On connect, register a writer for peer, and start waiting on reader to
+        queue messages received
+        """
+        logging.info('Accepting')
+        cid = self._next_client_id.to_bytes(4, 'little')
+        self._next_client_id += 1
+
+        self._writers[cid] = WriterAdapter(writer)
+        receive = make_receiver(lambda msg: self._queue.put_nowait([cid, *msg]))
+
+        while True:
+            buf = await reader.read(BUFSIZE)
+            if not buf:
+                break
+            receive(buf)
+        del self._writers[cid]
+
+    async def _setup(self):
+        """
+        Bind
+        """
+        # Short path: we're already online
+        if self._server is not None:
+            return
+
+        if self._endpoint.startswith('tcp://'):
+            host, port = self._endpoint[6:].split(':')
+            self._server = await asyncio.start_server(
+                    self._accept, host, int(port)
+                    )
+        elif self._endpoint.startswith('ipc://'):
+            path = self._endpoint[6:]
+            if path[0] == '@':
+                path = '\x00' + path[1:]
+            logging.info('Listening %s', path)
+            self._server = await asyncio.start_unix_server(self._accept, path)
         else:
+            raise ValueError(f'Bad endpoint: {self._endpoint}')
 
-            # Cumulative replies
-            final = None
-            writer_adapter = self.writers[b'']
+    async def listen_reply_loop(self) -> Result[object]:
+        """Message processing loop
 
-            # Set final or send replies on each message
-            def _cb(msg):
-                nonlocal final
-                replies = self.handler(lambda frms: frms, msg)
+        Waits for a message, call the protocol handler, then sends the replies.
+        Can also block on sending replies if the underlying transport does.
+        Stops when a handler returns a Result.
+        """
+        try:
+            await self._setup()
+
+            while True:
+                msg = await self._queue.get()
+                replies = self._handler(lambda msg: msg, msg)
                 if isinstance(replies, Error):
-                    final = replies
-                elif isinstance(replies, Ok):
-                    final = replies
-                else:
-                    for rep in replies:
-                        # type: ignore[arg-type] # adapter
-                        send_multipart(writer_adapter, rep)
+                    break
+                if isinstance(replies, Ok):
+                    break
+                for msg in replies:
+                    cid, *msg = msg
+                    try:
+                        writer_adapter = self._writers[cid]
+                    except KeyError:
+                        logging.error('Dropping message to client %s', cid)
 
-            # Make parser
-            receive = make_receiver(_cb)
+                    send_multipart(writer_adapter, msg) # type: ignore[arg-type] # adapter
+                    await writer_adapter.drain()
+        finally:
+            if self._server is not None:
+                self._server.close()
+                # fixme: this should be the proper cleanup but makes us hang
+                #await self._server.wait_closed()
 
-            # Loop
-            while not final:
-                buf = await self.reader.read(BUFSIZE)
-                if not buf:
-                    raise EOFError
-                receive(buf)
-                await writer_adapter.drain()
-            return final
+        return replies
