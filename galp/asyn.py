@@ -429,9 +429,18 @@ class Script:
                             # commands must be checked in turn.
                             slot.state = new_state
                             slots.extend(slot.outputs)
-                case _: # Result
-                    # This should not happen, but can normally be safely ignored
-                    logging.warning('Settled command %s given for updating, skipping', slot)
+                case Error():
+                    # Command already failed was flagged again. This happens
+                    # with fail-fast when a failure propagates to several inputs
+                    # of the same tasks at once. Then the first input will
+                    # already fail the parent and the rest will hit this case.
+                    logging.debug('Failed command %s given for updating, skipping', slot)
+                case Ok():
+                    # Command already completed was flagged again. This on the
+                    # other hand has no reason to ever happen.
+                    logging.error('Done command %s given for updating, skipping', slot)
+                case _:
+                    raise TypeError
         return primitives
 
     def _make_slots(self, commands: Iterable[Command]) -> list[Slot]:
