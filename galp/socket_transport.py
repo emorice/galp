@@ -41,6 +41,49 @@ def send_multipart(sock: socket.socket, message: TransportMessage) -> None:
     if message:
         send_frame(sock, message[-1], send_more=False)
 
+def make_receiver(callback):
+    """
+    Build a message parser
+    """
+    buf = b'' # Leftover bytes
+    next_size = 4 # Size of next expected segment
+    # 3-state for position in message:
+    #  None = at the beginning of new frame
+    #  True = after header, more frames to follow
+    #  False = after header, last frame
+    send_more = None
+    message = [] # Actual list of frames
+
+    def _on_bytes(new_buf: bytes) -> None:
+        nonlocal buf
+        nonlocal next_size
+        nonlocal send_more
+        nonlocal message
+
+        # Concatenate to any leftovers from previous calls
+        buf += new_buf
+
+        # Parse as many segments as possible
+        while len(buf) >= next_size:
+            segment, buf = buf[:next_size], buf[next_size:]
+            if send_more is None:
+                # Parse a header segment
+                header = int.from_bytes(segment, 'little')
+                next_size = header >> 1
+                send_more = bool(header & 1)
+            else:
+                # Add a frame
+                message.append(segment)
+                # Maybe emit full message
+                if not send_more:
+                    callback(message)
+                    message = []
+                # Reset
+                send_more = None
+                next_size = 4
+
+    return _on_bytes
+
 def on_bytes(fixed):
     """
     Generator yielding hints at how much data to read, accepting any number of bytes.
@@ -158,16 +201,7 @@ class WriterAdapter:
         """
         await self.writer.drain()
 
-class ReaderAdapter: # pylint: disable=too-few-public-methods
-    """
-    Adapter to use classical socket code with asyncio reader
-    """
-    @classmethod
-    async def sock_recv(cls, sock, size: int):
-        """
-        Wraps read
-        """
-        return await sock.read(size)
+BUFSIZE = 4096
 
 class AsyncTransport:
     """
@@ -228,19 +262,6 @@ class AsyncTransport:
         for message in messages:
             await self.send_raw(message)
 
-    async def recv_message(self) -> TransportReturn:
-        """
-        Waits for one message, then call handlers when it arrives.
-
-        Returns what the protocol returns, normally a list of messages of the
-        type accepted by protocol.write_message.
-        """
-        if self.bind:
-            msg = await self.queue.get()
-        else:
-            msg = await async_recv_multipart(self.reader, ReaderAdapter) # type: ignore[arg-type]
-        return self.handler(lambda msg: msg, msg)
-
     async def accept(self, reader, writer):
         """
         On connect, register a writer for peer, and start waiting on reader to
@@ -251,14 +272,14 @@ class AsyncTransport:
         self.next_client_id += 1
 
         self.writers[cid] = WriterAdapter(writer)
+        receive = make_receiver(lambda msg: self.queue.put_nowait([cid, *msg]))
 
-        try:
-            while True:
-                msg = await async_recv_multipart(reader, ReaderAdapter)
-                await self.queue.put([cid, *msg])
-        except EOFError:
-            del self.writers[cid]
-
+        while True:
+            buf = await reader.read(BUFSIZE)
+            if not buf:
+                break
+            receive(buf)
+        del self.writers[cid]
 
     async def ensure_setup(self):
         """
@@ -328,10 +349,42 @@ class AsyncTransport:
         """
         await self.ensure_setup()
 
-        while True:
-            replies = await self.recv_message()
-            if isinstance(replies, Error):
-                return replies
-            if isinstance(replies, Ok):
-                return replies
-            await self.send_messages(replies)
+        if self.bind:
+            while True:
+                msg = await self.queue.get()
+                replies = self.handler(lambda msg: msg, msg)
+                if isinstance(replies, Error):
+                    return replies
+                if isinstance(replies, Ok):
+                    return replies
+                await self.send_messages(replies)
+        else:
+
+            # Cumulative replies
+            final = None
+            writer_adapter = self.writers[b'']
+
+            # Set final or send replies on each message
+            def _cb(msg):
+                nonlocal final
+                replies = self.handler(lambda frms: frms, msg)
+                if isinstance(replies, Error):
+                    final = replies
+                elif isinstance(replies, Ok):
+                    final = replies
+                else:
+                    for rep in replies:
+                        # type: ignore[arg-type] # adapter
+                        send_multipart(writer_adapter, rep)
+
+            # Make parser
+            receive = make_receiver(_cb)
+
+            # Loop
+            while not final:
+                buf = await self.reader.read(BUFSIZE)
+                if not buf:
+                    raise EOFError
+                receive(buf)
+                await writer_adapter.drain()
+            return final
