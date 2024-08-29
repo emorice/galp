@@ -331,6 +331,7 @@ class CommonProtocol:
         """
         replies = []
         # Free resources for all messages indicating end of task
+        # fixme: probably wrong for progress-replies
         if isinstance(msg, gm.Reply):
             replies = self.reallocate(sessions.origin)
         # Forward as-is.

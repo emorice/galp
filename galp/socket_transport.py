@@ -245,7 +245,7 @@ class AsyncClientTransport:
         # Set final or send replies on each message
         def _cb(msg):
             nonlocal final
-            replies = self.handler(lambda frms: frms, msg)
+            replies = self.handler(msg)
             if isinstance(replies, Error):
                 final = replies
             elif isinstance(replies, Ok):
@@ -337,7 +337,7 @@ class AsyncServerTransport:
 
             while True:
                 msg = await self._queue.get()
-                replies = self._handler(lambda msg: msg, msg)
+                replies = self._handler(msg)
                 if isinstance(replies, Error):
                     break
                 if isinstance(replies, Ok):

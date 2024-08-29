@@ -20,14 +20,13 @@ from galp.result import Error, Result
 
 TransportReturn: TypeAlias = Iterable[TransportMessage] | Result[object]
 TransportHandler: TypeAlias = Callable[
-        [Writer[list[bytes]], list[bytes]], TransportReturn]
+        [list[bytes]], TransportReturn]
 """
 Type of handler implemented by this layer and intended to be passed to the
 transport
 """
 
-def _handle_routing(is_router: bool, session: Writer[list[bytes]], msg: Routed
-        ) -> ReplyFromSession | ForwardSessions:
+def _handle_routing(is_router: bool, msg: Routed) -> ReplyFromSession | ForwardSessions:
     """
     Creates one or two sessions: one associated with the original recipient
     (forward session), and one associated with the original sender (reply
@@ -38,10 +37,10 @@ def _handle_routing(is_router: bool, session: Writer[list[bytes]], msg: Routed
             first routing segment.
     """
 
-    reply = ReplyFromSession(session, is_router, msg.incoming)
+    reply = ReplyFromSession(is_router, msg.incoming)
 
     if msg.forward:
-        forward = ReplyFromSession(session, is_router, msg.forward)
+        forward = ReplyFromSession(is_router, msg.forward)
         return ForwardSessions(origin=reply, dest=forward)
 
     return reply
@@ -92,11 +91,10 @@ def make_forward_stack(app_handler: Callable[
         The result of each app-provided class factory, and the final root of the
         stack to be given to the transport
     """
-    def on_message(writer: Writer[TransportMessage], msg: TransportMessage
-            ) -> TransportReturn:
+    def on_message(msg: TransportMessage) -> TransportReturn:
         return load_routed(msg).then(
                 lambda routed: app_handler(
-                    _handle_routing(router, writer, _log_message(routed, name)),
+                    _handle_routing(router, _log_message(routed, name)),
                     routed.body
                     )
                 )

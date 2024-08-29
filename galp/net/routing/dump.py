@@ -21,12 +21,12 @@ def dump_routed(is_router: bool, routed: Routed) -> list[bytes]:
         return [next_hop, *routed.incoming, *forward_route, b'', *dump_message(routed.body)]
     return [*routed.incoming, *routed.forward, b'', *dump_message(routed.body)]
 
-def make_message_writer(write: Writer[list[bytes]],
+def make_message_writer(
         is_router: bool, incoming: Route, forward: Route) -> Writer[Message]:
     """Serialize and write routes and core message"""
-    return lambda msg: write(dump_routed(is_router,
+    return lambda msg: dump_routed(is_router,
         Routed(incoming, forward, msg)
-        ))
+        )
 
 SessionUid: TypeAlias = tuple[bytes, ...]
 """
@@ -47,7 +47,6 @@ class ReplyFromSession:
     routing. Concretely, don't try to compare sessions built on top of different
     zmq sockets.
     """
-    write_lower: Writer[list[bytes]]
     is_router: bool
     forward: Route
 
@@ -60,7 +59,7 @@ class ReplyFromSession:
             be sent. If None, means the message was locally generated.
         """
         nat_origin = Route() if origin is None else origin.forward
-        return make_message_writer(self.write_lower, self.is_router,
+        return make_message_writer(self.is_router,
                 incoming=nat_origin, forward=self.forward)
 
     @property
@@ -92,5 +91,4 @@ def make_local_writer(is_router: bool = False) -> Writer[Message]:
     """
     Create a default-addressing session
     """
-    return make_message_writer(lambda msg: msg, is_router,
-            incoming=Route(), forward=Route())
+    return make_message_writer(is_router, incoming=Route(), forward=Route())
