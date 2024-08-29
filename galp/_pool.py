@@ -4,7 +4,6 @@ Start and re-start processes, keep track of crashes and failed tasks
 
 import os
 import sys
-import asyncio
 import logging
 import time
 import signal
@@ -19,18 +18,17 @@ import galp.net.core.types as gm
 import galp.socket_transport
 import galp.logserver
 from galp.result import Ok
-from galp.socket_transport import AsyncClientTransport
-from galp.protocol import make_stack
-from galp.net.core.dump import dump_message
 from galp.net.core.load import parse_core_message
-from galp.async_utils import background
+from galp.protocol import make_local_writer
 
 # Communication utils
 # ===================
 
+write_message = make_local_writer()
+
 def socket_send_message(sock: socket.socket, message: gm.Message) -> None:
     """Serialize and send galp message over sock"""
-    return galp.socket_transport.send_multipart(sock, [b'', *dump_message(message)])
+    return galp.socket_transport.send_multipart(sock, write_message(message))
 
 # Listen signals and monitor deaths
 # =================================

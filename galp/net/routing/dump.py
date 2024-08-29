@@ -88,7 +88,7 @@ class ForwardSessions:
     origin: ReplyFromSession
     dest: ReplyFromSession
 
-def make_local_writer(is_router: bool) -> Writer[Message]:
+def make_local_writer(is_router: bool = False) -> Writer[Message]:
     """
     Create a default-addressing session
     """

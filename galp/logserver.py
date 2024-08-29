@@ -10,7 +10,9 @@ from typing import BinaryIO
 
 import galp.socket_transport
 from galp.net.core.types import RequestId, Reply, Progress
-from galp.net.core.dump import dump_message
+from galp.protocol import make_local_writer
+
+write_local = make_local_writer()
 
 @contextmanager
 def logserver_connect(request_id: RequestId, sock_logclient: socket.socket |
@@ -112,7 +114,7 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
                 tee_file.write(item)
             galp.socket_transport.send_multipart(
                     sock_proxy,
-                    [b'', *dump_message(Reply(request_id, Progress(item)))]
+                    write_local(Reply(request_id, Progress(item)))
                     )
         else:
             # Other end finished the task or died. Close the log file, our end
