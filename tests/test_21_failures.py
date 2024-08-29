@@ -109,7 +109,7 @@ async def test_signals_busyloop(galp_set_one, sig):
 
     # List all processes and children
     # Under the current implementation we should have started one pool manager
-    # its forked proxy and one worker
+    # and one worker
     processes = [
         psutil.Process(handle.pid)
         for handle in handles
@@ -118,7 +118,7 @@ async def test_signals_busyloop(galp_set_one, sig):
     for process in processes:
         assert process.status() != psutil.STATUS_ZOMBIE
         children.extend(process.children(recursive=True))
-    assert len(processes + children) == 3
+    assert len(processes + children) == 2
 
     # Send signal to the pool manager
     for handle in handles:

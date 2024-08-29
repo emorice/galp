@@ -9,11 +9,12 @@ most of these.
 import socket
 import asyncio
 import logging
+import time
 from typing import Iterable
 
 from galp.result import Result, Ok, Error
 from galp.writer import TransportMessage
-from galp.protocol import Stack, TransportReturn
+from galp.protocol import Stack
 from galp.net.core.types import Message
 
 def send_frame(sock: socket.socket, frame: bytes, send_more: bool) -> None:
@@ -83,6 +84,39 @@ def make_receiver(callback):
                 next_size = 4
 
     return _on_bytes
+
+def connect(endpoint: str) -> socket.socket:
+    """
+    Synchronously connect to endpoint
+    """
+
+    # Parse endpoint
+    if endpoint.startswith('tcp://'):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        host, port = endpoint[6:].split(':')
+        address: str | tuple[str, int] = host, int(port)
+    elif endpoint.startswith('ipc://'):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        path = endpoint[6:]
+        if path[0] == '@':
+            path = '\x00' + path[1:]
+        address = path
+    else:
+        raise ValueError(f'Bad endpoint: {endpoint}')
+    logging.info('Connecting %s', address)
+
+    delay = .1
+    while delay < 30.:
+        try:
+            sock.connect(address)
+            logging.info('Connected to %s', address)
+            return sock
+        except ConnectionRefusedError:
+            logging.info('Failed setup, retrying in %s', delay)
+            time.sleep(delay)
+            delay *= 2
+
+    raise TimeoutError(f'Could not connect to {address}')
 
 class WriterAdapter:
     """

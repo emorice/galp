@@ -30,43 +30,7 @@ from galp.async_utils import background
 
 def socket_send_message(sock: socket.socket, message: gm.Message) -> None:
     """Serialize and send galp message over sock"""
-    return galp.socket_transport.send_multipart(sock, dump_message(message))
-
-# Proxying
-# ========
-
-async def proxy(broker_endpoint, forkserver_socket):
-    """
-    Proxy between unix socket and zmq.
-
-    The proxy stops when the forkserver side closes the socket.
-    """
-    def on_message(_write, message):
-        socket_send_message(forkserver_socket, message)
-        return []
-    stack = make_stack(on_message, name='BK')
-    broker_transport = AsyncClientTransport(stack, broker_endpoint)
-
-    async with background(
-        broker_transport.listen_reply_loop()
-        ):
-        await listen_forkserver(forkserver_socket, broker_transport)
-
-async def listen_forkserver(forkserver_socket, broker_transport) -> None:
-    """Process messages from the forkserver"""
-    forkserver_socket.setblocking(False)
-    loop = asyncio.get_event_loop()
-    multiparts: list[list[bytes]] = []
-    receive = galp.socket_transport.make_receiver(multiparts.append)
-    while True:
-        buf = await loop.sock_recv(forkserver_socket, 4096)
-        if not buf:
-            return
-        receive(buf)
-        await broker_transport.send_messages([
-            [b'', *frames]
-            for frames in multiparts])
-        multiparts.clear()
+    return galp.socket_transport.send_multipart(sock, [b'', *dump_message(message)])
 
 # Listen signals and monitor deaths
 # =================================
@@ -176,7 +140,7 @@ def on_socket_frames(frames, config,
     """
     Handler for messages proxied to forkserver
     """
-    msg = parse_core_message(frames)
+    msg = parse_core_message(frames[1:])
     match msg:
         case Ok(gm.Fork() as fork):
             _config = dict(config, mission=fork.mission)
@@ -185,7 +149,7 @@ def on_socket_frames(frames, config,
         case _:
             logging.error('Unexpected %s', msg)
 
-def register_socket_handler(selector, config, sock_server,
+def register_socket_handler(selector, config, sock_broker,
                             children: dict[int, psutil.Process]):
     """
     Initialize the handler for broker messages, which does the actual forking
@@ -194,7 +158,7 @@ def register_socket_handler(selector, config, sock_server,
     cpus = psutil.Process().cpu_affinity()
     if not cpus:
         raise RuntimeError('Could not read cpu affinity mask')
-    socket_send_message(sock_server, gm.PoolReady(cpus=cpus))
+    socket_send_message(sock_broker, gm.PoolReady(cpus=cpus))
 
     # Set up protocol
     multipart_reader = galp.socket_transport.make_receiver(
@@ -203,13 +167,13 @@ def register_socket_handler(selector, config, sock_server,
 
     # Connect transport
     def _on_socket():
-        buf = sock_server.recv(4096)
+        buf = sock_broker.recv(4096)
         if buf:
             multipart_reader(buf)
             return False
         # Disconnect
         return True
-    selector.register(sock_server, selectors.EVENT_READ, _on_socket)
+    selector.register(sock_broker, selectors.EVENT_READ, _on_socket)
 
 # Forkserver IO loop
 # ==================
@@ -296,26 +260,15 @@ def main(config):
     galp.cli.setup(" pool ", config.get('log_level'))
     logging.info("Starting worker pool")
 
-    # Socket pair forkserver <> proxy
-    sock_server, sock_client = socket.socketpair()
-
-    # Remember to close other socket ends
-    # We don't use fork handlers as we're going to make many other unrelated
-    # forks
-    def _proxy_infork():
-        sock_server.close()
-        asyncio.run(proxy(config['endpoint'], sock_client))
-    proxy_pid = galp.cli.run_in_fork(_proxy_infork)
+    sock_broker = galp.socket_transport.connect(config['endpoint'])
     try:
-        sock_client.close()
-
         # Socket pair forkserver <> workers
         sock_logserver, sock_logclient = socket.socketpair(
                 socket.AF_UNIX, socket.SOCK_DGRAM
                 )
-        # Now we can put handlers for each new worker fork
+        # Put handlers for each new worker fork
         # The parent never closes, as it may need to fork again
-        os.register_at_fork(after_in_child=sock_server.close)
+        os.register_at_fork(after_in_child=sock_broker.close)
         os.register_at_fork(after_in_child=sock_logserver.close)
         config['sock_logclient'] = sock_logclient
 
@@ -326,12 +279,11 @@ def main(config):
         for sig in (signal.SIGCHLD, signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: None)
 
-        forkserver(sock_server, sock_logserver, signal_read_fd, config)
+        forkserver(sock_broker, sock_logserver, signal_read_fd, config)
 
         logging.info("Pool manager exiting")
     finally:
-        sock_server.close()
-        os.waitpid(proxy_pid, 0)
+        sock_broker.close()
 
 def make_cli(config):
     """
