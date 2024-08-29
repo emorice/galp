@@ -15,7 +15,7 @@ from galp.net.core.dump import add_request_id, Writer, get_request_id
 from galp.net.routing.dump import SessionUid
 import galp.task_types as gtt
 
-from galp.protocol import (make_forward_stack, ReplyFromSession, ForwardSessions,
+from galp.protocol import (make_forward_handler, ReplyFromSession, ForwardSessions,
         TransportMessage)
 from galp.socket_transport import AsyncServerTransport
 
@@ -25,9 +25,9 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
     """
     def __init__(self, endpoint: str, n_cpus: int) -> None:
         self.proto = CommonProtocol(max_cpus=n_cpus)
-        stack = make_forward_stack(self.proto.on_message,
-                name='CW')
-        self.transport = AsyncServerTransport(stack, endpoint)
+        self.transport = AsyncServerTransport(
+            make_forward_handler(self.proto.on_message, name='CW'),
+            endpoint)
 
     async def run(self) -> Result[object]:
         """

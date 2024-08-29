@@ -16,8 +16,8 @@ import galp.asyn as ga
 import galp.task_types as gtt
 
 from galp.result import Result, Ok, Error
-from galp.protocol import (make_stack, TransportMessage, Writer,
-                           TransportReturn)
+from galp.protocol import (make_transport_handler, TransportMessage, Writer,
+                           TransportReturn, write_local)
 from galp.socket_transport import AsyncClientTransport
 from galp.control_queue import ControlQueue
 from galp.query import run_task
@@ -68,9 +68,9 @@ class Client:
                             )
                 case _:
                     return Error(f'Unexpected {msg}')
-        self._stack = make_stack(on_message, name='BK')
-        self._transport = AsyncClientTransport(stack=self._stack,
-                                            endpoint=endpoint)
+        self._transport = AsyncClientTransport(
+                handler=make_transport_handler(on_message, name='BK'),
+                endpoint=endpoint)
 
     async def gather(self, *tasks, return_exceptions: bool = False,
                      dry_run: bool = False, verbose: bool = False,
@@ -178,7 +178,7 @@ class Client:
                 match command.request:
                     case gm.Submit(task_def):
                         self.submitted_count[task_def.name] += 1
-                return self._stack.write_local(command.request)
+                return write_local(command.request)
             case _:
                 raise NotImplementedError(command)
 

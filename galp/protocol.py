@@ -5,12 +5,11 @@ GALP protocol implementation
 import logging
 
 from typing import TypeAlias, Iterable, Callable
-from dataclasses import dataclass
 
 import galp.net.core.types as gm
 from galp.net.core.dump import Writer, MessageTypeMap
-from galp.net.routing.dump import (make_local_writer, ReplyFromSession,
-        ForwardSessions)
+from galp.net.routing.dump import ReplyFromSession, ForwardSessions
+from galp.net.routing.dump import write_local # pylint: disable=unused-import
 from galp.net.routing.load import Routed, load_routed
 from galp.writer import TransportMessage
 from galp.result import Error, Result
@@ -72,18 +71,10 @@ def _log_message(routed: Routed, proto_name: str) -> Routed:
 # =====
 # Utilities to bind layers together
 
-@dataclass
-class Stack:
-    """
-    Handling side of a network stack
-    """
-    handler: TransportHandler
-    write_local: Writer[gm.Message]
-
-def make_forward_stack(app_handler: Callable[
+def make_forward_handler(app_handler: Callable[
     [ReplyFromSession | ForwardSessions, gm.Message],
     TransportReturn],
-    name: str, router: bool = True) -> Stack:
+    name: str, router: bool = True) -> TransportHandler:
     """
     Factory function to assemble the handler stack
 
@@ -98,7 +89,7 @@ def make_forward_stack(app_handler: Callable[
                     routed.body
                     )
                 )
-    return Stack(on_message, make_local_writer(router))
+    return on_message
 
 DispatchFunction: TypeAlias = Callable[[Writer[gm.Message], gm.Message],
         TransportReturn]
@@ -107,7 +98,7 @@ Type of function that can handle any of several messages, but differs from the
 core-layer expected handler by being blind to forwarding
 """
 
-def make_stack(app_handler: DispatchFunction, name: str) -> Stack:
+def make_transport_handler(app_handler: DispatchFunction, name: str) -> TransportHandler:
     """Shortcut stack maker for common end-peer stacks"""
     def _on_message(sessions: ReplyFromSession | ForwardSessions, msg: gm.Message):
         match sessions:
@@ -115,4 +106,4 @@ def make_stack(app_handler: DispatchFunction, name: str) -> Stack:
                 return app_handler(sessions.reply_from(None), msg)
             case ForwardSessions():
                 return Error('Unexpected forwarded message')
-    return make_forward_stack(_on_message, name, router=False)
+    return make_forward_handler(_on_message, name, router=False)

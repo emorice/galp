@@ -12,7 +12,7 @@ import galp
 import tests.steps as gts
 from galp.net.core.types import (NextRequest, Reply, RequestId, Stat,
                                  StatResult, Submit)
-from galp.protocol import make_stack
+from galp.protocol import make_transport_handler
 from galp.result import Ok
 from galp.socket_transport import AsyncServerTransport
 

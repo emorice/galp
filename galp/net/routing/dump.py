@@ -11,6 +11,12 @@ from dataclasses import dataclass
 from galp.net.core.dump import Writer, Message, dump_message
 from .types import Routed, Route
 
+def write_local(message: Message) -> list[bytes]:
+    """
+    Add trivial routing frame for message with neither source nor dest
+    """
+    return [b'', *dump_message(message)]
+
 def dump_routed(is_router: bool, routed: Routed) -> list[bytes]:
     """Serializes routes"""
     if is_router:

@@ -19,16 +19,14 @@ import galp.socket_transport
 import galp.logserver
 from galp.result import Ok
 from galp.net.core.load import parse_core_message
-from galp.protocol import make_local_writer
+from galp.protocol import write_local
 
 # Communication utils
 # ===================
 
-write_message = make_local_writer()
-
 def socket_send_message(sock: socket.socket, message: gm.Message) -> None:
     """Serialize and send galp message over sock"""
-    return galp.socket_transport.send_multipart(sock, write_message(message))
+    return galp.socket_transport.send_multipart(sock, write_local(message))
 
 # Listen signals and monitor deaths
 # =================================

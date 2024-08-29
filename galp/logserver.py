@@ -10,9 +10,7 @@ from typing import BinaryIO
 
 import galp.socket_transport
 from galp.net.core.types import RequestId, Reply, Progress
-from galp.protocol import make_local_writer
-
-write_local = make_local_writer()
+from galp.protocol import write_local
 
 @contextmanager
 def logserver_connect(request_id: RequestId, sock_logclient: socket.socket |

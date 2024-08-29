@@ -27,7 +27,7 @@ import galp.default_resources
 from galp.result import Result, Ok, Error
 
 from galp.store import StoreReadError, Store
-from galp.protocol import make_stack, TransportMessage
+from galp.protocol import make_transport_handler, TransportMessage
 from galp.socket_transport import AsyncClientTransport
 from galp.query import collect_task_inputs
 from galp.task_types import TaskRef, load_step_by_key, StepLoadError
@@ -139,7 +139,7 @@ class Worker:
                     return Error(f'Unexpected {msg}')
 
         self.transport = AsyncClientTransport(
-                make_stack(on_message, name='BK'),
+                make_transport_handler(on_message, name='BK'),
                 setup['endpoint']
                 )
         self.mission = setup.get('mission', b'')

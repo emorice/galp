@@ -13,8 +13,7 @@ import time
 from typing import Iterable
 
 from galp.result import Result, Ok, Error
-from galp.writer import TransportMessage
-from galp.protocol import Stack
+from galp.protocol import TransportHandler, write_local, TransportMessage
 from galp.net.core.types import Message
 
 def send_frame(sock: socket.socket, frame: bytes, send_more: bool) -> None:
@@ -148,9 +147,8 @@ class AsyncClientTransport:
         endpoint: endpoint to connect to, using zmq syntax (ipc://... or tcp://...)
         bind: whether to bind (and expose connection ids), or connect
     """
-    def __init__(self, stack: Stack, endpoint: str):
-        self.stack: Stack = stack
-        self.handler = stack.handler
+    def __init__(self, handler: TransportHandler, endpoint: str):
+        self.handler = handler
 
         self.endpoint: str = endpoint
         self.writer: WriterAdapter
@@ -166,7 +164,7 @@ class AsyncClientTransport:
         start a new communication. Not used to generate replies/reacts to an
         incoming message.
         """
-        await self.send_messages([self.stack.write_local(msg)])
+        await self.send_messages([write_local(msg)])
 
     async def send_messages(self, messages: Iterable[TransportMessage]) -> None:
         """
@@ -275,8 +273,8 @@ class AsyncServerTransport:
             that uses the top layer too
         endpoint: endpoint to bind to, using zmq syntax (ipc://... or tcp://...)
     """
-    def __init__(self, stack: Stack, endpoint: str):
-        self._handler = stack.handler
+    def __init__(self, handler, endpoint: str):
+        self._handler = handler
 
         self._endpoint: str = endpoint
         self._writers: dict[bytes, WriterAdapter] = {}
