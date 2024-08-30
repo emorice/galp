@@ -17,17 +17,16 @@ import galp.task_types as gtt
 
 from galp.protocol import (make_forward_handler, ReplyFromSession, ForwardSessions,
         TransportMessage)
-from galp.socket_transport import AsyncServerTransport
+from galp.socket_transport import serve
 
-class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
+class Broker:
     """
     Load-balancing client-to-worker and a worker-to-broker loops
     """
     def __init__(self, endpoint: str, n_cpus: int) -> None:
         self.proto = CommonProtocol(max_cpus=n_cpus)
-        self.transport = AsyncServerTransport(
-            make_forward_handler(self.proto.on_message, name='CW'),
-            endpoint)
+        self.endpoint = endpoint
+        self.handler = make_forward_handler(self.proto.on_message, name='CW')
 
     async def run(self) -> Result[object]:
         """
@@ -36,7 +35,8 @@ class Broker: # pylint: disable=too-few-public-methods # Compat and consistency
         Must be externally cancelled, typically by a signal handler, as the
         broker never finishes by itself.
         """
-        return await self.transport.listen_reply_loop()
+        #return await self.transport.listen_reply_loop()
+        return await serve(self.endpoint, self.handler)
 
 @dataclass
 class Allocation:

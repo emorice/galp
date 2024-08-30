@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 from typing import Iterable
+from dataclasses import dataclass
 
 from galp.result import Result, Ok, Error
 from galp.protocol import TransportHandler, write_local, TransportMessage
@@ -265,94 +266,83 @@ class AsyncClientTransport:
             await self.writer.drain()
         return final
 
-class AsyncServerTransport:
+@dataclass
+class _Clients:
+    writers: dict[bytes, WriterAdapter]
+    queue: asyncio.Queue[TransportMessage]
+    next_client_id: int = 0
+
+async def _accept(clients: _Clients, reader, writer):
     """
-    Args:
-        stack: Protocol stack object with callbacks to handle messages. Only the
-            stack root is normally needed but we have a legacy message writing path
-            that uses the top layer too
-        endpoint: endpoint to bind to, using zmq syntax (ipc://... or tcp://...)
+    On connect, register a writer for peer, and start waiting on reader to
+    queue messages received
     """
-    def __init__(self, handler, endpoint: str):
-        self._handler = handler
+    logging.info('Accepting')
+    cid = clients.next_client_id.to_bytes(4, 'little')
+    clients.next_client_id += 1
 
-        self._endpoint: str = endpoint
-        self._writers: dict[bytes, WriterAdapter] = {}
-        self._server = None
-        self._next_client_id = 0
-        self._queue: asyncio.Queue[TransportMessage] = asyncio.Queue()
+    clients.writers[cid] = WriterAdapter(writer)
+    receive = make_receiver(lambda msg: clients.queue.put_nowait([cid, *msg]))
 
-    async def _accept(self, reader, writer):
-        """
-        On connect, register a writer for peer, and start waiting on reader to
-        queue messages received
-        """
-        logging.info('Accepting')
-        cid = self._next_client_id.to_bytes(4, 'little')
-        self._next_client_id += 1
+    while True:
+        buf = await reader.read(BUFSIZE)
+        if not buf:
+            break
+        receive(buf)
+    del clients.writers[cid]
 
-        self._writers[cid] = WriterAdapter(writer)
-        receive = make_receiver(lambda msg: self._queue.put_nowait([cid, *msg]))
+async def _async_bind(endpoint: str, accept):
+    """
+    Bind
+    """
+    if endpoint.startswith('tcp://'):
+        host, port = endpoint[6:].split(':')
+        return await asyncio.start_server(
+                accept, host, int(port)
+                )
+    if endpoint.startswith('ipc://'):
+        path = endpoint[6:]
+        if path[0] == '@':
+            path = '\x00' + path[1:]
+        logging.info('Listening %s', path)
+        return  await asyncio.start_unix_server(accept, path)
+    raise ValueError(f'Bad endpoint: {endpoint}')
+
+async def serve(endpoint: str, handler: TransportHandler) -> Result[object]:
+    """Message processing loop
+
+    Waits for a message, call the protocol handler, then sends the replies.
+    Can also block on sending replies if the underlying transport does.
+    Stops when a handler returns a Result.
+    """
+    writers: dict[bytes, WriterAdapter] = {}
+    queue: asyncio.Queue[TransportMessage] = asyncio.Queue()
+    clients = _Clients(writers, queue)
+    server = None
+
+    try:
+        server = await _async_bind(endpoint, lambda rdr, wtr: _accept(clients, rdr, wtr))
 
         while True:
-            buf = await reader.read(BUFSIZE)
-            if not buf:
+            msg = await clients.queue.get()
+            replies = handler(msg)
+            if isinstance(replies, Error):
                 break
-            receive(buf)
-        del self._writers[cid]
+            if isinstance(replies, Ok):
+                break
+            for msg in replies:
+                cid, *msg = msg
+                try:
+                    writer_adapter = clients.writers[cid]
+                except KeyError:
+                    logging.error('Dropping message to client %s', cid)
 
-    async def _setup(self):
-        """
-        Bind
-        """
-        # Short path: we're already online
-        if self._server is not None:
-            return
+                send_multipart(writer_adapter, msg) # type: ignore[arg-type] # adapter
+                await writer_adapter.drain()
+    finally:
+        if server is not None:
+            server.close()
+            # fixme: this should be the proper cleanup but makes us hang
+            #await server.wait_closed()
 
-        if self._endpoint.startswith('tcp://'):
-            host, port = self._endpoint[6:].split(':')
-            self._server = await asyncio.start_server(
-                    self._accept, host, int(port)
-                    )
-        elif self._endpoint.startswith('ipc://'):
-            path = self._endpoint[6:]
-            if path[0] == '@':
-                path = '\x00' + path[1:]
-            logging.info('Listening %s', path)
-            self._server = await asyncio.start_unix_server(self._accept, path)
-        else:
-            raise ValueError(f'Bad endpoint: {self._endpoint}')
-
-    async def listen_reply_loop(self) -> Result[object]:
-        """Message processing loop
-
-        Waits for a message, call the protocol handler, then sends the replies.
-        Can also block on sending replies if the underlying transport does.
-        Stops when a handler returns a Result.
-        """
-        try:
-            await self._setup()
-
-            while True:
-                msg = await self._queue.get()
-                replies = self._handler(msg)
-                if isinstance(replies, Error):
-                    break
-                if isinstance(replies, Ok):
-                    break
-                for msg in replies:
-                    cid, *msg = msg
-                    try:
-                        writer_adapter = self._writers[cid]
-                    except KeyError:
-                        logging.error('Dropping message to client %s', cid)
-
-                    send_multipart(writer_adapter, msg) # type: ignore[arg-type] # adapter
-                    await writer_adapter.drain()
-        finally:
-            if self._server is not None:
-                self._server.close()
-                # fixme: this should be the proper cleanup but makes us hang
-                #await self._server.wait_closed()
-
-        return replies
+    return replies
