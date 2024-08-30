@@ -118,7 +118,7 @@ class CommonProtocol:
         self.alloc_from_wuid[session.uid] = pending_alloc
 
         # Fill in the worker route in original request
-        return [session.reply_from(pending_alloc.client)(pending_alloc.msg)]
+        return [session.reply_from(None)(pending_alloc.msg)]
 
     def on_pool_ready(self, pool: ReplyFromSession, msg: gm.PoolReady
             ) -> list[TransportMessage]:
@@ -310,7 +310,7 @@ class CommonProtocol:
             self.alloc_from_wuid[worker.uid] = alloc
 
             # We build the message and return it to transport
-            proceeds.append(worker.reply_from(client)(new_msg))
+            proceeds.append(worker.reply_from(None)(new_msg))
         else:
             # Else ask the pool to fork a new worker
             # We'll send the request to the worker when it send us a READY
@@ -324,23 +324,26 @@ class CommonProtocol:
         """
         Handles only messages forwarded through broker
         """
-        replies = []
-        # Free resources for all messages indicating end of task
-        # fixme: probably wrong for progress-replies
-        if isinstance(msg, gm.Reply):
-            replies = self.reallocate(sessions.origin)
-        # Forward as-is.
-        logging.debug('Forwarding %s', msg.__class__.__name__)
-        return replies + [sessions.dest.reply_from(sessions.origin)(msg)]
+        assert False
 
-    def on_reply(self, reply: gm.Reply):
+    def on_reply(self, session: ReplyFromSession, reply: gm.Reply):
         """
         Forward reply (typically a Progress update) based on request id
         """
+        # Get the associated allocation and client
         alloc = self.alloc_from_task.get(reply.request.as_word())
+
+        # Free resources for all messages indicating end of task
+        if isinstance(reply.value, gm.Progress):
+            replies = []
+        else:
+            replies = self.reallocate(session)
+
+        # Forward to the waiting client if any
         if alloc:
-            return [alloc.client.reply_from(None)(reply)]
-        return []
+            replies.append(alloc.client.reply_from(None)(reply))
+
+        return replies
 
     @on_message.register
     def _(self, session: ReplyFromSession, msg: gm.Message
@@ -358,7 +361,7 @@ class CommonProtocol:
             case gm.Exited():
                 return self.on_exited(msg)
             case gm.Reply():
-                return self.on_reply(msg)
+                return self.on_reply(session, msg)
 
         # Else, we may have to forward or queue the message. We decide based on
         # the verb whether this should be ultimately sent to a worker
