@@ -36,7 +36,7 @@ class PassTroughPrinter(Printer):
         pass
 
     def update_task_output(self, _task_def: gtt.CoreTaskDef, status: bytes):
-        os.write(sys.stdout.fileno(), status)
+        os.write(1, status)
 
 CTRL_UP = '\033[A;'
 CTRL_RETKILL = '\r\033[K'
