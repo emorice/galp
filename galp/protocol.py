@@ -8,11 +8,11 @@ from typing import TypeAlias, Iterable, Callable
 
 import galp.net.core.types as gm
 from galp.net.core.dump import Writer, MessageTypeMap
-from galp.net.routing.dump import ReplyFromSession, ForwardSessions
+from galp.net.routing.dump import ReplyFromSession
 from galp.net.routing.dump import write_local # pylint: disable=unused-import
 from galp.net.routing.load import Routed, load_routed
 from galp.writer import TransportMessage
-from galp.result import Error, Result
+from galp.result import Result
 
 # Routing-layer handlers
 # ======================
@@ -24,25 +24,6 @@ TransportHandler: TypeAlias = Callable[
 Type of handler implemented by this layer and intended to be passed to the
 transport
 """
-
-def _handle_routing(is_router: bool, msg: Routed) -> ReplyFromSession | ForwardSessions:
-    """
-    Creates one or two sessions: one associated with the original recipient
-    (forward session), and one associated with the original sender (reply
-    session).
-
-    Args:
-        is_router: True if sending function should move a routing id in the
-            first routing segment.
-    """
-
-    reply = ReplyFromSession(is_router, msg.incoming)
-
-    if msg.forward:
-        forward = ReplyFromSession(is_router, msg.forward)
-        return ForwardSessions(origin=reply, dest=forward)
-
-    return reply
 
 # Core-layer handlers
 # ===================
@@ -72,7 +53,7 @@ def _log_message(routed: Routed, proto_name: str) -> Routed:
 # Utilities to bind layers together
 
 def make_forward_handler(app_handler: Callable[
-    [ReplyFromSession | ForwardSessions, gm.Message],
+    [ReplyFromSession, gm.Message],
     TransportReturn],
     name: str, router: bool = True) -> TransportHandler:
     """
@@ -85,7 +66,10 @@ def make_forward_handler(app_handler: Callable[
     def on_message(msg: TransportMessage) -> TransportReturn:
         return load_routed(msg).then(
                 lambda routed: app_handler(
-                    _handle_routing(router, _log_message(routed, name)),
+                        ReplyFromSession(
+                            router,
+                            _log_message(routed, name).route
+                            ),
                     routed.body
                     )
                 )
@@ -100,10 +84,6 @@ core-layer expected handler by being blind to forwarding
 
 def make_transport_handler(app_handler: DispatchFunction, name: str) -> TransportHandler:
     """Shortcut stack maker for common end-peer stacks"""
-    def _on_message(sessions: ReplyFromSession | ForwardSessions, msg: gm.Message):
-        match sessions:
-            case ReplyFromSession():
-                return app_handler(sessions.reply_from(None), msg)
-            case ForwardSessions():
-                return Error('Unexpected forwarded message')
+    def _on_message(session: ReplyFromSession, msg: gm.Message):
+        return app_handler(session.reply(), msg)
     return make_forward_handler(_on_message, name, router=False)

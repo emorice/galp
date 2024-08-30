@@ -17,6 +17,5 @@ class Routed:
     """
     The routing layer of a message
     """
-    incoming: Route
-    forward: Route
+    route: Route
     body: Message

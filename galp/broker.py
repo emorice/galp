@@ -15,8 +15,7 @@ from galp.net.core.dump import add_request_id, Writer, get_request_id
 from galp.net.routing.dump import SessionUid
 import galp.task_types as gtt
 
-from galp.protocol import (make_forward_handler, ReplyFromSession, ForwardSessions,
-        TransportMessage)
+from galp.protocol import make_forward_handler, ReplyFromSession, TransportMessage
 from galp.socket_transport import serve
 
 async def broker_serve(endpoint: str, n_cpus: int) -> Result[object]:
@@ -118,7 +117,7 @@ class CommonProtocol:
         self.alloc_from_wuid[session.uid] = pending_alloc
 
         # Fill in the worker route in original request
-        return [session.reply_from(None)(pending_alloc.msg)]
+        return [session.reply()(pending_alloc.msg)]
 
     def on_pool_ready(self, pool: ReplyFromSession, msg: gm.PoolReady
             ) -> list[TransportMessage]:
@@ -131,7 +130,7 @@ class CommonProtocol:
 
         # We already set the forward-address to None since we will never need to
         # forward anything to pool.
-        self.write_pool = pool.reply_from(None)
+        self.write_pool = pool.reply()
         # Adapt the list of cpus to the requested number of max cpus by dropping
         # or repeting some as needed
         cpu_list = [x for x, _ in zip(cycle(msg.cpus), range(self.max_cpus))]
@@ -195,7 +194,7 @@ class CommonProtocol:
         """
         # Note that we set the incoming to empty, which equals re-interpreting
         # the message as addressed to us
-        write_client = alloc.client.reply_from(None)
+        write_client = alloc.client.reply()
 
         return [add_request_id(write_client, alloc.msg)(gm.RemoteError(error))]
 
@@ -278,7 +277,7 @@ class CommonProtocol:
 
         # Allocated. At this point the message can be considered
         # as accepted and queued
-        proceeds = [client.reply_from(None)(gm.NextRequest())]
+        proceeds = [client.reply()(gm.NextRequest())]
 
         # For Submits, the worker will need to know the details of the
         # allocation, so rewrite the original message
@@ -310,21 +309,13 @@ class CommonProtocol:
             self.alloc_from_wuid[worker.uid] = alloc
 
             # We build the message and return it to transport
-            proceeds.append(worker.reply_from(None)(new_msg))
+            proceeds.append(worker.reply()(new_msg))
         else:
             # Else ask the pool to fork a new worker
             # We'll send the request to the worker when it send us a READY
             proceeds.append(self.write_pool(gm.Fork(alloc.task_id, alloc.claim)))
 
         return proceeds
-
-    @singledispatchmethod
-    def on_message(self, sessions: ForwardSessions, msg: gm.Message
-            ) -> list[TransportMessage]:
-        """
-        Handles only messages forwarded through broker
-        """
-        assert False
 
     def on_reply(self, session: ReplyFromSession, reply: gm.Reply):
         """
@@ -341,12 +332,11 @@ class CommonProtocol:
 
         # Forward to the waiting client if any
         if alloc:
-            replies.append(alloc.client.reply_from(None)(reply))
+            replies.append(alloc.client.reply()(reply))
 
         return replies
 
-    @on_message.register
-    def _(self, session: ReplyFromSession, msg: gm.Message
+    def on_message(self, session: ReplyFromSession, msg: gm.Message
             ) -> list[TransportMessage]:
         """
         Handles local messages received by the broker
