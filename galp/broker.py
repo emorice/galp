@@ -19,24 +19,19 @@ from galp.protocol import (make_forward_handler, ReplyFromSession, ForwardSessio
         TransportMessage)
 from galp.socket_transport import serve
 
-class Broker:
+async def broker_serve(endpoint: str, n_cpus: int) -> Result[object]:
     """
     Load-balancing client-to-worker and a worker-to-broker loops
+
+    Must be externally cancelled, typically by a signal handler, as the
+    broker never finishes by itself except on errors.
     """
-    def __init__(self, endpoint: str, n_cpus: int) -> None:
-        self.proto = CommonProtocol(max_cpus=n_cpus)
-        self.endpoint = endpoint
-        self.handler = make_forward_handler(self.proto.on_message, name='CW')
-
-    async def run(self) -> Result[object]:
-        """
-        Runs message loop.
-
-        Must be externally cancelled, typically by a signal handler, as the
-        broker never finishes by itself.
-        """
-        #return await self.transport.listen_reply_loop()
-        return await serve(self.endpoint, self.handler)
+    return await serve(
+            endpoint,
+            make_forward_handler(
+                CommonProtocol(max_cpus=n_cpus).on_message,
+                name='CW'),
+            )
 
 @dataclass
 class Allocation:

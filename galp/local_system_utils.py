@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager, AsyncExitStack, contextmanager
 
 import galp.pool
 from galp.client import Client
-from galp.broker import Broker
+from galp.broker import broker_serve
 from galp.async_utils import background
 
 class LocalSystem:
@@ -29,10 +29,10 @@ class LocalSystem:
         LocalSystem._instances += 1
         self.endpoint = endpoint
 
-        self._broker = Broker(
-            endpoint=endpoint,
-            n_cpus=pool_size
-            )
+        self._broker_config = {
+                'endpoint': endpoint,
+                'n_cpus': pool_size
+                }
         self._pool_config = {
                 'endpoint': endpoint,
                 **worker_options,
@@ -52,7 +52,7 @@ class LocalSystem:
         cleanup.
         """
         await self._stack.enter_async_context(
-            background(self._broker.run())
+            background(broker_serve(**self._broker_config))
             )
         self.pool = self._stack.enter_context(
             _spawn_pool(self._pool_config)
