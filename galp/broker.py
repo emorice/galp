@@ -7,7 +7,6 @@ import logging
 from dataclasses import dataclass
 from collections import defaultdict
 from itertools import cycle
-from functools import singledispatchmethod
 
 from galp.result import Result
 import galp.net.core.types as gm

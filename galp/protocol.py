@@ -55,7 +55,7 @@ def _log_message(routed: Routed, proto_name: str) -> Routed:
 def make_forward_handler(app_handler: Callable[
     [ReplyFromSession, gm.Message],
     TransportReturn],
-    name: str, router: bool = True) -> TransportHandler:
+    name: str) -> TransportHandler:
     """
     Factory function to assemble the handler stack
 
@@ -67,7 +67,6 @@ def make_forward_handler(app_handler: Callable[
         return load_routed(msg).then(
                 lambda routed: app_handler(
                         ReplyFromSession(
-                            router,
                             _log_message(routed, name).route
                             ),
                     routed.body
@@ -86,4 +85,4 @@ def make_transport_handler(app_handler: DispatchFunction, name: str) -> Transpor
     """Shortcut stack maker for common end-peer stacks"""
     def _on_message(session: ReplyFromSession, msg: gm.Message):
         return app_handler(session.reply(), msg)
-    return make_forward_handler(_on_message, name, router=False)
+    return make_forward_handler(_on_message, name)

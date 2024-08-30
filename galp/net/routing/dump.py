@@ -35,7 +35,6 @@ class ReplyFromSession:
     routing. Concretely, don't try to compare sessions built on top of different
     sockets.
     """
-    is_router: bool
     forward: Route
 
     def reply(self) -> Writer[Message]:
