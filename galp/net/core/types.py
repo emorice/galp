@@ -7,7 +7,7 @@ functionalities.
 """
 
 from types import GenericAlias
-from typing import TypeVar, Generic, TypeAlias
+from typing import TypeVar, Generic, TypeAlias, TypedDict, Literal
 from dataclasses import dataclass
 
 import galp.task_types as gtt
@@ -206,6 +206,16 @@ class Reply(Generic[V]):
     """
     request: RequestId
     value: Ok[V] | Progress | RemoteError
+
+class TaskProgress(TypedDict):
+    """
+    Type of status attribute of Progress for Submit requests.
+
+    This type is not enforced by the messaging layer, it's a convention between
+    progress info producers and consumers.
+    """
+    event: Literal['started', 'stdout', 'stderr']
+    payload: bytes
 
 @dataclass(frozen=True)
 class NextRequest:

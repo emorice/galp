@@ -180,16 +180,13 @@ def make_load_default(cls: type[T]) -> Loader[T]:
     """Load other basic types and their subtypes"""
 
     # Basic type, check and return as is
-    if cls in (str, bytes, int, float, bool):
+    # "object" can be used to simply forward msgpack result as is
+    if cls in (str, bytes, int, float, bool, object):
         def _load_direct(doc: object, stream: list[bytes]) -> tuple[T, list[bytes]]:
             if not isinstance(doc, cls):
                 raise LoadException(f'{cls} expected')
             return doc, stream # type: ignore[call-arg]
         return _load_direct
-
-    # Any, pass the msgpack document without further validation
-    if cls is Any:
-        return lambda doc, stream: (doc, stream) #type: ignore[return-value]
 
     # Subtype, try to convert
     def _load(doc: object, stream: list[bytes]) -> tuple[T, list[bytes]]:

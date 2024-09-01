@@ -103,4 +103,4 @@ class Progress:
     """
     Class used to carry information about a future Result
     """
-    status: bytes
+    status: object

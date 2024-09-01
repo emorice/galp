@@ -6,23 +6,26 @@ import sys
 import time
 import logging
 from typing import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from contextlib import asynccontextmanager, AsyncExitStack
 
 from galp.result import Ok, Error, Result
+from galp.net.core.types import TaskProgress
 import galp.task_types as gtt
 
 class Printer:
     """
     Printer classes interface
     """
-    def update_task_status(self, task_def: gtt.CoreTaskDef, over: Result | None):
+    def update_task_status(self, task_def: gtt.CoreTaskDef,
+                           over: Result | TaskProgress | None) -> None:
         """
         Inform that a task is started (None), over (True) or failed (False)
         """
         raise NotImplementedError
 
-    def update_task_output(self, task_def: gtt.CoreTaskDef, status: bytes):
+    def update_task_output(self, task_def: gtt.CoreTaskDef,
+                           status: TaskProgress) -> None:
         """
         Live task output
         """
@@ -32,11 +35,18 @@ class PassTroughPrinter(Printer):
     """
     Trivial printer class, outputs no metadata and leaves statuses as is
     """
-    def update_task_status(self, _task_def: gtt.CoreTaskDef, _over: Result | None):
+    def update_task_status(self, _task_def: gtt.CoreTaskDef,
+                           _over: Result | TaskProgress | None):
         pass
 
-    def update_task_output(self, _task_def: gtt.CoreTaskDef, status: bytes):
-        os.write(1, status)
+    def update_task_output(self, _task_def: gtt.CoreTaskDef,
+                           status: TaskProgress) -> None:
+        match status['event']:
+            case 'stdout':
+                os.write(1, status['payload'])
+            case 'stderr':
+                os.write(2, status['payload'])
+            # Else skip
 
 CTRL_UP = '\033[A;'
 CTRL_RETKILL = '\r\033[K'
@@ -152,13 +162,14 @@ class JupyterLiveDisplay(LiveDisplay):
         # Do a normal print for log
         if log:
             print('\n'.join(log), flush=True)
-        self._update_display(1, open_log)
+        self._update_display(1, ['Recent output from running tasks:', *open_log,
+                                 ' '])
 
     def update_summary(self, summary: list[str], log: list[str]):
         # Do a normal print for log
         if log:
             print('\n'.join(log), flush=True)
-        self._update_display(0, summary)
+        self._update_display(0, ['Tasks summary:', *summary, ' '])
 
     def _update_display(self, handle_pos: int, lines: list[str]):
         display_bundle = {'text/plain': '\n'.join(lines)}
@@ -172,6 +183,7 @@ class JupyterLiveDisplay(LiveDisplay):
                         raw=True, display_id=True)
                     for i in (0, 1)
                     ]
+            print('Execution log:', flush=True)
 
 HTML_CONTENT = """
 <!DOCTYPE html>
@@ -188,11 +200,14 @@ HTML_CONTENT = """
                 $.ajax({
                     'url': content_url,
                     'success': data => {
-                            $('#container').text(data);
-                            $('#status').text('Server online, updating every 5 seconds');
+                            $('#summary').text(data.summary);
+                            $('#open').text(data.open);
+                            $('#closed').text(data.closed);
+                            $('#status').text('Server online, updating every 5 seconds...');
                             setTimeout(load, 5000);
                         },
                     'error': () => $('#status').text('\u26a0 Server disconnected'),
+                    'dataType': 'json',
                     });
                 }
             load();
@@ -203,13 +218,27 @@ HTML_CONTENT = """
                 max-width: 1024px;
                 margin: auto;
             }
+            pre {
+                background: #e0e0e0;
+                border-radius: 5px;
+                padding: 8px;
+                margin-top: 8px;
+                margin-bottom: 8px;
+                overflow-x: scroll;
+                }
         </style>
         <title>Pipeline run live summary</title>
     </head>
     <body>
     <h1>Pipeline run live summary</h1>
-    <div id="status">Connecting...</div>
-    <pre id="container"></pre></body>
+    <p id="status">Connecting...</p>
+    <span>Tasks summary:</span>
+    <pre id="summary"></pre>
+    <span>Recent output from running tasks:</span>
+    <pre id="open"></pre>
+    <span>Execution log:</span>
+    <pre id="closed"></pre>
+    </body>
 </html>
 """
 
@@ -268,13 +297,11 @@ your address bar, e.g. http://localhost:8888/proxy/{port}""", flush=True)
         Callback for page content
         """
         del request
-        return self.web.Response(
-                text='\n'.join(
-                    self.summary
-                    + self.open_log
-                    + self.log
-                    ),
-                )
+        return self.web.json_response({
+            'summary': '\n'.join(self.summary),
+            'open': '\n'.join(self.open_log),
+            'closed': '\n'.join(self.log),
+            })
 
     def update_log(self, log: list[str], open_log: list[str]):
         self.log = (self.log + log)[:self.max_lines]
@@ -302,18 +329,27 @@ def hour() -> str:
     return f'{ltime.tm_hour:02d}:{ltime.tm_min:02d}'
 
 @dataclass
+class _TaskSets:
+    pending: set[gtt.TaskName]
+    running: set[gtt.TaskName]
+    done: set[gtt.TaskName]
+    failed: set[gtt.TaskName]
+
 class TaskPrinter(Printer):
     """
     Object keeping state on what tasks are running, integrating info from hooks,
     and offering flexible output.
     """
-    running: dict[str, set[gtt.TaskName]] = field(default_factory=dict)
-    out_lines: list[str] = field(default_factory=list)
-    live_displays: list[LiveDisplay] = field(default_factory=list)
-    # Key is the header "<step> <name>", value is (time, text)
-    open_lines: dict[str, tuple[str, str]] = field(default_factory=dict)
 
-    def update_task_status(self, task_def: gtt.CoreTaskDef, over: Result | None):
+    def __init__(self, live_displays: list[LiveDisplay]) -> None:
+        self.tasks: dict[str, _TaskSets] = {}
+        self.out_lines: list[str] = []
+        self.live_displays = live_displays
+        # Key is the header "<step> <name>", value is (time, text)
+        self.open_lines: dict[str, tuple[str, str]] = {}
+
+    def update_task_status(self, task_def: gtt.CoreTaskDef,
+                           over: Result | TaskProgress | None):
         step = task_def.step
         name = task_def.name
         ltime = hour()
@@ -321,46 +357,67 @@ class TaskPrinter(Printer):
 
         # Update state and compute log
         log_lines = []
+        if step not in self.tasks:
+            self.tasks[step] = _TaskSets(set(), set(), set(), set())
+        tasksets = self.tasks[step]
+
         if over is None:
-            if step not in self.running:
-                self.running[step] = set()
-            self.running[step].add(name)
-        else:
-            if step in self.running:
-                if name in self.running[step]:
-                    self.running[step].remove(name)
-                if not self.running[step]:
-                    del self.running[step]
-                self.open_lines.pop(f'{step} {name}', '')
+            tasksets.pending.add(name)
+        elif isinstance(over, dict) and over.get('event') == 'started':
+            tasksets.pending.discard(name)
+            tasksets.running.add(name)
+            log_lines.append(
+                    f'{ltime} {step} {name} [STARTED]'
+                    )
+        else: # Result
+            tasksets.pending.discard(name)
+            tasksets.running.discard(name)
+            self.open_lines.pop(f'{step} {name}', '')
             match over:
                 case Ok():
                     message = f'[{GREEN_OK}]'
+                    tasksets.done.add(name)
                 case Error():
                     message = f'[{RED_FAIL}] {over.error}'
+                    tasksets.failed.add(name)
             log_lines.append(
                     f'{ltime} {step} {name} {message}'
                     )
 
         # Recompute summary
-        max_lines = 10
-        n_steps = len(self.running)
+        #max_lines = 10
+        #n_steps = len(self.tasks)
         summary = []
-        for istep, (step, names) in enumerate(self.running.items()):
-            if istep >= max_lines - 1 and n_steps > max_lines :
-                summary.append(f'and {n_steps - max_lines + 1} other steps')
-                break
-            tasks = f'task {next(iter(names))}' if len(names) == 1 else f'{len(names)} tasks'
-            summary.append(f'{ltime} {step} [{tasks} pending]')
+        max_step_len = 0
+        for step in self.tasks:
+            step_len = len(step)
+            if max_step_len < step_len <= 50:
+                max_step_len = step_len
+        for step, sets in self.tasks.items():
+            # this should be only for terminal, on web/juyter we have more space
+            #if istep >= max_lines - 1 and n_steps > max_lines :
+            #    summary.append(f'and {n_steps - max_lines + 1} other steps')
+            #    break
+            npd = len(sets.pending)
+            nrun = len(sets.running)
+            ndone = len(sets.done)
+            nfail = len(sets.failed)
+            ntot = npd + ndone + nfail + nrun
+            failures = f'|{nfail} FAILED' if nfail else ''
+            summary.append(
+                    f'{ltime} {step:{max_step_len}}    '
+                    f'[R: {nrun}|P: {npd}|OK: {ndone}/{ntot}{failures}]'
+                    )
 
         # Display both
         for display in self.live_displays:
             display.update_summary(summary, log_lines)
 
-    def update_task_output(self, task_def: gtt.CoreTaskDef, status: bytes):
+    def update_task_output(self, task_def: gtt.CoreTaskDef, status: TaskProgress):
         tid = f'{task_def.step} {task_def.name}'
         ltime = hour()
         # Not splitlines, we want a final empty string
-        lines = status.decode('utf8', errors='ignore').split('\n')
+        lines = status['payload'].decode('utf8', errors='ignore').split('\n')
         # Join previous hanging data
         # Don't delete the item to keep the pos in the dict
         _old_time, last_open = self.open_lines.get(tid, (None, ''))

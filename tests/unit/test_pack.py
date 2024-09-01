@@ -2,7 +2,7 @@
 Tests for pack
 """
 from dataclasses import dataclass
-from typing import Optional, Any
+from typing import Optional
 import msgpack
 import pytest
 
@@ -78,7 +78,7 @@ class HasDefault:
 @dataclass
 class Document:
     """Arbitrary msgpack"""
-    x: Any
+    x: object
 
 @pytest.mark.parametrize('case', [
     (A(1), 1),

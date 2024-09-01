@@ -2,15 +2,16 @@
 Lists of internal commands
 """
 
-from typing import TypeVar, Callable
+from typing import TypeVar, Callable, TypeGuard
 from collections.abc import Hashable
 from dataclasses import dataclass
+import logging
 
 import galp.net.core.types as gm
 import galp.task_types as gtt
 import galp.asyn as ga
 
-from galp.result import Result, Ok, Error
+from galp.result import Result, Ok
 from galp.asyn import Command, collect, Primitive, CommandLike
 from galp.printer import Printer, PassTroughPrinter
 from galp.net.core.dump import get_request_id
@@ -304,9 +305,28 @@ def _end_submit(task_def: gtt.CoreTaskDef, submit_result: Result[gtt.ResultRef],
     options.printer.update_task_status(task_def, submit_result)
     return submit_result
 
-def _progress_submit(task_def: gtt.CoreTaskDef, status: bytes, options:
-                     ExecOptions) -> None:
-    options.printer.update_task_output(task_def, status)
+def _is_task_progress(status: object) -> TypeGuard[gm.TaskProgress]:
+    if not isinstance(status, dict):
+        return False
+    if 'event' not in status:
+        return False
+    if status['event'] not in ('started', 'stdout', 'stderr'):
+        return False
+    if 'payload' not in status:
+        return False
+    if not isinstance(status['payload'], bytes):
+        return False
+    return True
+
+def _progress_submit(task_def: gtt.CoreTaskDef, status: object,
+                     options: ExecOptions) -> None:
+    if not _is_task_progress(status):
+        logging.error('Bad progress status, skipping %r', status)
+        return
+    if status['event'] == 'started':
+        options.printer.update_task_status(task_def, status)
+    else:
+        options.printer.update_task_output(task_def, status)
 
 def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
         ) -> Command[gtt.ResultRef]:

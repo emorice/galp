@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from typing import BinaryIO
 
 import galp.socket_transport
-from galp.net.core.types import RequestId, Reply, Progress
+from galp.net.core.types import RequestId, Reply, Progress, TaskProgress
 from galp.protocol import write_local
 
 @contextmanager
@@ -104,15 +104,19 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
             os.close(fd)
     os.register_at_fork(after_in_child=_close_all)
 
-    def on_stream_msg(request_id: RequestId, filed: int,
+    def on_stream_msg(request_id: RequestId, filed: int, orig_filed: int,
             tee_file: BinaryIO | None):
         item = os.read(filed, 4096)
         if item:
             if tee_file:
                 tee_file.write(item)
+            status: TaskProgress = {
+                    'event': 'stdout' if orig_filed == 1 else 'stderr',
+                    'payload': item
+                    }
             galp.socket_transport.send_multipart(
                     sock_proxy,
-                    write_local(Reply(request_id, Progress(item)))
+                    write_local(Reply(request_id, Progress(status)))
                     )
         else:
             # Other end finished the task or died. Close the log file, our end
@@ -124,7 +128,7 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
             all_fds.remove(filed)
             sel.unregister(filed)
 
-    def on_new_fd():
+    def on_new_fd() -> None:
         # Receive one fd and read its content
         data, fds, _flgs, _addr = socket.recv_fds(sock_logserver, 4096, 16)
         request_id = RequestId.from_word(data)
@@ -137,9 +141,18 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
                         'wb', buffering=0)
             all_fds.add(filed)
             sel.register(filed, selectors.EVENT_READ,
-                    lambda filed=filed, tee_file=tee_file: on_stream_msg(
-                        request_id, filed, tee_file
+                    lambda filed=filed, tee_file=tee_file, i=i: on_stream_msg(
+                        request_id, filed, i+1, tee_file,
                         )
                     )
+
+        status: TaskProgress = {
+                'event': 'started',
+                'payload': b''
+                }
+        galp.socket_transport.send_multipart(
+                sock_proxy,
+                write_local(Reply(request_id, Progress(status)))
+                )
 
     sel.register(sock_logserver, selectors.EVENT_READ, on_new_fd)
