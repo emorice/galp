@@ -2,7 +2,7 @@
 Tests for pack
 """
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any
 import msgpack
 import pytest
 
@@ -75,6 +75,11 @@ class HasDefault:
     x: int
     y: int = 0
 
+@dataclass
+class Document:
+    """Arbitrary msgpack"""
+    x: Any
+
 @pytest.mark.parametrize('case', [
     (A(1), 1),
     (B(1.5, A(1), 'bar'), 1),
@@ -90,6 +95,7 @@ class HasDefault:
     (Dict({'key': C(1, b'blorbo', 2.5), 'cokey': C(2, b'blirbi', 3.4)}), 3),
     (Opt(A(1)), 1),
     (Opt(None), 1),
+    (Document({'a': 1, 'b': [b'xoxo', 'abc']}), 1),
     ])
 def test_pack_unpack(case):
     """
@@ -99,6 +105,7 @@ def test_pack_unpack(case):
     msg = dump(obj)
     assert all(isinstance(f, bytes) for f in msg)
     assert len(msg) == n_frames
+    print(msgpack.loads(msg[0]), flush=True)
     objback = load(type(obj), msg).unwrap()
     assert obj == objback
 

@@ -187,6 +187,10 @@ def make_load_default(cls: type[T]) -> Loader[T]:
             return doc, stream # type: ignore[call-arg]
         return _load_direct
 
+    # Any, pass the msgpack document without further validation
+    if cls is Any:
+        return lambda doc, stream: (doc, stream) #type: ignore[return-value]
+
     # Subtype, try to convert
     def _load(doc: object, stream: list[bytes]) -> tuple[T, list[bytes]]:
         # For all remaining basic types, we assume they can be coerced by
