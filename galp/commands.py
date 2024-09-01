@@ -292,6 +292,9 @@ def _ssubmit(task: gtt.Task, stat_result: Found, options: ExecOptions,
     if options.dry or isinstance(task_def, gtt.ChildTaskDef):
         return gather_deps.then(lambda _: Ok(gtt.ResultRef(task.name, tuple())))
 
+    # We can already mark the task as pending
+    options.printer.update_task_status(task_def, None)
+
     return (
             gather_deps
             .then(lambda _: _start_submit(task_def, options))
@@ -334,7 +337,6 @@ def _start_submit(task_def: gtt.CoreTaskDef, options: ExecOptions
     Wrapper around sending submit that reports start of tasks and schedule
     reporting end of task.
     """
-    options.printer.update_task_status(task_def, None)
     return Send(gm.Submit(task_def)).on_progress(
             lambda status: _progress_submit(task_def, status, options)
             ).eventually(

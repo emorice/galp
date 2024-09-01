@@ -35,12 +35,19 @@ def likes_odd(i):
     if not i % 2:
         raise ValueError
 
+@galp.step
+def downstream(obj):
+    """
+    Identity
+    """
+    time.sleep(1)
+    return obj
 
 def all_tasks(n):
     """
     Collection of all of the above
     """
     return [
-            (progress(i), lines(i), likes_odd(i))
+            (progress(i), downstream(lines(i)), likes_odd(i))
             for i in range(n)
             ]
