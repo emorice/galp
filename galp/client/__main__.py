@@ -45,8 +45,12 @@ async def run(target):
     """
     async with AsyncExitStack() as stack:
         if args.endpoint:
+            if args.store is not None:
+                raise TypeError('Either endpoint or store must be given')
             client = galp.Client(args.endpoint)
         else:
+            if args.store is None:
+                raise TypeError('Either endpoint or store must be given')
             client = await stack.enter_async_context(
                 galp.local_system(**{
                     k: getattr(args, k)
