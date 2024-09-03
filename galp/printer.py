@@ -276,7 +276,8 @@ class HTTPLiveDisplay(LiveDisplay):
         # pylint: disable=protected-access
         host, port, *extra = site._server.sockets[0].getsockname()
         print(f'Serving locally on http://{host}:{port}')
-        if extra:
+        # Extra address components occur if we serve on ipv6, but should be 0
+        if extra and extra != [0, 0]:
             print(extra)
         print(f"""\
 If port forwarding is required, make sure jupyter-server-proxy is installed,
