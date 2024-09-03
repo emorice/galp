@@ -274,8 +274,10 @@ class HTTPLiveDisplay(LiveDisplay):
         site = self.web.TCPSite(self.runner, 'localhost', 0)
         await site.start()
         # pylint: disable=protected-access
-        host, port = site._server.sockets[0].getsockname()
+        host, port, *extra = site._server.sockets[0].getsockname()
         print(f'Serving locally on http://{host}:{port}')
+        if extra:
+            print(extra)
         print(f"""\
 If port forwarding is required, make sure jupyter-server-proxy is installed,
 and use e.g. <jupyter lab url>/proxy/{port} with the url you currently see in
