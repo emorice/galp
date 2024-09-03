@@ -38,7 +38,11 @@ def run(uri, **kwargs):
 
     if result['success']:
         return result['out']
-    raise galp.TaskFailedError('wdl run thread encountered an error')
+    logging.error('Failed to run wdl pipeline %s', uri)
+    logging.error('Inputs:')
+    for key, val in kwargs.items():
+        logging.error('    %s: %s', key, val)
+    raise galp.TaskFailedError('Wdl run thread encountered an error')
 
 def _run_thread_inner(uri, result, workspace, kwargs):
     """
