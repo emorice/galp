@@ -31,13 +31,15 @@ def new_path() -> str:
             + 'running galp task.')
         raise
 
-    fileno = cur_pathmaker.fileno
-    cur_pathmaker.fileno += 1
-    return os.path.join(
-        cur_pathmaker.dirpath,
-        'galp',
-        f'{cur_pathmaker.task}_{fileno}'
-        )
+    while True:
+        candidate_path = os.path.join(
+            cur_pathmaker.dirpath,
+            'galp',
+            f'{cur_pathmaker.task}_{cur_pathmaker.fileno}'
+            )
+        cur_pathmaker.fileno += 1
+        if not os.path.exists(candidate_path):
+            return candidate_path
 
 @contextmanager
 def set_path(dirpath: str, task: str):
