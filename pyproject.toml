@@ -16,6 +16,7 @@ dependencies = [
     "threadpoolctl",
     "tqdm",
     "typing_extensions",
+    "aiohttp",
 ]
 
 [project.optional-dependencies]
