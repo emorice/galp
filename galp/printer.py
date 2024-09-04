@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import logging
+import errno
 from typing import Callable
 from dataclasses import dataclass
 from contextlib import asynccontextmanager, AsyncExitStack
@@ -270,15 +271,20 @@ class HTTPLiveDisplay(LiveDisplay):
         """
         Start serving display requests
         """
+        port = 8777
+
         await self.runner.setup()
-        site = self.web.TCPSite(self.runner, 'localhost', 0)
-        await site.start()
-        # pylint: disable=protected-access
-        host, port, *extra = site._server.sockets[0].getsockname()
-        print(f'Serving locally on http://{host}:{port}')
-        # Extra address components occur if we serve on ipv6, but should be 0
-        if extra and extra != [0, 0]:
-            print(extra)
+        while True:
+            site = self.web.TCPSite(self.runner, 'localhost', port)
+            try:
+                await site.start()
+            except OSError as exc:
+                if exc.errno == errno.EADDRINUSE:
+                    port += 1
+                    continue
+                raise
+            break
+        print(f'Serving locally on http://localhost:{port}')
         print(f"""\
 If port forwarding is required, make sure jupyter-server-proxy is installed,
 and use e.g. <jupyter lab url>/proxy/{port} with the url you currently see in
