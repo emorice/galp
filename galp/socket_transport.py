@@ -46,7 +46,8 @@ def make_receiver(callback):
     """
     Build a message parser
     """
-    buf = b'' # Leftover bytes
+    buffers = [] # Leftover bytes from previous calls
+    size = 0 # Total number of bytes in old and new buffers
     next_size = 4 # Size of next expected segment
     # 3-state for position in message:
     #  None = at the beginning of new frame
@@ -56,17 +57,25 @@ def make_receiver(callback):
     message = [] # Actual list of frames
 
     def _on_bytes(new_buf: bytes) -> None:
-        nonlocal buf
+        nonlocal buffers
+        nonlocal size
         nonlocal next_size
         nonlocal send_more
         nonlocal message
 
         # Concatenate to any leftovers from previous calls
-        buf += new_buf
+        buffers.append(new_buf)
+        size += len(new_buf)
 
         # Parse as many segments as possible
-        while len(buf) >= next_size:
+        while size >= next_size:
+            # Concatenate all pending buffers
+            buf = b''.join(buffers)
             segment, buf = buf[:next_size], buf[next_size:]
+            # Save leftovers
+            buffers = [buf]
+            size = len(buf)
+
             if send_more is None:
                 # Parse a header segment
                 header = int.from_bytes(segment, 'little')
@@ -137,7 +146,7 @@ class WriterAdapter:
         """
         await self.writer.drain()
 
-BUFSIZE = 4096
+BUFSIZE = 4096 * 16
 
 class AsyncClientTransport:
     """
