@@ -5,6 +5,7 @@ import os
 import sys
 import socket
 import selectors
+import logging
 from contextlib import contextmanager
 from typing import BinaryIO
 
@@ -106,10 +107,19 @@ def logserver_register(sel: selectors.DefaultSelector, sock_logserver:
 
     def on_stream_msg(request_id: RequestId, filed: int, orig_filed: int,
             tee_file: BinaryIO | None):
-        item = os.read(filed, 4096)
+        try:
+            item = os.read(filed, 4096)
+        except OSError:
+            logging.exception('Failed to read from worker pipe, task [%s]',
+                request_id.name)
+            return
         if item:
             if tee_file:
-                tee_file.write(item)
+                try:
+                    tee_file.write(item)
+                except OSError:
+                    logging.exception('Failed to write to log file, task [%s]',
+                        request_id.name)
             status: TaskProgress = {
                     'event': 'stdout' if orig_filed == 1 else 'stderr',
                     'payload': item
