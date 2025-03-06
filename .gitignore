@@ -7,3 +7,4 @@ build/
 *.ipynb
 benchmarks/results
 .tox
+poetry.lock
