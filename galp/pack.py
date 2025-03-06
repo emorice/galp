@@ -123,7 +123,6 @@ class TypeMap(Generic[K, T]):
             raise TypeError
         return cls(dict(enumerate(get_args(union))))
 
-
 L = TypeVar('L', list, tuple)
 def make_load_list(cls: type[L]) -> Loader[L]:
     """Load a list or tuple"""
@@ -350,11 +349,13 @@ def make_dumper(cls: type[T]) -> Dumper[T]:
     """
     if not is_dataclass(cls):
         # contrary to load, we may get both parametrized and unparamterized
-        # types
-        orig = get_origin(cls)
-        if issubclass(cls, (list, tuple)) or orig in (list, tuple):
+        # types. If parametrized, issubclass will error or return false, so we
+        # need the origin type. If unparametrized, origin will be None so we
+        # need to check the type as is.
+        orig = get_origin(cls) or cls
+        if issubclass(orig, (list, tuple)):
             return make_dump_list(cls) # type: ignore[type-var]
-        if issubclass(cls, dict) or orig is dict:
+        if issubclass(orig, dict):
             return make_dump_dict(cls) # type: ignore[type-var]
         return lambda obj: (obj, [])
 
